@@ -21,7 +21,6 @@ ZCode（zcode.z.ai）是智谱 AI（bigmodel）的 AI 编程助手。本仓库�
 | 🔐 **登录** | 粘贴连接地址 **或** 扫码，从桌面端会话导入**实时** `remote/v3` URL；Cookie 由 APP 自动 HTTP 拉取，无需手动输入 |
 | 🗂️ **工作区** | 工作区 / 任务列表（`bootstrap-request`），本地缓存支持离线查看 |
 | 💬 **对话** | 流式 AI 回复（`model.streaming` 增量合并）、**模式热切换**（变更前确认 / 自动）、`/` 命令面板、模型选择、质量档位 |
-| 🎙️ **语音输入** | 基于 `speech_to_text` 的一键语音转文字 |
 | 🎨 **Markdown / 代码** | `flutter_markdown` + 自研 `flutter_highlight` 代码高亮 |
 | 🧩 **技能管理** | 查看 / 启用 ZCode skills |
 | 📊 **用量统计** | GLM Coding Plan 配额与分档展示 |
@@ -55,7 +54,7 @@ lib/
 │   │   ├── rpc_codec.dart       # 自描述二进制帧编解码 (tag + varint)
 │   │   ├── relay_protocol.dart  # 数据层请求/响应
 │   │   └── relay_events.dart    # 会话事件类型
-│   ├── config/  network/  storage/  services/  voice/
+│   ├── config/  network/  storage/  services/
 ├── data/
 │   ├── models/                  # 手写纯 Dart 模型 (未启用 freezed)
 │   └── repositories/
