@@ -53,3 +53,6 @@ tool/captures/
 tool/ws_probe*.dart
 tool/probe*.dart
 android/build/
+
+# ZCode 客户端本地状态 (会话/计划, 勿入库)
+.zcode/

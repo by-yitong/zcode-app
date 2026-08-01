@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../../../shared/theme/app_design_tokens.dart';
+
 /// 二维码扫码页
 ///
 /// 扫描 zcode 桌面端显示的连接二维码 (内容是 /remote/v3?sid=... URL),
@@ -98,7 +100,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
                   ),
                   child: const Text(
                     '将 ZCode 桌面端的二维码对准框内',
-                    style: TextStyle(color: Colors.white, fontSize: 14),
+                    style: TextStyle(color: Colors.white, fontSize: AppTextSizes.bodyMd),
                     textAlign: TextAlign.center,
                   ),
                 ),

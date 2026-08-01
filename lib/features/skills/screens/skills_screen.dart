@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../providers/app_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
+import '../../../shared/widgets/app_empty_state.dart';
+import '../../../shared/widgets/app_section_header.dart';
 
 /// 技能管理页 — 从 RPC skill.list 加载, 展示技能列表 + 开关
 class SkillsScreen extends ConsumerStatefulWidget {
@@ -55,7 +57,7 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
                         const SizedBox(height: 2),
                         Text('管理可用的 AI 编码技能',
                             style: TextStyle(
-                                fontSize: 13,
+                                fontSize: AppTextSizes.bodySm,
                                 color: theme.colorScheme.onSurfaceVariant)),
                       ],
                     ),
@@ -77,7 +79,13 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
                   loading: () => _buildLoading(theme),
                   error: (error, _) => _buildError(theme, error.toString()),
                   data: (skills) {
-                    if (skills.isEmpty) return _buildEmpty(theme);
+                    if (skills.isEmpty) {
+                      return AppEmptyState(
+                        icon: Icons.auto_awesome_outlined,
+                        title: '暂无可用技能',
+                        subtitle: '在 ZCode 桌面端安装技能后\n下拉刷新即可查看',
+                      );
+                    }
                     return _buildSkillsList(theme, skills);
                   },
                 ),
@@ -133,53 +141,13 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
                 Text(
                   '请确认设备已连接到 ZCode 桌面端',
                   style: TextStyle(
-                      fontSize: 13, color: theme.colorScheme.onSurfaceVariant),
+                      fontSize: AppTextSizes.bodySm, color: theme.colorScheme.onSurfaceVariant),
                 ),
                 const SizedBox(height: AppSpacing.lg),
                 FilledButton.icon(
                   onPressed: () => ref.read(skillsProvider.notifier).refresh(),
                   icon: const Icon(Icons.refresh, size: 18),
                   label: const Text('重试'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildEmpty(ThemeData theme) {
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      children: [
-        const SizedBox(height: 80),
-        Center(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  width: 64,
-                  height: 64,
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerHigh,
-                    borderRadius: BorderRadius.circular(AppRadius.xl),
-                  ),
-                  child: Icon(Icons.auto_awesome_outlined,
-                      size: 32, color: theme.colorScheme.outline),
-                ),
-                const SizedBox(height: AppSpacing.lg),
-                Text('暂无可用技能',
-                    style: theme.textTheme.titleMedium
-                        ?.copyWith(fontWeight: FontWeight.w600)),
-                const SizedBox(height: AppSpacing.xs),
-                Text(
-                  '在 ZCode 桌面端安装技能后\n下拉刷新即可查看',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                      fontSize: 13, color: theme.colorScheme.onSurfaceVariant),
                 ),
               ],
             ),
@@ -202,31 +170,17 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
           AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, AppSpacing.xl),
       children: [
         if (enabled.isNotEmpty) ...[
-          _sectionHeader(theme, '已启用'),
+          AppSectionHeader(title: '已启用'),
           const SizedBox(height: AppSpacing.sm),
           _skillGroup(theme, enabled),
         ],
         if (disabled.isNotEmpty) ...[
           if (enabled.isNotEmpty) const SizedBox(height: AppSpacing.xl),
-          _sectionHeader(theme, '已禁用'),
+          AppSectionHeader(title: '已禁用'),
           const SizedBox(height: AppSpacing.sm),
           _skillGroup(theme, disabled),
         ],
       ],
-    );
-  }
-
-  Widget _sectionHeader(ThemeData theme, String title) {
-    return Padding(
-      padding: const EdgeInsets.only(left: AppSpacing.sm),
-      child: Text(
-        title,
-        style: TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-          color: theme.colorScheme.onSurfaceVariant,
-        ),
-      ),
     );
   }
 
@@ -339,7 +293,7 @@ class _SkillTile extends StatelessWidget {
                   Text(
                     skill.description,
                     style: TextStyle(
-                      fontSize: 12,
+                      fontSize: AppTextSizes.label,
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
                     maxLines: 2,

@@ -114,7 +114,12 @@ class RpcCodec {
   ) {
     final w = <int>[];
     serialize(w, [typeEventListen, id, channel, event]); // header
-    serialize(w, args); // body
+    // V4: args 是单个 object (tag=5 JSON), 不是 array
+    if (args is List) {
+      serialize(w, (args as List).isNotEmpty ? (args as List).first : null);
+    } else {
+      serialize(w, args);
+    }
     return Uint8List.fromList(w);
   }
 

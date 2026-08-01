@@ -73,3 +73,13 @@ The protocol in `docs/` was reverse-engineered incrementally; later corrections 
 - Capture artifacts (`sample_init_events.json`, `sample_send_events.json`) came from Playwright-driven browser captures and seeded the documented RPC method list.
 
 When you verify or change protocol behavior via a probe, update the corresponding section in `docs/API协议规格.md` (it is the canonical spec the app code follows).
+
+## UI / Design conventions
+
+**Read `docs/ui-style-guide.md` before writing any UI.** It defines the app's visual rules — Linear-dark + electric-blue dev-tool tone, signature interactions (mono-for-metadata, foldable tool-call logs, floating Todo panel, douban-style press-to-talk voice), and three hard rules:
+
+1. No inline magic numbers — use `AppSpacing`/`AppRadius`/`AppTextSizes`/`AppTouch` tokens (defined in `lib/shared/theme/app_design_tokens.dart`).
+2. Motion only animates `transform`/`opacity`; durations via `AppDur`, curves via `AppEase`. Never bare `Curves.ease`.
+3. Status colors via `AppColors` + `*Container` variants, never inline hex.
+
+An interactive HTML preview lives at `design/ui_preview.html` (open in a browser). Shared reusable widgets are being added under `lib/shared/widgets/` (`AppEmptyState`, `AppTileGroup`, `AppSectionHeader`).

@@ -187,9 +187,9 @@ class AppTheme {
         space: 1,
       ),
 
-      // ── 对话框/底部弹层 ──
+      // ── 对话框/底部弹层 (不透明提升面, 与页面背景分离) ──
       bottomSheetTheme: BottomSheetThemeData(
-        backgroundColor: surface,
+        backgroundColor: isDark ? AppColors.darkSurfaceElevated : AppColors.lightSurface,
         surfaceTintColor: Colors.transparent,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(
@@ -209,6 +209,85 @@ class AppTheme {
 
       // ── 图标默认色 ──
       iconTheme: IconThemeData(color: ink, size: 22),
+
+      // ── ListTile (18+ 处使用, 统一间距与形状) ──
+      listTileTheme: ListTileThemeData(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.md),
+        ),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.xs,
+        ),
+      ),
+
+      // ── Chip / ActionChip (chat 选择器 / 标签) ──
+      chipTheme: ChipThemeData(
+        backgroundColor: surface,
+        side: BorderSide(color: borderSubtle),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.pill),
+        ),
+        labelStyle: uiTextTheme.labelLarge?.copyWith(
+          fontSize: AppTextSizes.label,
+          fontWeight: FontWeight.w500,
+        ),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.xs,
+        ),
+      ),
+
+      // ── Switch (skills 启停) ──
+      switchTheme: SwitchThemeData(
+        thumbColor: const WidgetStatePropertyAll(Colors.white),
+        trackColor: WidgetStateProperty.resolveWith((states) {
+          return states.contains(WidgetState.selected)
+              ? AppColors.accent
+              : surfaceHighest;
+        }),
+        trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
+        padding: EdgeInsets.zero,
+      ),
+
+      // ── 进度条 (用量条 / 12+ 处) ──
+      progressIndicatorTheme: ProgressIndicatorThemeData(
+        color: AppColors.accent,
+        linearTrackColor: surfaceHigh,
+        linearMinHeight: 4,
+        borderRadius: const BorderRadius.all(Radius.circular(AppRadius.xs)),
+      ),
+
+      // ── TabBar (Agent 设置 / 可滚动 tab) ──
+      tabBarTheme: TabBarThemeData(
+        labelColor: ink,
+        unselectedLabelColor: inkMuted,
+        labelStyle: uiTextTheme.labelLarge?.copyWith(
+          fontSize: AppTextSizes.bodySm,
+          fontWeight: FontWeight.w600,
+        ),
+        unselectedLabelStyle: uiTextTheme.labelLarge?.copyWith(
+          fontSize: AppTextSizes.bodySm,
+          fontWeight: FontWeight.w500,
+        ),
+        indicator: UnderlineTabIndicator(
+          borderSide: const BorderSide(color: AppColors.accent, width: 2),
+          insets: EdgeInsets.zero,
+        ),
+        indicatorSize: TabBarIndicatorSize.label,
+        dividerColor: Colors.transparent,
+        labelPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      ),
+
+      // ── 对话框 (不透明提升面, 与页面背景分离) ──
+      dialogTheme: DialogThemeData(
+        backgroundColor: isDark ? AppColors.darkSurfaceElevated : AppColors.lightSurface,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+        ),
+      ),
     );
   }
 }

@@ -2,6 +2,8 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
+import '../theme/app_design_tokens.dart';
+
 /// 毛玻璃 AppBar (采纳 Apple HIG glassmorphism)
 ///
 /// 滚动时导航栏透出模糊内容, 营造层次感。
@@ -54,7 +56,7 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
                 leading: leading,
                 middle: DefaultTextStyle.merge(
                   style: TextStyle(
-                    fontSize: 16,
+                    fontSize: AppTextSizes.titleSm,
                     fontWeight: FontWeight.w600,
                     color: inkColor,
                   ),

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../shared/theme/app_design_tokens.dart';
 import '../../../../shared/theme/app_router.dart';
 import '../../../providers/app_providers.dart';
 import 'scanner_screen.dart';
@@ -220,7 +221,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             child: Center(
               child: Text(num,
                   style: TextStyle(
-                      fontSize: 11,
+                      fontSize: AppTextSizes.caption,
                       fontWeight: FontWeight.bold,
                       color: theme.colorScheme.primary)),
             ),

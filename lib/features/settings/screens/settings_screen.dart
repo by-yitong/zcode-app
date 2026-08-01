@@ -8,6 +8,9 @@ import '../../../core/storage/secure_storage.dart';
 import '../../../data/models/glm_quota.dart';
 import '../../../providers/app_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
+import '../../../shared/widgets/app_section_header.dart';
+import '../../../shared/widgets/app_tile_group.dart';
+import 'remote_settings_screen.dart';
 
 /// 设置页
 class SettingsScreen extends ConsumerWidget {
@@ -26,48 +29,51 @@ class SettingsScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('我的')),
       body: ListView(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.md,
+        ),
         children: [
-          // 用户信息卡片
+          // 用户卡 — 深色面卡 (拒绝全宽蓝色渐变大卡)
           Container(
-            margin: const EdgeInsets.all(16),
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(AppSpacing.md),
             decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  theme.colorScheme.primary,
-                  theme.colorScheme.primary.withValues(alpha: 0.7),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(16),
+              color: theme.colorScheme.surface,
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              border: Border.all(color: theme.colorScheme.outlineVariant),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
-                    CircleAvatar(
-                      backgroundColor: Colors.white.withValues(alpha: 0.2),
-                      child: const Icon(Icons.person, color: Colors.white),
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF8B5CF6), AppColors.accent],
+                        ),
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                      ),
+                      child: const Icon(Icons.person_rounded,
+                          color: Colors.white, size: 22),
                     ),
-                    const SizedBox(width: 16),
+                    const SizedBox(width: AppSpacing.md),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          Text(userName,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w600,
+                              )),
                           Text(
-                            userName,
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            '设备: $deviceId',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.white.withValues(alpha: 0.8),
+                            'SID · $deviceId',
+                            style: AppText.mono(
+                              context,
+                              size: AppTextSizes.monoXs,
+                              color: theme.colorScheme.onSurfaceVariant,
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -77,21 +83,29 @@ class SettingsScreen extends ConsumerWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 16),
-                // 连接状态
+                const SizedBox(height: AppSpacing.md),
+                // 连接状态 pill (mono)
                 Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 8),
+                    horizontal: AppSpacing.sm,
+                    vertical: AppSpacing.xs,
+                  ),
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(8),
+                    color: theme.colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.wifi,
-                          size: 16, color: Colors.white.withValues(alpha: 0.9)),
-                      const SizedBox(width: 8),
+                      Icon(Icons.cloud_done_rounded,
+                          size: 14,
+                          color: connectionAsync.maybeWhen(
+                            data: (s) => s == RelayConnectionState.ready
+                                ? AppColors.success
+                                : AppColors.warning,
+                            orElse: () => AppColors.warning,
+                          )),
+                      const SizedBox(width: AppSpacing.xs),
                       Text(
                         connectionAsync.maybeWhen(
                           data: (state) {
@@ -106,71 +120,95 @@ class SettingsScreen extends ConsumerWidget {
                           },
                           orElse: () => '—',
                         ),
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.9),
-                          fontSize: 13,
-                        ),
+                        style: AppText.mono(context,
+                            size: AppTextSizes.monoXs,
+                            color: theme.colorScheme.onSurfaceVariant),
                       ),
                     ],
                   ),
                 ),
-                // GLM 余量精简摘要 (无数据时不渲染, 不占位)
                 _GlmQuotaInlineSummary(),
               ],
             ),
           ),
 
           // GLM 用量分区
-          _SectionHeader(title: 'GLM 用量'),
+          const AppSectionHeader(title: 'GLM 用量'),
           _GlmQuotaCard(),
 
-          // 设置项
-          _SectionHeader(title: '模型与模式'),
-          ListTile(
-            leading: const Icon(Icons.swap_horiz_outlined),
-            title: const Text('在对话内切换'),
-            subtitle: const Text('打开任意工作区对话, 输入栏可切换模型 / 确认·自动模式'),
-          ),
+          // 模型与模式
+          const AppSectionHeader(title: '模型与模式'),
+          const AppTileGroup(tiles: [
+            AppTile(
+              icon: Icons.swap_horiz_rounded,
+              title: '在对话内切换',
+              subtitle: '打开任意工作区对话, 输入栏可切换模型 / 确认·自动模式',
+            ),
+          ]),
 
-          _SectionHeader(title: '外观'),
-          ListTile(
-            leading: const Icon(Icons.dark_mode_outlined),
-            title: const Text('主题'),
-            subtitle: Text(themeModeLabel(ref.watch(themeModeProvider))),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => _showThemePicker(context, ref),
-          ),
+          // 外观
+          const AppSectionHeader(title: '外观'),
+          AppTileGroup(tiles: [
+            AppTile(
+              icon: Icons.dark_mode_rounded,
+              title: '主题',
+              value: themeModeLabel(ref.watch(themeModeProvider)),
+              showChevron: true,
+              onTap: () => _showThemePicker(context, ref),
+            ),
+          ]),
 
-          _SectionHeader(title: '关于'),
-          ListTile(
-            leading: const Icon(Icons.info_outline),
-            title: const Text('版本'),
-            subtitle: const Text('ZCode App v1.0.0'),
-          ),
-          ListTile(
-            leading: const Icon(Icons.description_outlined),
-            title: const Text('开源协议'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {},
-          ),
+          // 桌面端设置 (只读查看)
+          const AppSectionHeader(title: '桌面端设置'),
+          AppTileGroup(tiles: [
+            AppTile(
+              icon: Icons.settings_remote_rounded,
+              title: '远程设置',
+              subtitle: '查看 ZCode 桌面端的配置',
+              showChevron: true,
+              onTap: () {
+                final ws = ref.read(workspaceListProvider).valueOrNull ?? [];
+                Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => RemoteSettingsScreen(
+                    workspacePath: ws.isNotEmpty ? ws.first.workspacePath : '',
+                  ),
+                ));
+              },
+            ),
+          ]),
 
-          const SizedBox(height: 16),
+          // 关于
+          const AppSectionHeader(title: '关于'),
+          const AppTileGroup(tiles: [
+            AppTile(
+              icon: Icons.info_outline_rounded,
+              title: '版本',
+              value: 'v1.0.0',
+            ),
+            AppTile(
+              icon: Icons.description_outlined,
+              title: '开源协议',
+              showChevron: true,
+            ),
+          ]),
 
-          // 登出
+          const SizedBox(height: AppSpacing.xl),
+
+          // 登出 — danger 描边, 克制
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: EdgeInsets.zero,
             child: OutlinedButton.icon(
               onPressed: () => _logout(context, ref),
-              icon: const Icon(Icons.logout, color: Colors.red),
+              icon: const Icon(Icons.logout_rounded, color: AppColors.danger),
               label: const Text('断开连接',
-                  style: TextStyle(color: Colors.red)),
+                  style: TextStyle(color: AppColors.danger)),
               style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: Colors.red),
-                padding: const EdgeInsets.symmetric(vertical: 14),
+                side: const BorderSide(color: AppColors.dangerContainer),
+                padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
               ),
             ),
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: AppSpacing.xxl),
         ],
       ),
     );
@@ -276,26 +314,6 @@ class SettingsScreen extends ConsumerWidget {
   }
 }
 
-class _SectionHeader extends StatelessWidget {
-  final String title;
-
-  const _SectionHeader({required this.title});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-      child: Text(
-        title,
-        style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: Theme.of(context).colorScheme.primary,
-              fontWeight: FontWeight.w600,
-            ),
-      ),
-    );
-  }
-}
-
 // ================================================================
 // GLM 用量 widgets
 // ================================================================
@@ -317,11 +335,12 @@ class _GlmQuotaInlineSummary extends ConsumerWidget {
     if (parts.isEmpty) return const SizedBox.shrink();
 
     return Padding(
-      padding: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.only(top: AppSpacing.sm),
       child: Text(
         parts.join(' · '),
         style: AppText.mono(context,
-            size: 12, color: Colors.white.withValues(alpha: 0.85)),
+            size: AppTextSizes.monoSm,
+            color: Theme.of(context).colorScheme.onSurfaceVariant),
       ),
     );
   }
@@ -337,11 +356,9 @@ class _GlmQuotaCard extends ConsumerWidget {
 
     final configured = cred != null && cred.isValid;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.lg),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -372,7 +389,6 @@ class _GlmQuotaCard extends ConsumerWidget {
             ],
           ),
         ),
-      ),
     );
   }
 
@@ -380,7 +396,7 @@ class _GlmQuotaCard extends ConsumerWidget {
     return Row(
       children: [
         const Expanded(
-          child: Text('未配置 GLM API Key', style: TextStyle(fontSize: 13)),
+          child: Text('未配置 GLM API Key', style: TextStyle(fontSize: AppTextSizes.bodySm)),
         ),
         TextButton.icon(
           onPressed: () => _showGlmCredentialEditor(context, ref),
@@ -412,7 +428,7 @@ class _GlmQuotaCard extends ConsumerWidget {
         if (quota == null) {
           return const Padding(
             padding: EdgeInsets.symmetric(vertical: 8),
-            child: Text('暂无数据', style: TextStyle(fontSize: 13)),
+            child: Text('暂无数据', style: TextStyle(fontSize: AppTextSizes.bodySm)),
           );
         }
         if (!quota.success) {
@@ -564,7 +580,7 @@ class _ErrorRow extends StatelessWidget {
                 children: [
                   Text(message,
                       style: const TextStyle(
-                          color: AppColors.danger, fontSize: 13)),
+                          color: AppColors.danger, fontSize: AppTextSizes.bodySm)),
                   if (hint != null)
                     Padding(
                       padding: const EdgeInsets.only(top: 2),
@@ -593,17 +609,11 @@ Future<void> _showGlmCredentialEditor(BuildContext context, WidgetRef ref) async
   var obscure = true;
 
   final theme = Theme.of(context);
-  // ⚠️ sheet 必须用完全不透明的背景。主题 surface 在深色下是半透明白叠加
-  // (AppColors.darkSurface = 0x08FFFFFF, 仅 3% alpha), 直接用会透出底层卡片重叠。
-  // 取主题的实色 bg 作底 (darkBg = 0xFF08090A 全不透明), 浅色 lightSurface 本就实色。
-  final isDark = theme.brightness == Brightness.dark;
-  final sheetBg = isDark ? AppColors.darkBg : AppColors.lightSurface;
 
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
-    backgroundColor: sheetBg,
     builder: (sheetContext) {
       return StatefulBuilder(
         builder: (context, setSheetState) {

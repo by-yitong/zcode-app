@@ -4,9 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../providers/app_providers.dart';
 import 'workspace_list_screen.dart';
 import '../../settings/screens/settings_screen.dart';
-import '../../skills/screens/skills_screen.dart';
 
-/// 主页 — 底部导航 (工作区 / 技能 / 我的)
+/// 主页 — 底部导航 (工作区 / 我的)
 class MainScreen extends ConsumerStatefulWidget {
   const MainScreen({super.key});
 
@@ -37,7 +36,6 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         index: _currentIndex,
         children: [
           const WorkspaceListScreen(),
-          const SkillsScreen(),
           const SettingsScreen(),
         ],
       ),
@@ -51,11 +49,6 @@ class _MainScreenState extends ConsumerState<MainScreen> {
             icon: Icon(Icons.work_outline),
             selectedIcon: Icon(Icons.work),
             label: '工作区',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.auto_awesome_outlined),
-            selectedIcon: Icon(Icons.auto_awesome),
-            label: '技能',
           ),
           NavigationDestination(
             icon: const Icon(Icons.person_outline),

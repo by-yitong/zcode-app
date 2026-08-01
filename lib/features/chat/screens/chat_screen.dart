@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import '../../../features/settings/screens/agent_settings_screen.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,7 +15,6 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../../core/relay/relay_protocol.dart';
 import '../../../data/models/glm_quota.dart' as glm;
-import '../../../core/voice/voice_input_service.dart';
 import '../../../data/models/workspace.dart';
 import '../../../providers/app_providers.dart';
 import '../../../providers/chat_provider.dart';
@@ -22,7 +22,8 @@ import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/theme/app_router.dart';
 import '../../../shared/widgets/code_highlight.dart';
 import '../../../shared/widgets/glass_bars.dart';
-import '../../../shared/widgets/voice_input_button.dart';
+import '../../../shared/widgets/app_empty_state.dart';
+import '../../../shared/widgets/app_section_header.dart';
 import '../../search/screens/search_palette.dart';
 
 /// AI 对话页 — 核心交互界面 (实测对接 2026-06-15)
@@ -113,7 +114,6 @@ class _ChatScaffold extends ConsumerStatefulWidget {
 class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
-  final _voiceService = VoiceInputService();
   final _inputFocusNode = FocusNode();
 
   /// 用户是否在底部附近 (用于自动跟随 / 显示滚动按钮)
@@ -138,7 +138,6 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
   void dispose() {
     _messageController.dispose();
     _scrollController.dispose();
-    _voiceService.dispose();
     _inputFocusNode.dispose();
     super.dispose();
   }
@@ -256,13 +255,13 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(widget.title, style: const TextStyle(fontSize: 16)),
+            Text(widget.title, style: const TextStyle(fontSize: AppTextSizes.titleSm)),
             // 状态行: AI 工作中 / 用量统计
             if (state.isResponding)
               Text(
                 'AI 正在工作...',
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: AppTextSizes.label,
                   color: theme.colorScheme.primary,
                 ),
               )
@@ -305,6 +304,11 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                 },
               );
             },
+          ),
+          IconButton(
+            icon: const Icon(Icons.tune_rounded, size: 20),
+            tooltip: 'Agent 设置',
+            onPressed: () => _openAgentSettings(context),
           ),
           IconButton(
             icon: const Icon(Icons.add_comment_outlined, size: 20),
@@ -358,7 +362,7 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                       const Expanded(
                         child: Text(
                           'Cookie 可能已过期',
-                          style: TextStyle(fontSize: 12, color: Colors.red),
+                          style: TextStyle(fontSize: AppTextSizes.label, color: Colors.red),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
@@ -411,7 +415,7 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                     const SizedBox(width: 6),
                     Text(
                       info.$3,
-                      style: TextStyle(fontSize: 12, color: info.$2),
+                      style: TextStyle(fontSize: AppTextSizes.label, color: info.$2),
                     ),
                   ],
                 ),
@@ -611,7 +615,6 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
       enableDrag: false,
       isScrollControlled: true,
       showDragHandle: true,
-      backgroundColor: isDark ? AppColors.darkBg : AppColors.lightSurface,
       builder: (sheetCtx) {
         return SafeArea(
           child: Padding(
@@ -859,93 +862,72 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  // 左侧 + 按钮 (附件/功能)
-                  IconButton(
-                    onPressed: _showPlusMenu,
-                    icon: const Icon(Icons.add_rounded, size: 22),
-                    style: IconButton.styleFrom(
-                      foregroundColor: theme.colorScheme.onSurfaceVariant,
-                      minimumSize: const Size(AppTouch.min, AppTouch.min),
-                      padding: const EdgeInsets.all(6),
-                    ),
-                  ),
-                  const SizedBox(width: AppSpacing.xs),
-                  // 输入框 (无边框, 透明, 自适应高度)
-                  Expanded(
-                    child: TextField(
-                      controller: _messageController,
-                      focusNode: _inputFocusNode,
-                      minLines: 1,
-                      maxLines: 6,
-                      style: theme.textTheme.bodyLarge?.copyWith(height: 1.4),
-                      decoration: InputDecoration(
-                        hintText: '提出后续修改要求',
-                        hintStyle: TextStyle(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(
-                          vertical: 10,
-                          horizontal: 4,
-                        ),
-                        border: InputBorder.none,
-                        enabledBorder: InputBorder.none,
-                        focusedBorder: InputBorder.none,
-                        filled: false,
+                    // 左侧 + 按钮 (附件/功能)
+                    IconButton(
+                      onPressed: _showPlusMenu,
+                      icon: const Icon(Icons.add_rounded, size: 22),
+                      style: IconButton.styleFrom(
+                        foregroundColor: theme.colorScheme.onSurfaceVariant,
+                        minimumSize: const Size(AppTouch.min, AppTouch.min),
+                        padding: const EdgeInsets.all(6),
                       ),
-                      onSubmitted: (_) => _sendMessage(),
                     ),
-                  ),
-                  const SizedBox(width: AppSpacing.xs),
-                  // 右侧发送按钮 (圆形, 上箭头, 有内容才亮)
-                  // 必须包 ValueListenableBuilder: TextField 打字不会触发父 build,
-                  // 否则 hasText 只在 build 时算一次 → 输入文字后按钮永远禁用。
-                  ValueListenableBuilder<TextEditingValue>(
-                    valueListenable: _messageController,
-                    builder: (context, value, _) {
-                      final hasText = value.text.trim().isNotEmpty;
-                      return widget.state.isResponding
-                          ? _ComposerSendButton(
-                              icon: Icons.stop_rounded,
-                              onPressed: () => notifier.stopResponding(),
-                              enabled: true,
-                              isStop: true,
-                            )
-                          : _ComposerSendButton(
-                              icon: Icons.arrow_upward_rounded,
-                              onPressed: hasText ? _sendMessage : null,
-                              enabled: hasText,
-                            );
-                    },
-                  ),
-                ],
-              ),
+                    const SizedBox(width: AppSpacing.xs),
+                    // 输入框 (无边框, 透明, 自适应高度)
+                    Expanded(
+                      child: TextField(
+                        controller: _messageController,
+                        focusNode: _inputFocusNode,
+                        minLines: 1,
+                        maxLines: 6,
+                        style: theme.textTheme.bodyLarge?.copyWith(height: 1.4),
+                        decoration: InputDecoration(
+                          hintText: '提出后续修改要求',
+                          hintStyle: TextStyle(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                            vertical: 10,
+                            horizontal: 4,
+                          ),
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          filled: false,
+                        ),
+                        onSubmitted: (_) => _sendMessage(),
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.xs),
+                    // 右侧发送按钮 (圆形, 上箭头, 有内容才亮)
+                    // 必须包 ValueListenableBuilder: TextField 打字不会触发父 build,
+                    // 否则 hasText 只在 build 时算一次 → 输入文字后按钮永远禁用。
+                    ValueListenableBuilder<TextEditingValue>(
+                      valueListenable: _messageController,
+                      builder: (context, value, _) {
+                        final hasText = value.text.trim().isNotEmpty;
+                        return widget.state.isResponding
+                            ? _ComposerSendButton(
+                                icon: Icons.stop_rounded,
+                                onPressed: () => notifier.stopResponding(),
+                                enabled: true,
+                                isStop: true,
+                              )
+                            : _ComposerSendButton(
+                                icon: Icons.arrow_upward_rounded,
+                                onPressed: hasText ? _sendMessage : null,
+                                enabled: hasText,
+                              );
+                      },
+                    ),
+                  ],
+                ),
               // 工具栏 (输入框内底部一行): + 语音 | 变更前确认 | 模型 | 质量
               Padding(
                 padding: const EdgeInsets.only(top: 2),
                 child: Row(
                   children: [
-                    // 语音输入按钮 (长按说话)
-                    // ValueKey 稳定 state: 避免父级 rebuild 时按钮 unmount/remount
-                    // 导致 _available 重置 → 闪烁
-                    VoiceInputButton(
-                      key: const ValueKey('voice_input'),
-                      service: _voiceService,
-                      size: 36,
-                      onTranscribed: (text) {
-                        final existing = _messageController.text;
-                        final sep = existing.isEmpty || existing.endsWith(' ')
-                            ? ''
-                            : ' ';
-                        _messageController.text = '$existing$sep$text';
-                        _messageController
-                            .selection = TextSelection.fromPosition(
-                          TextPosition(offset: _messageController.text.length),
-                        );
-                        _messageController.notifyListeners();
-                      },
-                    ),
-                    const SizedBox(width: AppSpacing.xs),
                     // 模式选择器 (变更前确认/计划模式/自动编辑)
                     _ModeSelector(
                       mode: widget.state.mode,
@@ -981,6 +963,17 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  /// 打开 Agent 设置页面
+  void _openAgentSettings(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AgentSettingsScreen(
+          workspacePath: widget.workspacePath,
         ),
       ),
     );
@@ -1145,7 +1138,7 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                         child: Text(
                           '@文件路径 让 AI 读取桌面端文件；#可引用其他对话',
                           style: TextStyle(
-                            fontSize: 11,
+                            fontSize: AppTextSizes.caption,
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
                         ),
@@ -1467,7 +1460,7 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                 Text(
                   '选择提及类型，将插入对应标签',
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: AppTextSizes.label,
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
@@ -1483,7 +1476,7 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                     leading: Text(
                       m.$1,
                       style: TextStyle(
-                        fontSize: 14,
+                        fontSize: AppTextSizes.bodyMd,
                         fontWeight: FontWeight.w600,
                         fontFamily: kMonoFont,
                         color: const Color(0xFFF59E0B),
@@ -1492,14 +1485,14 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                     title: Text(
                       m.$2,
                       style: const TextStyle(
-                        fontSize: 14,
+                        fontSize: AppTextSizes.bodyMd,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
                     subtitle: Text(
                       m.$3,
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: AppTextSizes.label,
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
@@ -1565,14 +1558,14 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                       title: Text(
                         cmd.name,
                         style: const TextStyle(
-                          fontSize: 14,
+                          fontSize: AppTextSizes.bodyMd,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                       subtitle: Text(
                         cmd.desc,
                         style: TextStyle(
-                          fontSize: 12,
+                          fontSize: AppTextSizes.label,
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
                       ),
@@ -1629,7 +1622,7 @@ class _PlusMenuItem extends StatelessWidget {
           Text(
             label,
             style: theme.textTheme.bodySmall?.copyWith(
-              fontSize: 12,
+              fontSize: AppTextSizes.label,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -1655,7 +1648,7 @@ class _ErrorBanner extends StatelessWidget {
         message,
         style: TextStyle(
           color: theme.colorScheme.onErrorContainer,
-          fontSize: 13,
+          fontSize: AppTextSizes.bodySm,
         ),
       ),
     );
@@ -1710,7 +1703,7 @@ class _PlanListState extends State<_PlanList>
     final total = plan.length;
     final isDark = theme.brightness == Brightness.dark;
     // ★ 浮动面板必须完全不透明, 否会透出底层消息文字
-    final cardBg = isDark ? const Color(0xFF1C1C1E) : const Color(0xFFF2F2F7);
+    final cardBg = isDark ? AppColors.darkBg : AppColors.lightSurface;
     // 有进行中的项, 或 AI 正在工作 → 视为"活跃"
     final isActive =
         widget.isResponding ||
@@ -1775,7 +1768,7 @@ class _PlanListState extends State<_PlanList>
                   Text(
                     '$completed/$total',
                     style: TextStyle(
-                      fontSize: 12,
+                      fontSize: AppTextSizes.label,
                       fontWeight: FontWeight.w600,
                       color: theme.colorScheme.onSurface,
                     ),
@@ -1788,7 +1781,7 @@ class _PlanListState extends State<_PlanList>
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: 11,
+                        fontSize: AppTextSizes.caption,
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
@@ -1870,7 +1863,7 @@ class _PlanRow extends StatelessWidget {
             child: Text(
               item.title,
               style: TextStyle(
-                fontSize: 12,
+                fontSize: AppTextSizes.label,
                 height: 1.35,
                 color: item.status == TodoStatus.completed
                     ? theme.colorScheme.onSurfaceVariant
@@ -1972,7 +1965,7 @@ class _PermissionSheetContent extends StatelessWidget {
                 child: Text(
                   perm.riskLevel.toUpperCase(),
                   style: const TextStyle(
-                    fontSize: 11,
+                    fontSize: AppTextSizes.caption,
                     fontWeight: FontWeight.bold,
                     color: Colors.white,
                   ),
@@ -1986,7 +1979,7 @@ class _PermissionSheetContent extends StatelessWidget {
           Text(
             perm.reason,
             style: TextStyle(
-              fontSize: 13,
+              fontSize: AppTextSizes.bodySm,
               color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
@@ -2027,32 +2020,32 @@ class _PermissionSheetContent extends StatelessWidget {
                 data: planText!,
                 styleSheet: MarkdownStyleSheet(
                   p: TextStyle(
-                    fontSize: 13,
+                    fontSize: AppTextSizes.bodySm,
                     height: 1.6,
                     color: theme.colorScheme.onSurface,
                   ),
                   h1: TextStyle(
-                    fontSize: 16,
+                    fontSize: AppTextSizes.titleSm,
                     fontWeight: FontWeight.bold,
                     color: theme.colorScheme.onSurface,
                   ),
                   h2: TextStyle(
-                    fontSize: 14,
+                    fontSize: AppTextSizes.bodyMd,
                     fontWeight: FontWeight.w600,
                     color: theme.colorScheme.onSurface,
                   ),
                   h3: TextStyle(
-                    fontSize: 13,
+                    fontSize: AppTextSizes.bodySm,
                     fontWeight: FontWeight.w600,
                     color: theme.colorScheme.onSurface,
                   ),
                   listBullet: TextStyle(
-                    fontSize: 13,
+                    fontSize: AppTextSizes.bodySm,
                     color: theme.colorScheme.onSurface,
                   ),
                   code: TextStyle(
                     backgroundColor: theme.colorScheme.surfaceContainerHigh,
-                    fontSize: 12,
+                    fontSize: AppTextSizes.label,
                     fontFamily: kMonoFont,
                   ),
                   codeblockDecoration: BoxDecoration(
@@ -2080,7 +2073,7 @@ class _PermissionSheetContent extends StatelessWidget {
             child: Text(
               detail,
               style: TextStyle(
-                fontSize: 12,
+                fontSize: AppTextSizes.label,
                 fontFamily: kMonoFont,
                 color: theme.colorScheme.onSurface,
               ),
@@ -2233,18 +2226,18 @@ class _PlanApprovalCard extends StatelessWidget {
                 data: display,
                 styleSheet: MarkdownStyleSheet(
                   p: TextStyle(
-                    fontSize: 13,
+                    fontSize: AppTextSizes.bodySm,
                     height: 1.5,
                     color: theme.colorScheme.onSurface,
                   ),
                   h2: TextStyle(
-                    fontSize: 15,
+                    fontSize: AppTextSizes.body,
                     fontWeight: FontWeight.w600,
                     color: theme.colorScheme.onSurface,
                   ),
                   code: TextStyle(
                     backgroundColor: theme.colorScheme.surfaceContainerHigh,
-                    fontSize: 12,
+                    fontSize: AppTextSizes.label,
                     fontFamily: kMonoFont,
                   ),
                 ),
@@ -2480,7 +2473,7 @@ class _QuestionOption extends StatelessWidget {
                       Text(
                         description,
                         style: TextStyle(
-                          fontSize: 12,
+                          fontSize: AppTextSizes.label,
                           height: 1.4,
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -2552,12 +2545,12 @@ class _CommandPalette extends StatelessWidget {
             ),
             title: Text(
               c.name,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              style: const TextStyle(fontSize: AppTextSizes.bodySm, fontWeight: FontWeight.w600),
             ),
             subtitle: Text(
               c.desc,
               style: TextStyle(
-                fontSize: 11,
+                fontSize: AppTextSizes.caption,
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
@@ -2642,7 +2635,7 @@ class _MentionOverlay extends ConsumerWidget {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                  fontSize: 13,
+                                  fontSize: AppTextSizes.bodySm,
                                   fontWeight: FontWeight.w500,
                                   color: theme.colorScheme.onSurface,
                                 ),
@@ -2653,7 +2646,7 @@ class _MentionOverlay extends ConsumerWidget {
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
-                                    fontSize: 11,
+                                    fontSize: AppTextSizes.caption,
                                     color: theme.colorScheme.onSurfaceVariant,
                                   ),
                                 ),
@@ -2952,7 +2945,7 @@ class _UsagePill extends StatelessWidget {
                 Text(
                   p.text,
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: AppTextSizes.caption,
                     fontFamily: kMonoFont,
                     color: p.color,
                     fontFeatures: const [FontFeature.tabularFigures()],
@@ -3045,7 +3038,7 @@ class _ToolbarChip extends StatelessWidget {
             Text(
               label,
               style: TextStyle(
-                fontSize: 12,
+                fontSize: AppTextSizes.label,
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
@@ -3161,7 +3154,7 @@ class _TokenUsageBadge extends StatelessWidget {
     return Text(
       '↑${_fmt(u.input)} ↓${_fmt(u.output)}',
       style: TextStyle(
-        fontSize: 11,
+        fontSize: AppTextSizes.caption,
         fontFamily: kMonoFont,
         color: Theme.of(context).colorScheme.onSurfaceVariant,
         fontFeatures: const [FontFeature.tabularFigures()],
@@ -3275,7 +3268,7 @@ class _ModeSelector extends StatelessWidget {
             Text(
               _current.$3,
               style: TextStyle(
-                fontSize: 12,
+                fontSize: AppTextSizes.label,
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
@@ -3330,7 +3323,7 @@ class _ModeOptionTile extends StatelessWidget {
       subtitle: Text(
         desc,
         style: TextStyle(
-          fontSize: 12,
+          fontSize: AppTextSizes.label,
           color: theme.colorScheme.onSurfaceVariant,
         ),
       ),
@@ -3422,7 +3415,7 @@ class _ThoughtLevelSelector extends StatelessWidget {
             Text(
               cur.$2,
               style: TextStyle(
-                fontSize: 12,
+                fontSize: AppTextSizes.label,
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
@@ -3536,7 +3529,7 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
                     Text(
                       '${widget.models.length} 个模型',
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: AppTextSizes.label,
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
@@ -3549,11 +3542,11 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
                 child: TextField(
                   controller: _searchController,
                   onChanged: (v) => setState(() => _query = v),
-                  style: const TextStyle(fontSize: 14),
+                  style: const TextStyle(fontSize: AppTextSizes.bodyMd),
                   decoration: InputDecoration(
                     hintText: '搜索模型...',
                     hintStyle: TextStyle(
-                      fontSize: 14,
+                      fontSize: AppTextSizes.bodyMd,
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
                     prefixIcon: Icon(
@@ -3592,7 +3585,7 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
                           query.isEmpty ? '暂无可用模型' : '未找到匹配的模型',
                           style: TextStyle(
                             color: theme.colorScheme.onSurfaceVariant,
-                            fontSize: 13,
+                            fontSize: AppTextSizes.bodySm,
                           ),
                         ),
                       )
@@ -3622,7 +3615,7 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
                                   Text(
                                     '${groups[pid]!.length}',
                                     style: TextStyle(
-                                      fontSize: 11,
+                                      fontSize: AppTextSizes.caption,
                                       color: theme.colorScheme.onSurfaceVariant,
                                     ),
                                   ),
@@ -3644,7 +3637,7 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
                                 title: Text(
                                   slug(m),
                                   style: TextStyle(
-                                    fontSize: 14,
+                                    fontSize: AppTextSizes.bodyMd,
                                     fontWeight: m == widget.current
                                         ? FontWeight.w600
                                         : FontWeight.w400,
@@ -3704,7 +3697,7 @@ class _ModelSelector extends StatelessWidget {
               ),
             )
           : Icon(Icons.memory, size: 16, color: theme.colorScheme.primary),
-      label: Text(_label, style: const TextStyle(fontSize: 12)),
+      label: Text(_label, style: const TextStyle(fontSize: AppTextSizes.label)),
       tooltip: models.isEmpty ? (isLoading ? '正在加载模型...' : '模型列表未加载') : '切换模型',
       onPressed: (models.isEmpty && !isLoading)
           ? null
@@ -3756,7 +3749,7 @@ class _DateSeparator extends StatelessWidget {
           child: Text(
             _format(date),
             style: TextStyle(
-              fontSize: 11,
+              fontSize: AppTextSizes.caption,
               fontWeight: FontWeight.w500,
               color: theme.colorScheme.onSurfaceVariant,
             ),
@@ -3947,7 +3940,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
             Expanded(
               child: Text(
                 message.content,
-                style: TextStyle(color: AppColors.danger, fontSize: 13),
+                style: TextStyle(color: AppColors.danger, fontSize: AppTextSizes.bodySm),
               ),
             ),
           ],
@@ -4006,12 +3999,12 @@ class _MessageBubbleState extends State<_MessageBubble> {
                           styleSheet: MarkdownStyleSheet(
                             p: const TextStyle(
                               color: Colors.white,
-                              fontSize: 14,
+                              fontSize: AppTextSizes.bodyMd,
                               height: 1.5,
                             ),
                             code: TextStyle(
                               backgroundColor: Colors.black26,
-                              fontSize: 13,
+                              fontSize: AppTextSizes.bodySm,
                               fontFamily: kMonoFont,
                             ),
                           ),
@@ -4046,7 +4039,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                       Text(
                         '编辑',
                         style: TextStyle(
-                          fontSize: 12,
+                          fontSize: AppTextSizes.label,
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
                       ),
@@ -4059,16 +4052,12 @@ class _MessageBubbleState extends State<_MessageBubble> {
       );
     }
 
-    // AI 气泡: 跟随主题 (深色=深灰面, 浅色=白底微灰)
+    // AI 气泡: 走主题 surface 阶梯 (深色=半透明白叠加, 浅色=实色灰)
     final isDark = theme.brightness == Brightness.dark;
-    final aiBg = isDark
-        ? const Color(0xFF1F2024)
-        : theme.colorScheme.surfaceContainerHigh;
-    final aiInk = isDark
-        ? const Color(0xFFE8EAED)
-        : theme.colorScheme.onSurface;
+    final aiBg = theme.colorScheme.surfaceContainerHigh;
+    final aiInk = theme.colorScheme.onSurface;
     final aiCodeBg = isDark
-        ? const Color(0xFF0D0E11)
+        ? theme.colorScheme.surfaceContainerLowest
         : theme.colorScheme.surfaceContainerHighest;
 
     return Align(
@@ -4142,14 +4131,14 @@ class _MessageBubbleState extends State<_MessageBubble> {
                   child: MarkdownBody(
                     data: seg.text,
                     styleSheet: MarkdownStyleSheet(
-                      p: TextStyle(color: aiInk, fontSize: 14),
+                      p: TextStyle(color: aiInk, fontSize: AppTextSizes.bodyMd),
                       tableColumnWidth: const IntrinsicColumnWidth(),
                       tableHead: TextStyle(
                         fontWeight: FontWeight.w700,
                         color: aiInk,
-                        fontSize: 13,
+                        fontSize: AppTextSizes.bodySm,
                       ),
-                      tableBody: TextStyle(color: aiInk, fontSize: 13),
+                      tableBody: TextStyle(color: aiInk, fontSize: AppTextSizes.bodySm),
                       tableCellsPadding: const EdgeInsets.symmetric(
                         horizontal: 10,
                         vertical: 6,
@@ -4179,10 +4168,10 @@ class _MessageBubbleState extends State<_MessageBubble> {
           MarkdownBody(
             data: seg.text,
             styleSheet: MarkdownStyleSheet(
-              p: TextStyle(color: aiInk, fontSize: 14, height: 1.6),
+              p: TextStyle(color: aiInk, fontSize: AppTextSizes.bodyMd, height: 1.6),
               code: TextStyle(
                 backgroundColor: aiCodeBg,
-                fontSize: 13,
+                fontSize: AppTextSizes.bodySm,
                 fontFamily: kMonoFont,
                 color: aiInk,
               ),
@@ -4452,7 +4441,6 @@ class _MessageBubbleState extends State<_MessageBubble> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: theme.colorScheme.surfaceContainerHighest,
       builder: (ctx) => Padding(
         padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
         child: Column(
@@ -4471,7 +4459,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                   Text(
                     '编辑消息',
                     style: TextStyle(
-                      fontSize: 16,
+                      fontSize: AppTextSizes.titleSm,
                       fontWeight: FontWeight.w600,
                       color: theme.colorScheme.onSurface,
                     ),
@@ -4493,7 +4481,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                 minLines: 1,
                 autofocus: true,
                 style: TextStyle(
-                  fontSize: 14,
+                  fontSize: AppTextSizes.bodyMd,
                   color: theme.colorScheme.onSurface,
                 ),
                 decoration: InputDecoration(
@@ -4585,7 +4573,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                       ? '${message.content.substring(0, 120)}...'
                       : message.content,
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: AppTextSizes.label,
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                   maxLines: 3,
@@ -4929,7 +4917,7 @@ class _PlanCardState extends State<_PlanCard>
                                     ),
                                     label: Text(
                                       cnLabel,
-                                      style: const TextStyle(fontSize: 13),
+                                      style: const TextStyle(fontSize: AppTextSizes.bodySm),
                                     ),
                                     style: OutlinedButton.styleFrom(
                                       foregroundColor: AppColors.danger,
@@ -4954,7 +4942,7 @@ class _PlanCardState extends State<_PlanCard>
                                     ),
                                     label: Text(
                                       cnLabel,
-                                      style: const TextStyle(fontSize: 13),
+                                      style: const TextStyle(fontSize: AppTextSizes.bodySm),
                                     ),
                                     style: FilledButton.styleFrom(
                                       backgroundColor: AppColors.success,
@@ -5061,7 +5049,7 @@ class _ChangedFilesSummaryState extends State<_ChangedFilesSummary>
                   Text(
                     '${files.length} 个文件已更改',
                     style: TextStyle(
-                      fontSize: 12,
+                      fontSize: AppTextSizes.label,
                       fontWeight: FontWeight.w500,
                       color: widget.inkColor,
                     ),
@@ -5071,7 +5059,7 @@ class _ChangedFilesSummaryState extends State<_ChangedFilesSummary>
                     Text(
                       '+$totalAdded',
                       style: const TextStyle(
-                        fontSize: 11,
+                        fontSize: AppTextSizes.caption,
                         color: AppColors.success,
                       ),
                     ),
@@ -5080,7 +5068,7 @@ class _ChangedFilesSummaryState extends State<_ChangedFilesSummary>
                     Text(
                       '-$totalRemoved',
                       style: const TextStyle(
-                        fontSize: 11,
+                        fontSize: AppTextSizes.caption,
                         color: AppColors.danger,
                       ),
                     ),
@@ -5134,7 +5122,7 @@ class _ChangedFilesSummaryState extends State<_ChangedFilesSummary>
                                   child: Text(
                                     path.split('/').last,
                                     style: TextStyle(
-                                      fontSize: 12,
+                                      fontSize: AppTextSizes.label,
                                       fontFamily: kMonoFont,
                                       color: widget.inkColor,
                                     ),
@@ -5283,7 +5271,7 @@ class _ToolActivityCardsState extends State<_ToolActivityCards>
                   Text(
                     '${activities.length} 个工具调用',
                     style: TextStyle(
-                      fontSize: 12,
+                      fontSize: AppTextSizes.label,
                       fontWeight: FontWeight.w500,
                       color: theme.colorScheme.onSurface,
                     ),
@@ -5298,7 +5286,7 @@ class _ToolActivityCardsState extends State<_ToolActivityCards>
                         if (errors > 0) '$errors 出错',
                       ].join(' · '),
                       style: TextStyle(
-                        fontSize: 11,
+                        fontSize: AppTextSizes.caption,
                         color: running > 0
                             ? AppColors.accent
                             : theme.colorScheme.onSurfaceVariant,
@@ -5500,7 +5488,7 @@ class _SubagentSection extends StatelessWidget {
                 Text(
                   '${subagents.length} 个子任务',
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: AppTextSizes.label,
                     fontWeight: FontWeight.w500,
                     color: theme.colorScheme.onSurface,
                   ),
@@ -5519,7 +5507,7 @@ class _SubagentSection extends StatelessWidget {
                   Text(
                     '$running 运行中',
                     style: const TextStyle(
-                      fontSize: 11,
+                      fontSize: AppTextSizes.caption,
                       color: AppColors.accent,
                     ),
                   ),
@@ -5609,12 +5597,12 @@ class _ToolActivityRow extends StatelessWidget {
     } else if (isError) {
       statusIcon = const Text(
         '✗',
-        style: TextStyle(color: AppColors.danger, fontSize: 13),
+        style: TextStyle(color: AppColors.danger, fontSize: AppTextSizes.bodySm),
       );
     } else {
       statusIcon = const Text(
         '✓',
-        style: TextStyle(color: AppColors.success, fontSize: 13),
+        style: TextStyle(color: AppColors.success, fontSize: AppTextSizes.bodySm),
       );
     }
 
@@ -5623,7 +5611,7 @@ class _ToolActivityRow extends StatelessWidget {
         (a.result != null && a.result!.isNotEmpty);
 
     final detailBg = theme.brightness == Brightness.dark
-        ? const Color(0xFF0D0E11)
+        ? theme.colorScheme.surfaceContainerLowest
         : theme.colorScheme.surfaceContainerHighest;
 
     return Column(
@@ -5635,13 +5623,13 @@ class _ToolActivityRow extends StatelessWidget {
             padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 2),
             child: Row(
               children: [
-                Text(emoji, style: const TextStyle(fontSize: 13)),
+                Text(emoji, style: const TextStyle(fontSize: AppTextSizes.bodySm)),
                 const SizedBox(width: 5),
                 Flexible(
                   child: Text(
                     _formatToolName(a.toolName),
                     style: TextStyle(
-                      fontSize: 12,
+                      fontSize: AppTextSizes.label,
                       fontFamily: kMonoFont,
                       color: inkColor,
                     ),
@@ -5652,7 +5640,7 @@ class _ToolActivityRow extends StatelessWidget {
                 Text(
                   '$statusText$elapsed',
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: AppTextSizes.caption,
                     color: running
                         ? AppColors.accent
                         : theme.colorScheme.onSurfaceVariant,
@@ -5746,7 +5734,7 @@ class _ToolActivityRow extends StatelessWidget {
                 child: Text(
                   v.split('/').last,
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: AppTextSizes.caption,
                     fontFamily: kMonoFont,
                     color: inkColor,
                     fontWeight: FontWeight.w600,
@@ -5791,7 +5779,7 @@ class _ToolActivityRow extends StatelessWidget {
               child: Text(
                 valStr.length > 500 ? '${valStr.substring(0, 500)}...' : valStr,
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: AppTextSizes.caption,
                   fontFamily: kMonoFont,
                   color: inkColor,
                   height: 1.4,
@@ -5804,7 +5792,7 @@ class _ToolActivityRow extends StatelessWidget {
             Text(
               '${e.key}: $valStr',
               style: TextStyle(
-                fontSize: 11,
+                fontSize: AppTextSizes.caption,
                 fontFamily: kMonoFont,
                 color: inkColor,
               ),
@@ -5860,7 +5848,7 @@ class _ToolActivityRow extends StatelessWidget {
               return Text(
                 line,
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: AppTextSizes.caption,
                   fontFamily: kMonoFont,
                   color: lineColor ?? inkColor,
                   height: 1.4,
@@ -5912,7 +5900,7 @@ class _ThoughtBlockState extends State<_ThoughtBlock>
                 Text(
                   '思考过程',
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: AppTextSizes.label,
                     color: widget.theme.colorScheme.onSurface,
                     fontStyle: FontStyle.italic,
                   ),
@@ -5929,7 +5917,7 @@ class _ThoughtBlockState extends State<_ThoughtBlock>
                     child: Text(
                       widget.thought,
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: AppTextSizes.label,
                         color: widget.theme.colorScheme.onSurface,
                         height: 1.4,
                       ),
@@ -6071,10 +6059,12 @@ class _CodeBlockState extends State<_CodeBlock> {
         : widget.code;
 
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 6),
+      margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF0D0E11) : const Color(0xFFF6F8FA),
-        borderRadius: BorderRadius.circular(8),
+        color: isDark
+            ? theme.colorScheme.surfaceContainerLowest
+            : theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
         border: Border.all(color: theme.dividerColor.withValues(alpha: 0.3)),
       ),
       child: Column(
@@ -6095,7 +6085,7 @@ class _CodeBlockState extends State<_CodeBlock> {
                   Text(
                     widget.language!,
                     style: TextStyle(
-                      fontSize: 11,
+                      fontSize: AppTextSizes.caption,
                       fontFamily: 'monospace',
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
@@ -6130,7 +6120,7 @@ class _CodeBlockState extends State<_CodeBlock> {
                         Text(
                           _copied ? '已复制' : '复制',
                           style: TextStyle(
-                            fontSize: 11,
+                            fontSize: AppTextSizes.caption,
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
                         ),
@@ -6184,7 +6174,7 @@ class _CodeBlockState extends State<_CodeBlock> {
                           ? '收起'
                           : '展开剩余 ${_lineCount - _collapseThreshold} 行',
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: AppTextSizes.label,
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
@@ -6338,7 +6328,7 @@ class _InfoTag extends StatelessWidget {
         children: [
           Icon(icon, size: iconSize, color: c),
           const SizedBox(width: 4),
-          Text(label, style: TextStyle(fontSize: 11, color: c)),
+          Text(label, style: TextStyle(fontSize: AppTextSizes.caption, color: c)),
         ],
       ),
     );
@@ -6380,7 +6370,7 @@ class _HomeSectionHeader extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(actionLabel!, style: const TextStyle(fontSize: 12)),
+                Text(actionLabel!, style: const TextStyle(fontSize: AppTextSizes.label)),
                 const Icon(Icons.chevron_right, size: 14),
               ],
             ),
@@ -6443,7 +6433,7 @@ class _RecentTaskCard extends StatelessWidget {
                     Text(
                       isRunning ? '进行中' : _timeAgo(task.updatedAt),
                       style: TextStyle(
-                        fontSize: 11,
+                        fontSize: AppTextSizes.caption,
                         color: isRunning
                             ? AppColors.accent
                             : theme.colorScheme.onSurfaceVariant,
@@ -6598,7 +6588,7 @@ class _HistoryDrawerState extends ConsumerState<_HistoryDrawer> {
           hintText: '搜索对话...',
           hintStyle: TextStyle(
             color: theme.colorScheme.onSurfaceVariant,
-            fontSize: 14,
+            fontSize: AppTextSizes.bodyMd,
           ),
           prefixIcon: Icon(
             Icons.search,
@@ -6774,6 +6764,157 @@ class _HistoryDrawerState extends ConsumerState<_HistoryDrawer> {
     }
   }
 
+  /// 时间分组标签: 今天 / 昨天 / 本周 / 更早
+  String _timeGroupLabel(DateTime? time) {
+    if (time == null) return '更早';
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final t = DateTime(time.year, time.month, time.day);
+    final diff = today.difference(t).inDays;
+    if (diff <= 0) return '今天';
+    if (diff == 1) return '昨天';
+    if (diff < 7) return '本周';
+    return '更早';
+  }
+
+  /// mono 相对时间 (14:32 / 昨天 / 周二 / 7/20)
+  String _formatHistTime(DateTime? time) {
+    if (time == null) return '—';
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final t = DateTime(time.year, time.month, time.day);
+    final diff = today.difference(t).inDays;
+    String two(int n) => n.toString().padLeft(2, '0');
+    if (diff <= 0) return '${two(time.hour)}:${two(time.minute)}';
+    if (diff == 1) return '昨天';
+    if (diff < 7) {
+      const wd = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+      return wd[time.weekday - 1];
+    }
+    return '${time.month}/${time.day}';
+  }
+
+  /// 分组渲染历史列表
+  Widget _buildGroupedHistory(ThemeData theme, List<Task> tasks) {
+    // 按时间分组 (保持已排序顺序, 分桶)
+    final groups = <String, List<Task>>{};
+    for (final t in tasks) {
+      final label = _timeGroupLabel(t.updatedAt);
+      (groups[label] ??= []).add(t);
+    }
+    // 固定分组顺序
+    const order = ['今天', '昨天', '本周', '更早'];
+    final ordered = order.where(groups.containsKey);
+
+    return ListView(
+      padding: const EdgeInsets.only(bottom: AppSpacing.lg),
+      children: [
+        for (final g in ordered) ...[
+          AppSectionHeader(title: g),
+          for (final task in groups[g]!)
+            _buildHistoryItem(theme, task),
+        ],
+      ],
+    );
+  }
+
+  /// 单个对话项 (圆角图标块 + 标题 + mono 时间/状态)
+  Widget _buildHistoryItem(ThemeData theme, Task task) {
+    final isActive = task.id == widget.currentTaskId;
+    final isRunning = task.status == TaskStatus.running;
+    final isArchived = task.archived;
+
+    return Opacity(
+      opacity: isArchived ? 0.5 : 1.0,
+      child: InkWell(
+        onTap: () {
+          Navigator.pop(context);
+          widget.onSelected(task.id);
+        },
+        onLongPress: () => _showTaskActions(context, task),
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        child: Container(
+          margin: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.sm, vertical: 1),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+          decoration: BoxDecoration(
+            color: isActive
+                ? AppColors.accentContainer
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppRadius.md),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 图标块
+              Container(
+                width: 28, height: 28,
+                margin: const EdgeInsets.only(top: 1),
+                decoration: BoxDecoration(
+                  color: isActive
+                      ? AppColors.accent
+                      : theme.colorScheme.surfaceContainerHigh,
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                ),
+                child: Icon(
+                  isRunning ? Icons.autorenew_rounded : Icons.chat_bubble_outline_rounded,
+                  size: 14,
+                  color: isActive
+                      ? Colors.white
+                      : (isRunning ? AppColors.warning : theme.colorScheme.onSurfaceVariant),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              // 标题 + 元信息
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      task.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontSize: AppTextSizes.bodySm,
+                        fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        if (isRunning) ...[
+                          _RunningDot(),
+                          const SizedBox(width: AppSpacing.xs),
+                          Text('运行中',
+                            style: AppText.mono(context,
+                              size: AppTextSizes.monoXs,
+                              color: AppColors.warning)),
+                          const SizedBox(width: AppSpacing.sm),
+                          Text('·',
+                            style: AppText.mono(context,
+                              size: AppTextSizes.monoXs,
+                              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.4))),
+                          const SizedBox(width: AppSpacing.sm),
+                        ],
+                        Text(_formatHistTime(task.updatedAt),
+                          style: AppText.mono(context,
+                            size: AppTextSizes.monoXs,
+                            color: theme.colorScheme.onSurfaceVariant)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -6800,7 +6941,9 @@ class _HistoryDrawerState extends ConsumerState<_HistoryDrawer> {
     );
 
     return Drawer(
-      backgroundColor: theme.colorScheme.surfaceContainerLowest,
+      backgroundColor: theme.brightness == Brightness.dark
+          ? AppColors.darkSurfaceElevated
+          : AppColors.lightSurface,
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -6852,7 +6995,7 @@ class _HistoryDrawerState extends ConsumerState<_HistoryDrawer> {
                           Text(
                             _showArchived ? '已归档' : '归档',
                             style: TextStyle(
-                              fontSize: 12,
+                              fontSize: AppTextSizes.label,
                               color: _showArchived
                                   ? AppColors.accent
                                   : theme.colorScheme.onSurfaceVariant,
@@ -6868,83 +7011,94 @@ class _HistoryDrawerState extends ConsumerState<_HistoryDrawer> {
             // 搜索框
             _buildSearchField(theme),
             // 新对话按钮
-            ListTile(
-              leading: Icon(
-                Icons.add_circle_outline,
-                color: theme.colorScheme.primary,
-                size: 22,
+            // 新对话 (虚线描边按钮)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, AppSpacing.sm),
+              child: InkWell(
+                onTap: () {
+                  Navigator.pop(context);
+                  widget.onNewChat();
+                },
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                      color: theme.colorScheme.outlineVariant,
+                      strokeAlign: BorderSide.strokeAlignOutside),
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.add_rounded, size: 18, color: AppColors.accent),
+                      const SizedBox(width: AppSpacing.sm),
+                      Text('新对话',
+                          style: TextStyle(
+                            color: AppColors.accent,
+                            fontSize: AppTextSizes.bodySm,
+                            fontWeight: FontWeight.w500)),
+                    ],
+                  ),
+                ),
               ),
-              title: const Text('新对话'),
-              onTap: () {
-                Navigator.pop(context);
-                widget.onNewChat();
-              },
             ),
-            const Divider(
-              height: 1,
-              indent: AppSpacing.lg,
-              endIndent: AppSpacing.lg,
-            ),
-            // 历史列表
+            // 历史列表 (时间分组)
             Expanded(
               child: tasks.isEmpty
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(AppSpacing.xl),
-                        child: Text(
-                          query.isNotEmpty
-                              ? '未找到匹配的对话'
-                              : (_showArchived ? '暂无已归档对话' : '暂无历史对话'),
-                          style: TextStyle(
-                            color: theme.colorScheme.onSurfaceVariant,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ),
+                  ? AppEmptyState(
+                      icon: Icons.chat_bubble_outline_rounded,
+                      title: query.isNotEmpty
+                          ? '未找到匹配的对话'
+                          : (_showArchived ? '暂无已归档对话' : '暂无历史对话'),
                     )
-                  : ListView.builder(
-                      padding: const EdgeInsets.symmetric(
-                        vertical: AppSpacing.sm,
-                      ),
-                      itemCount: tasks.length,
-                      itemBuilder: (context, index) {
-                        final task = tasks[index];
-                        final isActive = task.id == widget.currentTaskId;
-                        final isDimmed = task.archived;
-                        return Opacity(
-                          opacity: isDimmed ? 0.5 : 1.0,
-                          child: ListTile(
-                            selected: isActive,
-                            leading: Icon(
-                              task.status == TaskStatus.running
-                                  ? Icons.autorenew
-                                  : Icons.chat_bubble_outline,
-                              size: 18,
-                              color: isActive
-                                  ? theme.colorScheme.primary
-                                  : theme.colorScheme.onSurfaceVariant,
-                            ),
-                            title: Text(
-                              task.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                fontWeight: isActive
-                                    ? FontWeight.w600
-                                    : FontWeight.w400,
-                              ),
-                            ),
-                            onTap: () {
-                              Navigator.pop(context);
-                              widget.onSelected(task.id);
-                            },
-                            onLongPress: () => _showTaskActions(context, task),
-                          ),
-                        );
-                      },
-                    ),
+                  : _buildGroupedHistory(theme, tasks),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 运行中脉动小点 (历史列表元信息用)
+class _RunningDot extends StatefulWidget {
+  @override
+  State<_RunningDot> createState() => _RunningDotState();
+}
+
+class _RunningDotState extends State<_RunningDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+      vsync: this,
+      duration: AppDur.slow,
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (_, __) => Opacity(
+        opacity: 0.3 + 0.7 * _c.value,
+        child: Container(
+          width: 5, height: 5,
+          decoration: const BoxDecoration(
+            color: AppColors.warning,
+            shape: BoxShape.circle,
+          ),
         ),
       ),
     );

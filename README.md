@@ -172,6 +172,7 @@ dart run tool/probe25.dart "<zcode-url>"
 | `docs/开发方案.md` | 整体架构 / 技术选型 / 路线图 |
 | `docs/API逆向分析.md` | 早期逆向分析（部分已被规格文档订正） |
 | `docs/ui-optimization.md` | UI 优化记录 |
+| `docs/ui-style-guide.md` | **UI 设计规范**（基调 / 签名动作 / 三条硬规矩 / 反 AI-slop 清单） |
 | `CLAUDE.md` | 给 AI 协作者的项目导览 |
 | `tool/probe*.dart` | 产生协议规格的探针脚本 |
 

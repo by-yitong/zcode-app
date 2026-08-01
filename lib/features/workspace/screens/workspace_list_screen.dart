@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/relay/relay_protocol.dart';
 import '../../../../shared/theme/app_design_tokens.dart';
 import '../../../../shared/theme/app_router.dart';
+import '../../../../shared/widgets/app_empty_state.dart';
 import '../../../data/models/workspace.dart';
 import '../../../providers/app_providers.dart';
 import '../../search/screens/search_palette.dart';
@@ -54,7 +55,6 @@ class _WorkspaceListScreenState extends ConsumerState<WorkspaceListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final workspacesAsync = ref.watch(workspaceListProvider);
     final connectionAsync = ref.watch(relayConnectionStateProvider);
 
@@ -90,7 +90,15 @@ class _WorkspaceListScreenState extends ConsumerState<WorkspaceListScreen> {
         child: workspacesAsync.when(
           data: (workspaces) {
             if (workspaces.isEmpty) {
-              return _buildEmpty(theme);
+              return AppEmptyState(
+                icon: Icons.folder_off_outlined,
+                title: '暂无工作区',
+                subtitle: '在 ZCode 桌面端创建项目后\n下拉刷新即可看到',
+                actionLabel: '刷新',
+                actionIcon: Icons.refresh_rounded,
+                onAction: () =>
+                    ref.read(workspaceListProvider.notifier).refresh(),
+              );
             }
             return ListView.builder(
               padding: const EdgeInsets.all(16),
@@ -105,84 +113,17 @@ class _WorkspaceListScreenState extends ConsumerState<WorkspaceListScreen> {
             );
           },
           loading: () => const Center(child: CircularProgressIndicator()),
-          error: (error, _) => _buildError(theme, error.toString()),
+          error: (error, _) => AppEmptyState(
+            icon: Icons.error_outline_rounded,
+            title: '加载失败',
+            subtitle: error.toString(),
+            actionLabel: '重试',
+            actionIcon: Icons.refresh_rounded,
+            iconTint: AppColors.danger,
+            onAction: () => ref.read(workspaceListProvider.notifier).load(),
+          ),
         ),
       ),
-    );
-  }
-
-  Widget _buildEmpty(ThemeData theme) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 80,
-              height: 80,
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHigh,
-                borderRadius: BorderRadius.circular(AppRadius.xl),
-              ),
-              child: Icon(
-                Icons.folder_off_outlined,
-                size: 40,
-                color: theme.colorScheme.outline,
-              ),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            Text('暂无工作区', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
-            const SizedBox(height: AppSpacing.xs),
-            Text(
-              '在 ZCode 桌面端创建项目后\n下拉刷新即可看到',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: AppSpacing.xl),
-            FilledButton.icon(
-              onPressed: () => ref.read(workspaceListProvider.notifier).refresh(),
-              icon: const Icon(Icons.refresh, size: 18),
-              label: const Text('刷新'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildError(ThemeData theme, String error) {
-    return ListView(
-      children: [
-        const SizedBox(height: 120),
-        Icon(Icons.error_outline, size: 64, color: theme.colorScheme.error),
-        const SizedBox(height: 16),
-        Center(
-          child: Text(
-            '加载失败',
-            style: theme.textTheme.titleMedium,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32),
-          child: Text(
-            error,
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ),
-        const SizedBox(height: 24),
-        Center(
-          child: FilledButton.icon(
-            onPressed: () => ref.read(workspaceListProvider.notifier).load(),
-            icon: const Icon(Icons.refresh),
-            label: const Text('重试'),
-          ),
-        ),
-      ],
     );
   }
 
@@ -229,24 +170,26 @@ class _ConnectionBadge extends StatelessWidget {
     final relayState = state;
 
     final (color, label) = switch (relayState) {
-      RelayConnectionState.ready => (Colors.green, '已连接'),
+      RelayConnectionState.ready => (AppColors.success, '已连接'),
       RelayConnectionState.connected ||
       RelayConnectionState.bootstrapping =>
-        (Colors.orange, '连接中'),
+        (AppColors.warning, '连接中'),
       RelayConnectionState.connecting ||
       RelayConnectionState.reconnecting =>
-        (Colors.orange.shade300, '重连中'),
+        (AppColors.warning, '重连中'),
       RelayConnectionState.error || RelayConnectionState.disconnected =>
-        (Colors.red, '未连接'),
-      RelayConnectionState.idle => (Colors.grey, '待机'),
-      _ => (Colors.grey, '—'),
+        (AppColors.danger, '未连接'),
+      RelayConnectionState.idle =>
+        (Theme.of(context).colorScheme.onSurfaceVariant, '待机'),
+      _ => (Theme.of(context).colorScheme.onSurfaceVariant, '—'),
     };
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(AppRadius.md),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -257,7 +200,9 @@ class _ConnectionBadge extends StatelessWidget {
             decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
           const SizedBox(width: 6),
-          Text(label, style: TextStyle(fontSize: 12, color: color)),
+          Text(label,
+              style: TextStyle(
+                  fontSize: AppTextSizes.label, color: color)),
         ],
       ),
     );

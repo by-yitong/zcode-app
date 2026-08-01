@@ -29,7 +29,7 @@ class CodeHighlightView extends StatelessWidget {
         style: TextStyle(
           fontFamily: kMonoFont,
           fontFamilyFallback: const ['monospace'],
-          fontSize: 13,
+          fontSize: AppTextSizes.bodySm,
           height: 1.5,
           color: isDark ? const Color(0xFFE8EAED) : Colors.black87,
         ),
@@ -48,7 +48,7 @@ class CodeHighlightView extends StatelessWidget {
       textStyle: const TextStyle(
         fontFamily: kMonoFont,
         fontFamilyFallback: ['monospace'],
-        fontSize: 13,
+        fontSize: AppTextSizes.bodySm,
         height: 1.5,
       ),
     );

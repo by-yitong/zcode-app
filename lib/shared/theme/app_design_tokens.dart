@@ -57,11 +57,23 @@ class AppColors {
   static const Color warning = Color(0xFFF59E0B);
   static const Color danger = Color(0xFFEF4444);
 
+  // ── 状态容器色 (低透明填充, 取代散落的 .withValues(alpha:0.15) 重算) ──
+  /// 成功容器背景 (~12% alpha)
+  static const Color successContainer = Color(0x1F22C55E);
+  /// 警告容器背景 (~12% alpha)
+  static const Color warningContainer = Color(0x1FF59E0B);
+  /// 危险容器背景 (~12% alpha)
+  static const Color dangerContainer = Color(0x1FEF4444);
+
   // ── 深色主题 (主场, 采纳 Linear 深色质感) ──
   //
   // 核心原则 (Linear): 深色表面用半透明白叠加, 不用实色;
   // 边框用半透明白, 不用实色灰。这样在深色上有空气感。
   static const Color darkBg = Color(0xFF08090A);            // 最底层 (Linear marketing black)
+
+  /// 提升面 (模态/底部弹窗用): 不透明, 比 bg 亮一档, 与背景分离。
+  /// 不能用半透明 darkSurface (会透出底层内容), 弹窗必须实色。
+  static const Color darkSurfaceElevated = Color(0xFF15161A);
 
   /// 卡片/面板: 半透明白 0.03 (Linear surface)
   static const Color darkSurface = Color(0x08FFFFFF);       // rgba(255,255,255,0.03)
@@ -119,3 +131,49 @@ class AppText {
     );
   }
 }
+
+/// 文字尺寸阶梯
+///
+/// 取代散落的 `fontSize: 11/12/13/15/16/18/20/24` 内联值。
+/// 数值与 Material 3 / iOS type scale 对齐, mono 档比同档 UI 字小 1px
+/// (等宽字视觉偏大)。用法: `AppTextSizes.body`, `AppTextSizes.monoSm`。
+class AppTextSizes {
+  AppTextSizes._();
+
+  // UI (Inter)
+  static const double display = 28;   // 大标题 (工作区名/页头)
+  static const double headline = 24;  // 屏幕标题
+  static const double title = 18;     // 卡片标题
+  static const double titleSm = 16;   // 小标题 / ListTile 标题
+  static const double body = 15;      // 正文 (消息/默认)
+  static const double bodyMd = 14;    // 正文偏紧 (Markdown 段落 / 按钮文字)
+  static const double bodySm = 13;    // 次要正文 / ListTile 副标题
+  static const double label = 12;     // 标签 / 按钮
+  static const double caption = 11;   // 最小 — 时间戳/计数/元信息
+
+  // Mono (JetBrains Mono) — 元信息专用, 比同档 UI 字小 1px
+  static const double mono = 13;      // 默认等宽 (代码/路径)
+  static const double monoSm = 12;    // mono 元信息 (用量%/时间)
+  static const double monoXs = 11;    // mono 最小 (SID/调试值)
+}
+
+/// 动效时长 (ms)
+///
+/// 取代散落的 `Duration(milliseconds: …)` 内联值。三档够用, 别再造新档。
+class AppDur {
+  AppDur._();
+  static const Duration fast = Duration(milliseconds: 140);  // hover/press 反馈
+  static const Duration base = Duration(milliseconds: 220);  // 默认 — 展开/切换
+  static const Duration slow = Duration(milliseconds: 360);  // 大区/页面过渡
+}
+
+/// 缓动曲线
+///
+/// 与 AppDur 配合。禁止裸用 `Curves.ease` (浏览器默认, 偏机械)。
+class AppEase {
+  AppEase._();
+  static const Curve out = Curves.easeOutCubic;     // 元素进场 / 默认
+  static const Curve inOut = Curves.easeInOutCubic; // 状态切换
+  static const Curve in_ = Curves.easeInCubic;      // 元素退场
+}
+

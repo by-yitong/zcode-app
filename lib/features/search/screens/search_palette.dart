@@ -227,7 +227,7 @@ class _SearchPaletteDialogState extends ConsumerState<_SearchPaletteDialog> {
           hintText: '搜索对话或输入命令...',
           hintStyle: TextStyle(
             color: theme.colorScheme.onSurfaceVariant,
-            fontSize: 15,
+            fontSize: AppTextSizes.body,
           ),
           prefixIcon: Icon(Icons.search,
               size: 22, color: theme.colorScheme.onSurfaceVariant),
@@ -300,7 +300,7 @@ class _SearchPaletteDialogState extends ConsumerState<_SearchPaletteDialog> {
               Text(
                 _query.isEmpty ? '开始搜索' : '未找到匹配结果',
                 style: TextStyle(
-                  fontSize: 14,
+                  fontSize: AppTextSizes.bodyMd,
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
@@ -344,7 +344,7 @@ class _SearchPaletteDialogState extends ConsumerState<_SearchPaletteDialog> {
       child: Text(
         label,
         style: TextStyle(
-          fontSize: 12,
+          fontSize: AppTextSizes.label,
           fontWeight: FontWeight.w600,
           color: theme.colorScheme.onSurfaceVariant,
         ),
@@ -380,7 +380,7 @@ class _SearchPaletteDialogState extends ConsumerState<_SearchPaletteDialog> {
                     style: TextStyle(
                       fontFamily: kMonoFont,
                       fontFamilyFallback: const ['monospace'],
-                      fontSize: 14,
+                      fontSize: AppTextSizes.bodyMd,
                       fontWeight: FontWeight.w600,
                       color: theme.colorScheme.onSurface,
                     ),
@@ -389,7 +389,7 @@ class _SearchPaletteDialogState extends ConsumerState<_SearchPaletteDialog> {
                   Text(
                     cmd.description,
                     style: TextStyle(
-                      fontSize: 12,
+                      fontSize: AppTextSizes.label,
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
                   ),
@@ -457,7 +457,7 @@ class _SearchPaletteDialogState extends ConsumerState<_SearchPaletteDialog> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 12,
+                            fontSize: AppTextSizes.label,
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
                         ),
@@ -467,7 +467,7 @@ class _SearchPaletteDialogState extends ConsumerState<_SearchPaletteDialog> {
                         Text(
                           _timeAgo(task.updatedAt),
                           style: TextStyle(
-                            fontSize: 11,
+                            fontSize: AppTextSizes.caption,
                             color: theme.colorScheme.onSurfaceVariant
                                 .withValues(alpha: 0.7),
                           ),

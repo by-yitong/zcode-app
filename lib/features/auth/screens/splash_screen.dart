@@ -141,7 +141,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                 _status,
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: 0.4),
-                  fontSize: 13,
+                  fontSize: AppTextSizes.bodySm,
                 ),
               ),
             ],
