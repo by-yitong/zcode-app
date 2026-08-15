@@ -56,3 +56,8 @@ android/build/
 
 # ZCode 客户端本地状态 (会话/计划, 勿入库)
 .zcode/
+
+# 抓包工具 (tool/captures)
+node_modules/
+tool/captures/web_*.jsonl
+tool/captures/baseline_*.jsonl
