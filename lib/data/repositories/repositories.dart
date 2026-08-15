@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import '../../core/logging/app_logger.dart';
 import '../../core/relay/relay_client.dart';
 import '../../core/relay/relay_events.dart';
 import '../../core/storage/secure_storage.dart';
@@ -31,17 +32,23 @@ class AuthRepository {
     final uri = Uri.parse(urlString);
     final params = uri.queryParameters;
 
+    // 不打印完整 URL — query 里有 sid/hash 等敏感参数
+    appLog.i('[Auth] 开始登录: host=${uri.host}');
+
     final sid = params['sid'];
     final hashEncoded = params['hash'];
     final mid = params['mid'];
 
     if (sid == null || sid.isEmpty) {
+      appLog.w('[Auth] URL 缺少 sid 参数');
       throw ArgumentError('URL 缺少 sid 参数');
     }
     if (hashEncoded == null || hashEncoded.isEmpty) {
+      appLog.w('[Auth] URL 缺少 hash 参数');
       throw ArgumentError('URL 缺少 hash 参数');
     }
     if (mid == null || mid.isEmpty) {
+      appLog.w('[Auth] URL 缺少 mid 参数');
       throw ArgumentError('URL 缺少 mid 参数');
     }
 
@@ -52,8 +59,10 @@ class AuthRepository {
     // HTTP GET 连接地址, 服务器自动返回 cookie
     final cookie = await _fetchCookie(urlString);
     if (cookie.isEmpty) {
+      appLog.w('[Auth] 服务器未返回 Cookie, 连接地址可能已失效');
       throw Exception('服务器未返回 Cookie, 请检查连接地址是否有效');
     }
+    appLog.i('[Auth] 登录成功: 拿到 ${cookie.split('; ').length} 个 cookie 字段');
 
     return ZcodeSession(
       mid: mid,
@@ -81,6 +90,7 @@ class AuthRepository {
         final part = h.split(';').first.trim();
         if (part.isNotEmpty) cookies.add(part);
       }
+      appLog.d('[Auth] _fetchCookie: HTTP ${res.statusCode}, set-cookie ${cookies.length} 条');
       return cookies.join('; ');
     } finally {
       client.close(force: true);

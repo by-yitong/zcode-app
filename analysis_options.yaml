@@ -26,3 +26,8 @@ linter:
 
 # Additional information about this file can be found at
 # https://dart.dev/guides/language/analysis-options
+
+analyzer:
+  exclude:
+    # vendor 的 flutter_markdown (含 example/test, 不参与 app 构建与检查)
+    - third_party/**

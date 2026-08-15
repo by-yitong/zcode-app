@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/models/zcode_session.dart';
+import '../logging/app_logger.dart';
 import '../services/glm_quota_service.dart';
 
 /// 安全存储 — 管理 session/token 的持久化
@@ -35,7 +36,9 @@ class SecureStorageService {
     if (json == null) return null;
     try {
       return ZcodeSession.fromJson(jsonDecode(json) as Map<String, dynamic>);
-    } catch (_) {
+    } catch (e) {
+      // 数据损坏按未登录处理; 留日志避免"莫名被登出"无迹可寻
+      appLog.w('[Storage] session 数据解析失败, 视为未登录: $e');
       return null;
     }
   }
@@ -86,7 +89,8 @@ class SecureStorageService {
       final baseUrl = (map['baseUrl'] as String?) ?? defaultGlmBaseUrl;
       final apiKey = (map['apiKey'] as String?) ?? '';
       return GlmCredential(baseUrl: baseUrl, apiKey: apiKey);
-    } catch (_) {
+    } catch (e) {
+      appLog.w('[Storage] GLM 凭据解析失败, 视为未配置: $e');
       return null;
     }
   }

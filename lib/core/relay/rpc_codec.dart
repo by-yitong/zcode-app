@@ -24,6 +24,7 @@ class RpcCodec {
   // ── RPC 帧类型码 ──
   static const int typePromiseRequest = 100; // C→S 请求
   static const int typeEventListen = 102; // C→S 订阅
+  static const int typeEventUnlisten = 103; // C→S 取消订阅 (3.7.7 抓包实测)
   static const int typeInit = 200; // S→C 桥接就绪
   static const int typeOk = 201; // S→C 成功响应
   static const int typeError = 202; // S→C 错误
@@ -120,6 +121,16 @@ class RpcCodec {
     } else {
       serialize(w, args);
     }
+    return Uint8List.fromList(w);
+  }
+
+  /// 编码取消订阅 (type=103)
+  ///
+  /// 3.7.7 抓包实测: header=[103, listenId], body=null。
+  static Uint8List encodeUnlisten(int id) {
+    final w = <int>[];
+    serialize(w, [typeEventUnlisten, id]); // header
+    serialize(w, null); // body
     return Uint8List.fromList(w);
   }
 
@@ -227,6 +238,7 @@ class RpcFrame {
   bool get isErrorObject => typeCode == RpcCodec.typeErrorObject;
   bool get isEvent => typeCode == RpcCodec.typeEventFire;
   bool get isInit => typeCode == RpcCodec.typeInit;
+  bool get isUnlisten => typeCode == RpcCodec.typeEventUnlisten;
 
   /// 提取错误消息
   String? get errorMessage {

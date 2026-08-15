@@ -3,10 +3,20 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- 相机权限 (扫码) -->
     <uses-permission android:name="android.permission.CAMERA"/>
+    <!-- 前台服务保活 (remoteMessaging 类型: Android 15 对 dataSync 有 6 小时限制,
+         消息中继类用 remoteMessaging 无此限制) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING"/>
     <application
         android:label="ZCode"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+
+        <!-- 前台服务: 登录后常驻, 保持进程存活以便后台接收 relay 消息 -->
+        <service
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+            android:foregroundServiceType="remoteMessaging"
+            android:exported="false"/>
         <activity
             android:name=".MainActivity"
             android:exported="true"

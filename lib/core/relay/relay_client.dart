@@ -4,7 +4,6 @@ import 'dart:math';
 import 'dart:io' show WebSocket;
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart' as crypto;
-import 'package:flutter/foundation.dart';
 
 import 'relay_events.dart';
 import 'relay_protocol.dart';
@@ -36,7 +35,7 @@ class RelayConfig {
     required this.passHash,
     required this.cookie,
     this.deviceName = 'mobile-browser',
-    this.appVersion = '3.0.1',
+    this.appVersion = '3.7.7',
   });
 
   /// 从 URL 参数构建配置
@@ -85,6 +84,9 @@ class RelayClient {
   // RPC 订阅 ID → 事件流控制器 (type=204 事件分发)
   final Map<int, StreamController<SessionEvent>> _eventSubs = {};
 
+  /// rpc-frame 分片重组缓冲 (messageSeq → 按序分片)
+  final Map<int, List<Uint8List?>> _fragBufs = {};
+
   // bridge 状态
   int _bridgeGeneration = 0;
   String? _activeBridgeSession;
@@ -117,6 +119,14 @@ class RelayClient {
 
   Stream<String> get onError => _errorController.stream;
 
+  /// 工作区/任务列表变更推送 (zcode_type=workspace-list-updated)。
+  /// payload.result 含全量 workspaces[] + tasks[] (与 bootstrap 同构)。
+  /// 3.7.7 抓包实测: bridge 就绪后服务端主动推, 列表有变化时再推。
+  Stream<Map<String, dynamic>> get onWorkspaceListUpdated =>
+      _workspaceListController.stream;
+  final _workspaceListController =
+      StreamController<Map<String, dynamic>>.broadcast();
+
   /// RPC 就绪状态变化: true=bridge open+RPC Init; false=bridge 拆除/socket 关闭。
   /// 全局模型列表等账号级数据据此刷新 (重连/切工作区会自动重载)。
   Stream<bool> get onRpcReadyChange => _rpcReadyController.stream;
@@ -142,6 +152,12 @@ class RelayClient {
   RelayClient({required this.config, this.logger});
 
   void _log(String level, String msg) => logger?.call(level, msg);
+
+  /// 日志用截断 (长 payload 只保留前 [n] 字符)
+  static String _trunc(Object? s, [int n = 300]) {
+    final str = s.toString();
+    return str.length > n ? str.substring(0, n) : str;
+  }
 
   void _setState(RelayConnectionState s) {
     if (_state == s) return;
@@ -195,6 +211,8 @@ class RelayClient {
     _setState(RelayConnectionState.connecting);
     _log('info', 'Connecting to ${config.wsUrl}');
 
+    // ★ 必须带超时: 后台挂起时网络被系统掐断, 无超时的 connect 会永久挂起,
+    // _connectFuture 停在 pending, 前台恢复后也无法恢复 (一直"正在重连")
     _socket = await WebSocket.connect(
       config.wsUrl,
       headers: {
@@ -202,7 +220,7 @@ class RelayClient {
         'Origin': 'https://zcode.z.ai',
         'User-Agent': 'Mozilla/5.0',
       },
-    );
+    ).timeout(const Duration(seconds: 20));
     // 协议级心跳: 探针实测无心跳 ~30s 会被服务端空闲关闭
     _socket!.pingInterval = const Duration(seconds: 20);
 
@@ -243,9 +261,99 @@ class RelayClient {
     _reconnectAttempts = 0;
     _setState(RelayConnectionState.ready);
     _log('info', 'Authenticated successfully');
+
+    // WS 级重连后 bridge 不会自动恢复 (服务端只回 auth, 不重开桥),
+    // 之前有工作区则主动重开 — rpcReady 变 true 会触发上层自动重订阅
+    if (_currentWorkspaceKey != null && !_rpcReady) {
+      unawaited(_reopenBridge('ws-reconnected'));
+    }
   }
 
   Completer<void>? _authCompleter;
+
+  /// 最后收到任意 WS 帧的时间 (revive 探活参考: 近期有帧 = 连接活跃)
+  DateTime? _lastFrameAt;
+
+  /// 进行中的 bridge 打开 Future (single-flight: 重连钩子/ensureBridgeOpen/init
+  /// 并发开桥会互相顶掉 generation, 必须串行)
+  Future<void>? _bridgeOpenFuture;
+
+  /// 探活回执 completer (pair_status_query → pair_status_ack)
+  Completer<bool>? _livenessProbe;
+
+  /// 发送 pair_status_query 探活 (3.7.7 网页端同款心跳)。
+  /// 5s 无响应判定连接已死 (半开: 后台被系统静默掐断但 onDone 不触发)。
+  Future<bool> _probeLiveness() async {
+    final c = Completer<bool>();
+    _livenessProbe = c;
+    _sendRaw({
+      'type': 'pair_status_query',
+      'device_sid': config.deviceSid,
+      'client_ts': _ts(),
+    });
+    try {
+      await c.future.timeout(const Duration(seconds: 5));
+      return true;
+    } on TimeoutException {
+      return false;
+    } finally {
+      _livenessProbe = null;
+    }
+  }
+
+  /// 前台恢复时调用 (AppLifecycleState.resumed)。
+  ///
+  /// 后台挂起期间 socket 可能被系统静默掐断:
+  /// - 明确断开 (onDone 已触发) → state 卡在 reconnecting/connecting, 重连
+  /// - 看似健康 → pair_status_query 探活, 半开则强制重连
+  /// - WS 活着但 bridge 掉了 → 只重开 bridge
+  Future<void> revive() async {
+    if (_intentionallyClosed) return;
+    // 初始连接还在进行中: 不拆它 (connect 带 20s 超时, 挂不死)
+    if (_connectFuture != null || _state == RelayConnectionState.connecting) {
+      return;
+    }
+    final socketOpen = _socket != null && _socket!.readyState == WebSocket.open;
+
+    if (socketOpen && _state == RelayConnectionState.ready) {
+      if (_rpcReady) {
+        // 近 45s 收到过任意帧 → 连接活跃, 无需探活 (避免误杀刚重建的连接)
+        final lastFrame = _lastFrameAt;
+        if (lastFrame != null &&
+            DateTime.now().difference(lastFrame) < const Duration(seconds: 45)) {
+          return;
+        }
+        final alive = await _probeLiveness();
+        if (alive) return;
+        _log('warn', 'revive(): 探活无响应, 判定半开连接 → 强制重连');
+      } else if (_currentWorkspaceKey != null) {
+        // WS 活着但 bridge 掉了 (后台期间服务端拆桥)
+        await _reopenBridge('revive-bridge-only');
+        return;
+      } else {
+        return;
+      }
+    } else {
+      _log('info', 'revive(): 前台恢复, 状态=${_state.name} socketOpen=$socketOpen → 强制重连');
+    }
+
+    _reconnectAttempts = 0;
+    _reconnectTimer?.cancel();
+    _heartbeatTimer?.cancel();
+    try {
+      await _socket?.close();
+    } catch (_) {}
+    _socket = null;
+    // 卡死的 _connectFuture 必须清掉, 否则 connect() 会复用它
+    _connectFuture = null;
+    try {
+      await connect();
+      // bridge 重开由 _doConnect 认证成功后的钩子触发
+    } catch (e) {
+      _log('warn', 'revive(): 重连失败: $e');
+      _scheduleReconnect();
+    }
+  }
 
   /// 断开连接
   Future<void> disconnect() async {
@@ -310,10 +418,13 @@ class RelayClient {
 
   void _onMessage(dynamic raw) {
     if (raw is! String) return;
+    _lastFrameAt = DateTime.now();
     Map<String, dynamic> msg;
     try {
       msg = jsonDecode(raw);
-    } catch (_) {
+    } catch (e) {
+      // 非 JSON 帧可能是服务端纯文本通知 (如 kick), 留样便于排查协议问题
+      _log('warn', 'WS 消息 JSON 解析失败: $e, raw=${_trunc(raw, 200)}');
       return;
     }
 
@@ -324,6 +435,11 @@ class RelayClient {
         _handleAuthChallenge(msg);
       case 'auth_ack':
         _handleAuthAck(msg);
+      case 'pair_status_ack':
+        // 3.7.7 客户端心跳的响应, 兼作探活回执
+        if (!(_livenessProbe?.isCompleted ?? true)) {
+          _livenessProbe!.complete(true);
+        }
       case 'data':
         _handleData(msg['payload'] as Map<String, dynamic>);
       case 'error':
@@ -384,18 +500,25 @@ class RelayClient {
     }
     // V4: rpc-frame-ack — 服务端确认收到, 简单客户端忽略
     if (zt == 'rpc-frame-ack') {
-      debugPrint('[Relay] ← rpc-frame-ack seq=${payload['ackMessageSeq']}');
+      _log('debug', '← rpc-frame-ack seq=${payload['ackMessageSeq']}');
       return;
     }
 
     // 其他 data 层消息
     if (zt == 'bridge-degraded') {
-      debugPrint('[Relay] ★ bridge-degraded! payload=$payload');
-      debugPrint('[Relay]   pending RPC: ${_pendingRpc.length}, rpcReady=$_rpcReady, bridgeGen=$_bridgeGeneration');
+      _log('warn', '★ bridge-degraded! payload=$payload');
+      _log('warn', '  pending RPC: ${_pendingRpc.length}, rpcReady=$_rpcReady, bridgeGen=$_bridgeGeneration');
       _onBridgeDegraded();
       return;
     }
-    _log('debug', '→ DATA [$zt] payload=${payload.toString().substring(0, payload.toString().length > 300 ? 300 : payload.toString().length)}');
+    if (zt == 'workspace-list-updated') {
+      _log('debug', '← workspace-list-updated (列表变更推送)');
+      if (!_workspaceListController.isClosed) {
+        _workspaceListController.add(payload);
+      }
+      return;
+    }
+    _log('debug', '→ DATA [$zt] payload=${_trunc(payload)}');
   }
 
   int _degradedCount = 0;
@@ -437,36 +560,51 @@ class RelayClient {
     // 尝试自动重连 bridge (带上 taskId)
     if (_currentWorkspaceKey != null) {
       Future.delayed(const Duration(seconds: 2), () {
-        _log('info', 'Auto-reopening bridge: $_currentWorkspaceKey (taskId=${_currentTaskId ?? "none"}, attempt ${_degradedCount + 1})');
-        _rpcReadyCompleter = Completer<void>();
-        _bridgeGeneration++;
-        _seqCounter = 0;
-        _rpcReqId = 0;
-        final bridgeSessionId = _genId('bridge');
-        _activeBridgeSession = bridgeSessionId;
-        _requestResponse('workspace-bridge-open', {
-          'bridgeSessionId': bridgeSessionId,
-          'bridgeGeneration': _bridgeGeneration,
-          if (_currentRecoveryId != null) 'recoveryId': _currentRecoveryId,
-          'workspaceKey': _currentWorkspaceKey!,
-          if (_currentTaskId != null) 'taskId': _currentTaskId!,
-        }).then((resp) {
-          // 更新 recoveryId
-          final bridgeData = resp['bridge'] as Map<String, dynamic>?;
-          final newRid = bridgeData?['recoveryId'] as String? ??
-              resp['recoveryId'] as String?;
-          if (newRid != null) _currentRecoveryId = newRid;
-          return _rpcReadyCompleter!.future.timeout(
-            const Duration(seconds: 15),
-            onTimeout: () => throw TimeoutException('RPC init timeout (reconnect)'),
-          );
-        }).then((_) {
-          _log('info', 'Bridge reopened ✓');
-          _degradedCount = 0;
-        }).catchError((e) {
-          _log('error', 'Bridge reopen failed: $e');
-        });
+        _reopenBridge('degraded');
       });
+    }
+  }
+
+  /// 重开工作区桥接 (bridge-degraded / WS 重连 / 前台恢复共用)。
+  /// 内部吞错只记日志; 成功后 rpcReady=true, 上层经 onRpcReadyChange 自动重订阅。
+  Future<void> _reopenBridge(String reason) async {
+    final key = _currentWorkspaceKey;
+    if (key == null) return;
+    // 已有可用 bridge (如并发的完整打开赢了) 或已有打开在进行中 → 跳过
+    if (_rpcReady || _bridgeOpenFuture != null) {
+      _log('debug', 'Reopen bridge ($reason) skipped: rpcReady=$_rpcReady opening=${_bridgeOpenFuture != null}');
+      return;
+    }
+    _log('info', 'Reopening bridge ($reason): $key (taskId=${_currentTaskId ?? "none"}, attempt ${_degradedCount + 1})');
+    _bridgeGeneration++;
+    _seqCounter = 0;
+    _rpcReqId = 0;
+    _activeBridgeSession = _genId('bridge');
+    _rpcReady = false;
+    _rpcReadyController.add(false);
+    _rpcReadyCompleter = Completer<void>();
+    _v4HandshakeDone = false;
+    try {
+      final resp = await _requestResponse('workspace-bridge-open', {
+        'bridgeSessionId': _activeBridgeSession!,
+        'bridgeGeneration': _bridgeGeneration,
+        if (_currentRecoveryId != null) 'recoveryId': _currentRecoveryId,
+        'workspaceKey': key,
+        if (_currentTaskId != null) 'taskId': _currentTaskId!,
+      });
+      // 更新 recoveryId
+      final bridgeData = resp['bridge'] as Map<String, dynamic>?;
+      final newRid = bridgeData?['recoveryId'] as String? ??
+          resp['recoveryId'] as String?;
+      if (newRid != null) _currentRecoveryId = newRid;
+      await _rpcReadyCompleter!.future.timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => throw TimeoutException('RPC init timeout (reconnect)'),
+      );
+      _log('info', 'Bridge reopened ✓ ($reason)');
+      _degradedCount = 0;
+    } catch (e) {
+      _log('error', 'Bridge reopen failed ($reason): $e');
     }
   }
 
@@ -494,7 +632,45 @@ class RelayClient {
     if (dataBase64 == null) return;
 
     final bytes = base64Decode(dataBase64);
-    final rpc = RpcCodec.decode(Uint8List.fromList(bytes));
+
+    // ★ 分片重组: 服务端传输大帧 (如全量快照, 实测 786KB+) 会按
+    // fragmentIndex/fragmentCount 切片, 必须收齐拼接后才能解码 —
+    // 之前把分片当完整帧解码, 读到跨分片字符串即 RangeError 崩溃。
+    final seqKey = (frame['messageSeq'] as int?) ?? (frame['seq'] as int?) ?? 0;
+    final fragIndex = frame['fragmentIndex'] as int? ?? 0;
+    final fragCount = frame['fragmentCount'] as int? ?? 1;
+    final Uint8List data;
+    if (fragCount > 1) {
+      final buf = _fragBufs.putIfAbsent(
+          seqKey, () => List<Uint8List?>.filled(fragCount, null));
+      if (fragIndex < buf.length) buf[fragIndex] = Uint8List.fromList(bytes);
+      final received = buf.whereType<Uint8List>().length;
+      if (received < buf.length) {
+        _log('debug', 'rpc-frame 分片 $seqKey: ${received}/${buf.length}');
+        return; // 未收齐
+      }
+      _fragBufs.remove(seqKey);
+      final total = buf.fold<int>(0, (s, e) => s + e!.length);
+      final merged = Uint8List(total);
+      var offset = 0;
+      for (final chunk in buf) {
+        merged.setAll(offset, chunk!);
+        offset += chunk.length;
+      }
+      data = merged;
+      _log('info', 'rpc-frame 分片重组完成 #$seqKey: ${buf.length} 片, ${total}B');
+    } else {
+      data = Uint8List.fromList(bytes);
+    }
+
+    final RpcFrame rpc;
+    try {
+      rpc = RpcCodec.decode(data);
+    } catch (e) {
+      // 解码失败不能让它变成未捕获异常 (会中断帧处理循环)
+      _log('error', 'rpc-frame 解码失败 (${data.length}B): $e');
+      return;
+    }
 
     // RPC Init (bridge 就绪通告)
     if (rpc.isInit && !_rpcReady) {
@@ -510,8 +686,7 @@ class RelayClient {
       final id = rpc.id as int;
       final completer = _pendingRpc.remove(id);
       if (completer != null && !completer.isCompleted) {
-        final bodyStr = rpc.body?.toString() ?? 'null';
-        debugPrint('[Relay] ← RPC #$id OK: body=${rpc.body.runtimeType}, len=${bodyStr.length > 200 ? 200 : bodyStr.length}');
+        _log('debug', '← RPC #$id OK: body=${rpc.body.runtimeType}, len=${_trunc(rpc.body, 200).length}');
         completer.complete(rpc);
         return;
       }
@@ -520,14 +695,14 @@ class RelayClient {
       if (v4Sub != null && !v4Sub.isClosed && rpc.body is Map) {
         try {
           final frame = V4Frame.fromJson(Map<String, dynamic>.from(rpc.body as Map));
-          debugPrint('[Relay] ← V4 frame via OK #$id: payload kind=${frame.payload.runtimeType}');
+          _log('debug', '← V4 frame via OK #$id: payload kind=${frame.payload.runtimeType}');
           v4Sub.add(frame);
         } catch (e) {
-          debugPrint('[Relay] V4 frame decode (via OK) error: $e');
+          _log('error', 'V4 frame decode (via OK) error: $e');
         }
         return;
       }
-      debugPrint('[Relay] ← RPC #$id OK: no pending completer (orphan)');
+      _log('warn', '← RPC #$id OK: no pending completer (orphan)');
       return;
     }
 
@@ -562,7 +737,7 @@ class RelayClient {
 
       // V3 session event 分发 (保留兼容)
       final event = SessionEvent.fromBody(rpc.body);
-      debugPrint('[Relay] ← EVENT sub=$subId kind=${event.kind} sid=${event.sessionId}');
+      _log('debug', '← EVENT sub=$subId kind=${event.kind} sid=${event.sessionId}');
 
       // 推到对应订阅的 controller
       final sub = _eventSubs[subId];
@@ -595,7 +770,7 @@ class RelayClient {
     _pendingRpc[id] = completer;
 
     // ★ 详细日志: 发送的 RPC 请求
-    debugPrint('[Relay] → RPC #$id: $channel.$method args=${args?.toString().substring(0, (args?.toString().length ?? 0) > 300 ? 300 : (args?.toString().length ?? 0))}');
+    _log('debug', '→ RPC #$id: $channel.$method args=${_trunc(args)}');
 
     final data = RpcCodec.encodeRequest(id, channel, method, args);
     _sendRpcFrameData(data);
@@ -628,7 +803,7 @@ class RelayClient {
     _eventSubs[id] = controller;
 
     // ★ 日志
-    debugPrint('[Relay] → LISTEN #$id: $channel.$event args=${args?.toString().substring(0, (args?.toString().length ?? 0) > 200 ? 200 : (args?.toString().length ?? 0))}');
+    _log('info', '→ LISTEN #$id: $channel.$event args=${_trunc(args, 200)}');
 
     // 订阅请求本身可能也有响应 (确认订阅)
     final data = RpcCodec.encodeListen(id, channel, event, args);
@@ -637,12 +812,24 @@ class RelayClient {
     return controller.stream;
   }
 
+  /// 取消 RPC 订阅 (帧类型 103)
+  ///
+  /// 3.7.7 抓包实测: 网页端取消订阅发 header=[103, listenId] 的帧
+  /// (例如 [103, 30] 对应 LISTEN #30 model-provider.onDidChangeProviderRegistry)。
+  void rpcUnlisten(int id) {
+    if (!_rpcReady) return;
+    _log('info', '→ UNLISTEN #$id');
+    _sendRpcFrameData(RpcCodec.encodeUnlisten(id));
+    _eventSubs.remove(id)?.close();
+    _v4FrameSubs.remove(id)?.close();
+  }
+
   void _sendRpcFrameData(Uint8List data) {
     if (_activeBridgeSession == null) return;
     _seqCounter++;
     final messageBytes = data.length;
     final checksum = _crc32(data);
-    debugPrint('[Relay] _sendRpcFrameData: seq=$_seqCounter bridgeGen=$_bridgeGeneration bridgeSession=$_activeBridgeSession bytes=$messageBytes checksum=$checksum');
+    _log('debug', '_sendRpcFrameData: seq=$_seqCounter bridgeGen=$_bridgeGeneration bridgeSession=$_activeBridgeSession bytes=$messageBytes checksum=$checksum');
     _sendPayload({
       'zcode_type': 'rpc-frame',
       'bridgeSessionId': _activeBridgeSession,
@@ -694,7 +881,8 @@ class RelayClient {
     _reconnectTimer = Timer(delay, () async {
       try {
         await connect();
-      } catch (_) {
+      } catch (e) {
+        _log('warn', '重连尝试失败: $e');
         _scheduleReconnect();
       }
     });
@@ -712,6 +900,7 @@ class RelayClient {
     _heartbeatTimer?.cancel();
     _rpcReady = false;
     _rpcReadyController.add(false);
+    _fragBufs.clear(); // 断线后未收齐的分片作废
     if (!_intentionallyClosed) {
       _scheduleReconnect();
     } else {
@@ -739,13 +928,49 @@ class RelayClient {
 
   String? _currentRecoveryId;
 
+  /// V4 握手是否已完成 (幂等: 同一 bridge 只握一次, 网页端模式)
+  bool _v4HandshakeDone = false;
+
+  /// 确保 bridge 打开并指向 [workspaceKey] ★ 打开会话前调用
+  ///
+  /// 网页端模式: bridge 全局只开一次, 切换/打开会话仅重新订阅 (零开销返回)。
+  /// 只有 RPC 未就绪或目标工作区不同才完整 (重) 开。
+  Future<void> ensureBridgeOpen(String workspaceKey, {String? taskId}) async {
+    if (_rpcReady && _currentWorkspaceKey == workspaceKey) {
+      // 已有可用 bridge: 只更新恢复上下文 (degraded 时带回 taskId)
+      _currentTaskId = taskId;
+      return;
+    }
+    await openWorkspaceBridge(workspaceKey, taskId: taskId);
+  }
+
   /// 打开工作区桥接, 等待 RPC Init
   ///
+  /// [workspaceKey]: ★ 3.7.7 抓包实测, 远程工作区必须传 workspaceIdentity
+  /// (形如 remote:ssh:host:22:user:path), 传裸路径会 bridge-ready 但永远收不到
+  /// RPC Init。本地工作区 identity == 路径, 统一传 identity 即可。
+  ///
   /// 调用后 _rpcReady 变 true, 才能调 RPC 方法。
+  /// 打开工作区桥接 (single-flight: 并发调用复用同一次打开, 防止 generation 互顶)
   Future<Map<String, dynamic>> openWorkspaceBridge(
     String workspaceKey, {
     String? taskId,
+  }) {
+    final pending = _bridgeOpenFuture;
+    if (pending != null) {
+      _log('debug', 'openWorkspaceBridge: 复用进行中的打开');
+      return pending.then((_) => {'bridgeSessionId': _activeBridgeSession, 'rpcReady': true});
+    }
+    final future = _doOpenWorkspaceBridge(workspaceKey, taskId: taskId);
+    _bridgeOpenFuture = future;
+    return future.whenComplete(() => _bridgeOpenFuture = null);
+  }
+
+  Future<Map<String, dynamic>> _doOpenWorkspaceBridge(
+    String workspaceKey, {
+    String? taskId,
   }) async {
+    final sw = Stopwatch()..start();
     _currentWorkspaceKey = workspaceKey;
     _currentTaskId = taskId;
     _bridgeGeneration++;
@@ -756,6 +981,7 @@ class RelayClient {
     _rpcReady = false;
     _rpcReadyController.add(false);
     _rpcReadyCompleter = Completer<void>();
+    _log('info', 'Opening bridge: workspace=$workspaceKey taskId=${taskId ?? "none"}');
 
     final resp = _requestResponse('workspace-bridge-open', {
       'bridgeSessionId': bridgeSessionId,
@@ -763,6 +989,7 @@ class RelayClient {
       'workspaceKey': workspaceKey,
       if (taskId != null) 'taskId': taskId,
     });
+    _v4HandshakeDone = false;
 
     // 同时等 bridge-ready + RPC Init
     final bridgeReady = await resp;
@@ -770,13 +997,14 @@ class RelayClient {
     final bridgeData = bridgeReady['bridge'] as Map<String, dynamic>?;
     _currentRecoveryId = bridgeData?['recoveryId'] as String? ??
         bridgeReady['recoveryId'] as String?;
-    debugPrint('[Relay] bridge-ready: recoveryId=$_currentRecoveryId');
+    _log('info', 'bridge-ready: recoveryId=$_currentRecoveryId (${sw.elapsedMilliseconds}ms)');
 
     // 等 RPC Init 帧 (服务器自动推送)
     await _rpcReadyCompleter!.future.timeout(
       const Duration(seconds: 15),
       onTimeout: () => throw TimeoutException('RPC init timeout'),
     );
+    _log('info', 'bridge open 完成 (RPC ready, 总耗时 ${sw.elapsedMilliseconds}ms)');
 
     return {'bridgeSessionId': bridgeSessionId, 'rpcReady': true};
   }
@@ -882,7 +1110,7 @@ class RelayClient {
     int byteBudget = 204800,
     String? etag,
   }) async {
-    debugPrint('[Relay] getTaskSnapshot: taskId=$taskId limit=$messageLimit');
+    _log('debug', 'getTaskSnapshot: taskId=$taskId limit=$messageLimit');
     final resp = await _rpcCall('zcode-task', 'getTaskSnapshotWithEtag', [
       {
         'taskId': taskId,
@@ -893,13 +1121,13 @@ class RelayClient {
         if (etag != null) 'etag': etag,
       }
     ]);
-    debugPrint('[Relay] getTaskSnapshot: resp.body type=${resp.body.runtimeType}');
+    _log('debug', 'getTaskSnapshot: resp.body type=${resp.body.runtimeType}');
     if (resp.body is Map) {
       final m = resp.body as Map;
-      debugPrint('[Relay] getTaskSnapshot: keys=${m.keys.toList()}');
+      _log('debug', 'getTaskSnapshot: keys=${m.keys.toList()}');
       return Map<String, dynamic>.from(m);
     }
-    debugPrint('[Relay] getTaskSnapshot: body is NOT a Map! body=${resp.body}');
+    _log('warn', 'getTaskSnapshot: body is NOT a Map! body=${_trunc(resp.body)}');
     return {'raw': resp.body};
   }
 
@@ -1040,21 +1268,26 @@ class RelayClient {
   /// 模型 ID 形如 `<providerUuid>/<slug>` (如 `…/glm-5.2`), UUID 为**账号级**
   /// (不在 bundle 里硬编码 → 不能写死), 故可用模型必须运行时从这里取。
   ///
-  /// channel: host bundle 的 `readState` 带 `preferZCodeSession` 路由提示,
-  /// 故优先 `zcode-session`; `_rpcCall` 遇错误帧会直接抛 RpcException
-  /// (不返回错误帧), 因此用 try/catch 回退 `zcode-workspace`。
+  /// channel: 3.7.7 抓包实测网页端调的是 `zcode-session.readWorkspaceState`;
+  /// 旧名 `readState` (zcode-session / zcode-workspace) 保留为回退。
   Future<Map<String, dynamic>> readWorkspaceState({
     required String workspacePath,
   }) async {
     RpcFrame resp;
     try {
-      resp = await _rpcCall('zcode-session', 'readState', [
+      resp = await _rpcCall('zcode-session', 'readWorkspaceState', [
         {'workspacePath': workspacePath}
       ]);
     } on RpcException {
-      resp = await _rpcCall('zcode-workspace', 'readState', [
-        {'workspacePath': workspacePath}
-      ]);
+      try {
+        resp = await _rpcCall('zcode-session', 'readState', [
+          {'workspacePath': workspacePath}
+        ]);
+      } on RpcException {
+        resp = await _rpcCall('zcode-workspace', 'readState', [
+          {'workspacePath': workspacePath}
+        ]);
+      }
     }
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body, 'typeCode': resp.typeCode};
@@ -1112,7 +1345,9 @@ class RelayClient {
 
   /// V4 握手: hello + initialize
   /// 在 openWorkspaceBridge 后、subscribeConversationV4 前调用。
+  /// 幂等: 同一 bridge 已握过则直接返回 (切换会话不需要重新握手)。
   Future<Map<String, dynamic>> v4Handshake() async {
+    if (_v4HandshakeDone) return {};
     // hello
     final hello = await _rpcCall('zcode-agent', 'helloConversationV4', []);
     if (hello.body is Map) {
@@ -1129,6 +1364,7 @@ class RelayClient {
       }
     ]);
     _log('info', 'V4 initialized (clientId=$_v4ClientId)');
+    _v4HandshakeDone = true;
     if (hello.body is Map) return Map<String, dynamic>.from(hello.body as Map);
     return {};
   }
@@ -1156,7 +1392,8 @@ class RelayClient {
     final subData = subResp.body is Map ? Map<String, dynamic>.from(subResp.body as Map) : <String, dynamic>{};
     final subscriptionId = subData['ack']?['subscriptionId'] as String? ??
         subData['subscriptionId'] as String? ?? '';
-    debugPrint('[Relay] V4 subscribe: subscriptionId=$subscriptionId, subData=$subData');
+    _log('info', 'V4 subscribe: subscriptionId=$subscriptionId');
+    _log('debug', 'V4 subscribe: subData=${_trunc(subData, 300)}');
 
     // 步骤 2: EventListen 注册帧事件
     _rpcReqId++;
@@ -1216,7 +1453,7 @@ class RelayClient {
     final cmdId = 'cmd_${now}_${Random().nextInt(0xFFFF).toRadixString(16).padLeft(4, '0')}';
 
     final envelope = <String, dynamic>{
-      'kind': 'input',
+      // 3.7.7 抓包实测: 网页端 envelope 无 kind 字段 (旧版多发的 kind 服务端兼容)
       'type': commandType,
       'payload': payload,
       'commandId': cmdId,
@@ -1237,6 +1474,35 @@ class RelayClient {
 
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
+  }
+
+  /// V4 创建会话 ★ — sendConversationCommandV4(type: createSession)
+  ///
+  /// 3.7.7 抓包实测 (2026-08-15): 网页端已不再调 zcode-session.createSession RPC,
+  /// 改走 V4 命令, envelope 不带 baseRevision, payload 结构:
+  ///   {workspaceId: <workspaceIdentity>, config: {mode, followupMode: "queue"}}
+  /// 响应: {status: "accepted", result: {type: "createSession", sessionId}}
+  /// 返回新 sessionId。
+  Future<String> createSessionV4({
+    required String workspacePath,
+    String? workspaceIdentity,
+    required String mode,
+  }) async {
+    final resp = await sendConversationCommandV4(
+      workspacePath: workspacePath,
+      workspaceIdentity: workspaceIdentity,
+      commandType: 'createSession',
+      payload: {
+        'workspaceId': workspaceIdentity ?? workspacePath,
+        'config': {'mode': mode, 'followupMode': 'queue'},
+      },
+    );
+    final result = resp['result'];
+    final sessionId = result is Map ? result['sessionId'] as String? : null;
+    if (sessionId == null || sessionId.isEmpty) {
+      throw StateError('createSessionV4 未返回 sessionId: $resp');
+    }
+    return sessionId;
   }
 
   /// V4 分页加载历史消息
@@ -1460,6 +1726,7 @@ class RelayClient {
   }
 
   void dispose() {
+    _log('info', 'RelayClient disposed');
     disconnect();
     for (final c in _eventSubs.values) {
       c.close();
@@ -1474,6 +1741,7 @@ class RelayClient {
     _sessionEventController.close();
     _errorController.close();
     _rpcReadyController.close();
+    _workspaceListController.close();
   }
 }
 

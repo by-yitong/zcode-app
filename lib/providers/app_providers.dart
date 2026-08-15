@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:logger/logger.dart';
 
+import '../core/logging/app_logger.dart';
 import '../core/network/zcode_api_client.dart';
+import '../core/notifications/notification_service.dart';
 import '../core/relay/relay_client.dart';
 import '../core/relay/relay_protocol.dart';
 import '../core/services/glm_quota_service.dart';
@@ -18,19 +20,9 @@ import '../data/repositories/repositories.dart';
 // 基础设施 Providers
 // ================================================================
 
-final loggerProvider = Provider<Logger>((ref) {
-  final logger = Logger(
-    printer: PrettyPrinter(
-      methodCount: 0,
-      errorMethodCount: 5,
-      lineLength: 80,
-      colors: true,
-      printEmojis: false,
-    ),
-  );
-  ref.onDispose(logger.close);
-  return logger;
-});
+/// 统一走全局 [appLog] 门面 (级别随 kDebugMode 收敛)。
+/// 注意不能在 dispose 时 close — 它是全局单例, 关掉会导致全应用无日志。
+final loggerProvider = Provider<Logger>((ref) => appLog.logger);
 
 final secureStorageProvider = Provider<SecureStorageService>((ref) {
   return SecureStorageService();
@@ -50,7 +42,7 @@ final preferencesProvider =
 /// 网络连接状态变化 (connectivity_plus 6.x: 每次发出 List<ConnectivityResult>)。
 ///
 /// 单独维护 `wasOffline`: 仅在网络从 `ConnectivityResult.none` 恢复到任意在线
-/// 类型时输出 info 日志, 供上层 (WorkspaceListScreen 等) 监听并触发自动刷新。
+/// 类型时输出 info 日志, 供上层监听并触发自动刷新。
 final networkInfoProvider =
     StreamProvider<List<connectivity_plus.ConnectivityResult>>((ref) async* {
   final connectivity = connectivity_plus.Connectivity();
@@ -141,21 +133,26 @@ class SessionNotifier extends StateNotifier<AsyncValue<ZcodeSession?>> {
     try {
       final session = await _storage.getSession();
       if (session != null && session.isValid) {
+        appLog.i('[Session] 恢复已保存的会话');
         state = AsyncValue.data(session);
       } else {
+        appLog.i('[Session] 无可用会话 (session=${session == null ? "未存储" : "已失效"})');
         state = const AsyncValue.data(null);
       }
     } catch (e, st) {
+      appLog.e('[Session] 恢复会话异常', e, st);
       state = AsyncValue.error(e, st);
     }
   }
 
   Future<void> loginWithSession(ZcodeSession session) async {
+    appLog.i('[Session] 登录成功, 保存会话');
     await _storage.saveSession(session);
     state = AsyncValue.data(session);
   }
 
   Future<void> logout() async {
+    appLog.i('[Session] 退出登录, 清除本地会话');
     await _storage.clearSession();
     state = const AsyncValue.data(null);
   }
@@ -214,6 +211,22 @@ final relayConnectionStateProvider = StreamProvider<RelayConnectionState>((ref) 
 });
 
 // ================================================================
+// 后台保活 (前台服务)
+// ================================================================
+
+/// 登录 → 启动前台服务 (常驻通知, 进程保活, 后台持续收 WS 消息);
+/// 登出 → 停止。需被 UI 长期 watch 才激活 (ZcodeApp build 中 watch)。
+final keepAliveProvider = Provider<bool>((ref) {
+  final client = ref.watch(relayClientProvider);
+  if (client != null) {
+    NotificationService.startKeepAlive();
+  } else {
+    NotificationService.stopKeepAlive();
+  }
+  return client != null;
+});
+
+// ================================================================
 // Repositories
 // ================================================================
 
@@ -248,9 +261,47 @@ class WorkspaceListNotifier
     extends StateNotifier<AsyncValue<List<Workspace>>> {
   final WorkspaceRepository? _repo;
   final Ref _ref;
+  StreamSubscription<Map<String, dynamic>>? _pushSub;
 
-  WorkspaceListNotifier(this._repo, this._ref)
-      : super(const AsyncValue.loading());
+  WorkspaceListNotifier(this._repo, this._ref) : super(const AsyncValue.loading()) {
+    // 3.7.7: 服务端 workspace-list-updated 推送 (payload.result 与 bootstrap 同构),
+    // 接入后任务/工作区列表实时更新, 不再依赖手动 refresh
+    final client = _ref.read(relayClientProvider);
+    _pushSub = client?.onWorkspaceListUpdated.listen(_onPushUpdate);
+  }
+
+  /// 解析推送 payload 并更新 state + allTasks
+  void _onPushUpdate(Map<String, dynamic> payload) {
+    if (payload['result'] is! Map) return;
+    try {
+      final workspaces = Workspace.parseList(payload);
+      final tasks = Workspace.parseTasks(payload);
+
+      // ★ 任务完成通知: displayStatus running → 非 running (任何页面/任何任务,
+      // 含桌面端跑的会话)。挂在这个长生命周期推送上, 而非聊天页的 ChatNotifier
+      // (它是 autoDispose, 退出聊天页就销毁了, 后台看不到状态翻转)。
+      final prevTasks = {for (final p in _ref.read(allTasksProvider)) p.id: p};
+      for (final t in tasks) {
+        if (t.archived) continue;
+        final prev = prevTasks[t.id];
+        if (prev == null || prev.archived) continue;
+        if (prev.status == TaskStatus.running && t.status != TaskStatus.running) {
+          appLog.i('[Workspace] 任务完成: ${t.title} (${t.id})');
+          NotificationService.notifyTurnComplete(
+            taskId: t.id,
+            workspaceKey: t.workspaceKey,
+            sessionTitle: t.title,
+          );
+        }
+      }
+
+      _ref.read(allTasksProvider.notifier).state = tasks;
+      state = AsyncValue.data(workspaces);
+      appLog.d('[Workspace] 推送更新: ${workspaces.length} 工作区 / ${tasks.length} 任务');
+    } catch (e) {
+      appLog.w('[Workspace] 推送 payload 解析失败: $e');
+    }
+  }
 
   Future<void> load() async {
     if (_repo == null) {
@@ -264,7 +315,9 @@ class WorkspaceListNotifier
       final tasks = Workspace.parseTasks(resp);
       _ref.read(allTasksProvider.notifier).state = tasks;
       state = AsyncValue.data(workspaces);
+      appLog.i('[Workspace] bootstrap 完成: ${workspaces.length} 个工作区, ${tasks.length} 个任务');
     } catch (e, st) {
+      appLog.e('[Workspace] bootstrap 加载失败', e, st);
       state = AsyncValue.error(e, st);
     }
   }
@@ -277,9 +330,17 @@ class WorkspaceListNotifier
       final tasks = Workspace.parseTasks(resp);
       _ref.read(allTasksProvider.notifier).state = tasks;
       state = AsyncValue.data(workspaces);
+      appLog.d('[Workspace] 列表刷新完成: ${workspaces.length} 个工作区, ${tasks.length} 个任务');
     } catch (e, st) {
+      appLog.e('[Workspace] 列表刷新失败', e, st);
       state = AsyncValue.error(e, st);
     }
+  }
+
+  @override
+  void dispose() {
+    _pushSub?.cancel();
+    super.dispose();
   }
 }
 
@@ -361,8 +422,9 @@ class ModelListNotifier extends StateNotifier<AsyncValue<ModelListState>> {
     // 等 RPC ready (最多 10 秒, 覆盖 bridge 连接延迟)
     try {
       await _client!.waitRpcReady(const Duration(seconds: 10));
-    } catch (_) {
-      return; // 超时: 保留上次缓存 (不覆盖为 error)
+    } catch (e) {
+      appLog.w('[Model] 等待 RPC ready 超时, 保留上次模型列表: $e');
+      return;
     }
     if (!mounted) return;
     state = const AsyncValue.loading();
@@ -375,12 +437,15 @@ class ModelListNotifier extends StateNotifier<AsyncValue<ModelListState>> {
       try {
         final resp = await _client!.getModelProviders();
         _collectFromProviders(resp, ids, names);
-      } catch (_) {
+      } catch (e) {
         // getAll 失败 → 试 getAllCached
+        appLog.w('[Model] getModelProviders 失败, 重试: $e');
         try {
           final resp = await _client!.getModelProviders();
           _collectFromProviders(resp, ids, names);
-        } catch (_) {}
+        } catch (e) {
+          appLog.e('[Model] 模型列表两次加载均失败', e);
+        }
       }
 
       // 合并已发现的 ID (保留退役模型)
@@ -392,13 +457,16 @@ class ModelListNotifier extends StateNotifier<AsyncValue<ModelListState>> {
 
       if (ids.isEmpty && cur == null) {
         state = const AsyncValue.data(ModelListState());
+        appLog.w('[Model] 未发现任何模型 (响应格式可能变化)');
       } else {
         state = AsyncValue.data(ModelListState(
           models: ids.toList()..sort(),
           providerNames: names,
         ));
+        appLog.d('[Model] 模型列表加载完成: ${ids.length} 个模型');
       }
     } catch (e, st) {
+      appLog.e('[Model] 模型列表加载失败', e, st);
       state = AsyncValue.error(e, st);
     }
   }
@@ -566,7 +634,13 @@ class GlmQuotaNotifier extends StateNotifier<AsyncValue<GlmQuota?>> {
     try {
       final quota = await _service.fetch(cred);
       state = AsyncValue.data(quota);
+      if (quota.success) {
+        appLog.d('[GLM] 配额查询成功: ${quota.tiers.length} 个 tier');
+      } else {
+        appLog.w('[GLM] 配额查询返回失败: ${quota.error}');
+      }
     } catch (e, st) {
+      appLog.e('[GLM] 配额查询异常', e, st);
       state = AsyncValue.error(e, st);
     }
   }
@@ -658,7 +732,8 @@ class SkillsNotifier
     if (_client == null) return;
     try {
       await _client!.waitRpcReady(const Duration(seconds: 10));
-    } catch (_) {
+    } catch (e) {
+      appLog.w('[Skills] 等待 RPC ready 超时, 放弃本次加载: $e');
       if (mounted) state = const AsyncValue.data([]);
       return;
     }
@@ -668,10 +743,12 @@ class SkillsNotifier
     final workspaces = _ref.read(workspaceListProvider).valueOrNull;
     if (workspaces == null || workspaces.isEmpty) {
       _loadAttempts++;
+      appLog.d('[Skills] 工作区未就绪, 500ms 后重试 ($_loadAttempts/10)');
       if (_loadAttempts < 10 && mounted) {
         state = const AsyncValue.loading();
         Future.delayed(const Duration(milliseconds: 500), _maybeLoad);
       } else if (mounted) {
+        appLog.w('[Skills] 等待工作区超时, 返回空列表');
         state = const AsyncValue.data([]);
       }
       return;
@@ -686,8 +763,10 @@ class SkillsNotifier
       );
       final parsed = _parseSkillsResponse(resp['skills'] ?? resp);
       if (mounted) state = AsyncValue.data(parsed);
+      appLog.d('[Skills] 技能列表加载完成: ${parsed.length} 个');
     } catch (e, st) {
       if (mounted) state = AsyncValue.error(e, st);
+      appLog.e('[Skills] 技能列表加载失败', e, st);
     }
   }
 

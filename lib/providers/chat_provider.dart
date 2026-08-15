@@ -1,8 +1,9 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/logging/app_logger.dart';
+import '../core/notifications/notification_service.dart';
 import '../core/relay/relay_client.dart';
 import '../core/relay/relay_events.dart';
 import '../core/relay/relay_protocol.dart';
@@ -26,14 +27,25 @@ class ChatRef {
   final String? taskId;
   final String workspacePath;
 
-  const ChatRef({this.taskId, required this.workspacePath});
+  /// 工作区标识 (远程工作区形如 remote:ssh:host:22:user:path, 3.7.7 实测
+  /// createSession/subscribe 均需携带)。null 时服务端按 path 解析。
+  final String? workspaceIdentity;
+
+  const ChatRef({
+    this.taskId,
+    required this.workspacePath,
+    this.workspaceIdentity,
+  });
 
   @override
   bool operator ==(Object other) =>
-      other is ChatRef && other.taskId == taskId && other.workspacePath == workspacePath;
+      other is ChatRef &&
+      other.taskId == taskId &&
+      other.workspacePath == workspacePath &&
+      other.workspaceIdentity == workspaceIdentity;
 
   @override
-  int get hashCode => Object.hash(taskId, workspacePath);
+  int get hashCode => Object.hash(taskId, workspacePath, workspaceIdentity);
 }
 
 /// AI 工具调用活动 (来自 tool.updated 事件)
@@ -358,7 +370,7 @@ class ChatState {
   /// AI 向用户提问 (AskUserQuestion 工具), 需要用户选择后继续
   final AskUserQuestion? pendingQuestion;
   /// Token 用量 (累计 input/output; AI 回复完成后刷新, 累积保留)
-  final ({int input, int output})? tokenUsage;
+  final ({int input, int output, int max})? tokenUsage;
   /// 当前会话标题 (来自 snapshot.meta.title; 供 UI 顶栏/历史抽屉显示)。
   /// null = 新会话尚未加载历史, UI 可回退到 task.title。
   final String? sessionTitle;
@@ -403,7 +415,7 @@ class ChatState {
     String? thoughtLevel,
     String? model,
     AskUserQuestion? pendingQuestion,
-    ({int input, int output})? tokenUsage,
+    ({int input, int output, int max})? tokenUsage,
     String? sessionTitle,
     List<PlanItem>? plan,
     List<PendingPermission>? pendingPermissions,
@@ -456,6 +468,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
   String? _taskId;
   bool _creating = false;
   bool _initDone = false;
+  bool _initRunning = false; // _init 进行中禁止 resubscribe (会取消 init 的帧监听)
 
   /// V4 状态: 本地缓存的 rows (按 rowId 索引)
   final Map<int, V4Row> _rows = {};
@@ -463,6 +476,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
   String? _v4LogEpoch;
   int _v4Seq = 0;
   int _v4Revision = 0;
+
+  // ── 后台通知去重 ──
+  /// 已通知过的权限请求 id (permissionId 会在多次 state patch 中重复出现)
+  final Set<String> _notifiedPermIds = {};
 
   /// V4 发送命令并更新 CAS revision
   Future<Map<String, dynamic>> _sendV4Command(
@@ -507,8 +524,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
     // 监听 RPC ready 变化: bridge degraded → reopen 后重新订阅。
     // 加标志位避免初始化期间触发 (会死循环)。
     _rpcReadySub = _relay.onRpcReadyChange.listen((ready) {
-      if (ready && _taskId != null && !state.isResponding && _initDone) {
-        debugPrint('[Chat] RPC ready (reconnect), re-subscribing V4...');
+      if (ready && _taskId != null && !state.isResponding && _initDone && !_initRunning) {
+        appLog.i('[Chat] RPC ready (重连后), 重新订阅 V4 事件流...');
         _frameSub?.cancel();
         _frameSub = null;
         _resubscribe();
@@ -542,6 +559,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         },
       );
     } catch (e) {
+      appLog.w('[Chat] 模式切换失败 ($mode): $e');
       state = state.copyWith(error: '模式切换失败: $e');
     }
   }
@@ -571,6 +589,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         },
       );
     } catch (e) {
+      appLog.w('[Chat] 思考级别切换失败 ($level): $e');
       state = state.copyWith(thoughtLevel: prev, error: '思考级别切换失败: $e');
     }
   }
@@ -591,6 +610,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
               baseLogEpoch: _v4LogEpoch,
       );
     } catch (e) {
+      appLog.w('[Chat] 压缩失败: $e');
       state = state.copyWith(isResponding: false, error: '压缩失败: $e');
     }
   }
@@ -618,6 +638,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         },
       );
     } catch (e) {
+      appLog.w('[Chat] 模型切换失败 ($modelId): $e');
       state = state.copyWith(error: '模型切换失败: $e');
     }
   }
@@ -630,39 +651,58 @@ class ChatNotifier extends StateNotifier<ChatState> {
         if (cached.isNotEmpty && state.messages.isEmpty) {
           state = state.copyWith(messages: cached);
         }
-      } catch (_) {}
-    }
-    try {
-      debugPrint('[Chat] _init: opening bridge with taskId=$_taskId...');
-      try {
-        await _relay.openWorkspaceBridge(_ref.workspacePath, taskId: _taskId);
-        debugPrint('[Chat] _init: bridge opened ✓');
       } catch (e) {
-        debugPrint('[Chat] _init: bridge open error: $e, trying waitRpcReady...');
+        appLog.w('[Chat] 缓存消息加载失败: $e');
+      }
+    }
+    final sw = Stopwatch()..start();
+    _initRunning = true;
+    try {
+      // bridge 复用 (网页端模式): 全局一个 bridge, 已开则零开销返回
+      final bridgeKey = _ref.workspaceIdentity ?? _ref.workspacePath;
+      try {
+        await _relay.ensureBridgeOpen(bridgeKey, taskId: _taskId);
+      } catch (e) {
+        appLog.w('[Chat] _init: bridge open error: $e, trying waitRpcReady...');
         await _relay.waitRpcReady(const Duration(seconds: 10));
       }
 
-      // V4 握手
+      // V4 握手 (幂等, 同一 bridge 已握过则跳过)
       await _relay.v4Handshake();
 
-      // V4 订阅事件流
-      debugPrint('[Chat] _init: subscribing V4...');
+      // 订阅 — 历史快照由订阅流直接推送 (网页端模式, 不再单独拉 snapshot)
+      appLog.d('[Chat] _init: subscribing V4...');
       final stream = await _relay.subscribeConversationV4(
         workspacePath: _ref.workspacePath,
+        workspaceIdentity: _ref.workspaceIdentity,
         sessionId: _taskId!,
       );
-      _frameSub = stream.listen(_onV4Frame);
-      debugPrint('[Chat] _init: V4 subscribed ✓');
+      final snapshotDone = Completer<void>();
+      var gotSnapshot = false;
+      _frameSub = stream.listen((f) {
+        _onV4Frame(f);
+        if (!gotSnapshot && f.payload is V4SnapshotPayload) {
+          gotSnapshot = true;
+          if (!snapshotDone.isCompleted) snapshotDone.complete();
+        }
+      });
 
-      // 等快照到达 (snapshot 会在 frame stream 里推送)
-      // 加载历史从 getTaskSnapshotWithEtag 拉取
+      // 双路竞速: 订阅流 snapshot / getTaskSnapshot 并行, 先到先渲染
+      // (state 更新幂等)。流路不 await — 大会话的流快照可能迟到/缺席,
+      // 到达时 _onV4Frame 会自动刷新; RPC 路必达, 以它为准结束 init。
+      unawaited(snapshotDone.future.then((_) {
+        appLog.d('[Chat] _init: 流 snapshot 到达');
+      }).catchError((_) {}));
+      final histSw = Stopwatch()..start();
       await _loadHistory();
-      debugPrint('[Chat] _init: done (messages: ${state.messages.length})');
+      appLog.i('[Chat] _init: done (总 ${sw.elapsedMilliseconds}ms, 历史 ${histSw.elapsedMilliseconds}ms, messages: ${state.messages.length})');
       _initDone = true;
     } catch (e, st) {
-      debugPrint('[Chat] _init: FAILED: $e\n$st');
+      appLog.e('[Chat] _init: FAILED', e, st);
       state = state.copyWith(isLoadingHistory: false, error: '加载失败: $e');
       _initDone = true;
+    } finally {
+      _initRunning = false;
     }
   }
 
@@ -692,7 +732,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         }
         _rebuildMessagesFromRows();
         _applySnapshotState(V4ConversationSnapshot.fromJson(snapshot));
-        debugPrint('[Chat] _loadHistory: ${_rows.length} rows loaded');
+        appLog.d('[Chat] _loadHistory: ${_rows.length} rows loaded');
       } else if (messagesJson != null && messagesJson.isNotEmpty) {
         // V3 messages 格式 (host 兼容)
         final messages = messagesJson
@@ -708,19 +748,60 @@ class ChatNotifier extends StateNotifier<ChatState> {
           mode: meta?['mode'] as String? ?? 'build',
           thoughtLevel: meta?['thoughtLevel'] as String? ?? 'max',
         );
-        debugPrint('[Chat] _loadHistory: ${messages.length} messages (v3 format)');
+        appLog.d('[Chat] _loadHistory: ${messages.length} messages (v3 format)');
         try { MessageCache.saveMessages(_taskId!, messages); } catch (_) {}
       } else {
         state = state.copyWith(isLoadingHistory: false);
       }
     } catch (e) {
-      debugPrint('[Chat] _loadHistory: FAILED: $e');
-      state = state.copyWith(isLoadingHistory: false, error: '历史加载失败: $e');
+      appLog.e('[Chat] _loadHistory: FAILED: $e');
+      // 已有内容 (缓存/流快照先渲染) 时不覆盖为全局错误
+      if (state.messages.isEmpty) {
+        state = state.copyWith(isLoadingHistory: false, error: '历史加载失败: $e');
+      } else {
+        state = state.copyWith(isLoadingHistory: false);
+      }
+    }
+  }
+
+  /// 对比状态变化, 触发后台事件通知 (需要确认/需要回答)。
+  /// 任务完成的通知由 WorkspaceListNotifier 挂全局 workspace-list-updated
+  /// 推送处理 (本 notifier 是 autoDispose, 退出聊天页即销毁, 不可靠)。
+  void _checkNotify(ChatState prev, ChatState next) {
+    final taskId = _taskId;
+    if (taskId == null) return;
+
+    // 1. 新出现的权限确认请求 (按 id 去重)
+    for (final p in next.pendingPermissions) {
+      if (_notifiedPermIds.contains(p.id)) continue;
+      _notifiedPermIds.add(p.id);
+      appLog.i('[Chat] 权限请求到达: ${p.toolName} (${p.id})');
+      NotificationService.notifyPermission(
+        taskId: taskId,
+        workspaceKey: _ref.workspacePath,
+        permissionId: p.id,
+        toolName: p.toolName,
+        reason: p.reason,
+      );
+    }
+    // 清理已解决的权限 id, 防止集合无限增长
+    _notifiedPermIds.removeWhere(
+        (id) => !next.pendingPermissions.any((p) => p.id == id));
+
+    // 2. AI 提问 (pendingQuestion null→非空)
+    if (prev.pendingQuestion == null && next.pendingQuestion != null) {
+      appLog.i('[Chat] AI 提问到达');
+      NotificationService.notifyQuestion(
+        taskId: taskId,
+        workspaceKey: _ref.workspacePath,
+        question: next.pendingQuestion!.question,
+      );
     }
   }
 
   /// 从 V4 snapshot 更新 state (config/control/usage/plan/interactions)
   void _applySnapshotState(V4ConversationSnapshot snap) {
+    final prevState = state;
     _v4LogEpoch = snap.logEpoch;
     _v4Seq = snap.seq;
     _v4Revision = snap.revision;
@@ -777,7 +858,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       plan: plan,
       pendingPermissions: perms,
       tokenUsage: usage != null
-          ? (input: usage.usedTokens, output: 0)
+          ? (input: usage.usedTokens, output: 0, max: usage.maxTokens)
           : state.tokenUsage,
     );
 
@@ -805,6 +886,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
     if (snap.meta.title.isNotEmpty && _taskId != null) {
       _onTitleUpdated?.call(_taskId!, snap.meta.title);
     }
+
+    _checkNotify(prevState, state);
   }
 
   /// 从 V3 messages[] 格式的消息构造 DisplayMessage
@@ -862,7 +945,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   /// V4 Frame 处理 ★★★
   void _onV4Frame(V4Frame frame) {
-    debugPrint('[Chat] V4 frame: topic=${frame.topic} fromSeq=${frame.fromSeq} toSeq=${frame.toSeq}');
+    appLog.d('[Chat] V4 frame: topic=${frame.topic} fromSeq=${frame.fromSeq} toSeq=${frame.toSeq}');
 
     if (frame.payload is V4SnapshotPayload) {
       final snap = (frame.payload as V4SnapshotPayload).snapshot;
@@ -877,10 +960,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
       }
       _rebuildMessagesFromRows();
       _applySnapshotState(snap);
-      debugPrint('[Chat] V4 snapshot: ${_rows.length} rows');
+      appLog.d('[Chat] V4 snapshot: ${_rows.length} rows');
     } else if (frame.payload is V4DeltasPayload) {
       final deltas = (frame.payload as V4DeltasPayload).deltas;
-      debugPrint('[Chat] V4 deltas: ${deltas.length} ops');
+      appLog.d('[Chat] V4 deltas: ${deltas.length} ops');
       for (final d in deltas) {
         _applyDelta(d);
       }
@@ -904,7 +987,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       case V4StateUpdated(:final patch):
         _applyStatePatch(patch);
       case _:
-        debugPrint('[Chat] V4 delta: unhandled ${delta.runtimeType}');
+        appLog.w('[Chat] V4 delta: unhandled ${delta.runtimeType}');
     }
   }
 
@@ -933,6 +1016,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   /// state.updated patch: 更新 control/config/usage 等
   void _applyStatePatch(Map<String, dynamic> patch) {
+    final prevState = state;
     if (patch.containsKey('control')) {
       final ctrl = V4Control.fromJson(patch['control'] as Map<String, dynamic>? ?? {});
       state = state.copyWith(isResponding: ctrl.isRunning);
@@ -949,7 +1033,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
       final u = V4Usage.fromJson(patch['usage'] as Map<String, dynamic>? ?? {});
       if (u.contextWindow != null) {
         state = state.copyWith(
-          tokenUsage: (input: u.contextWindow!.usedTokens, output: 0),
+          tokenUsage: (
+            input: u.contextWindow!.usedTokens,
+            output: 0,
+            max: u.contextWindow!.maxTokens,
+          ),
         );
       }
     }
@@ -999,6 +1087,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
         }).toList(),
       );
     }
+
+    _checkNotify(prevState, state);
   }
 
   /// 从 _rows 重建 DisplayMessage 列表 (适配 UI)
@@ -1113,8 +1203,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   /// 发送消息
   Future<void> sendMessage(String content) async {
-    debugPrint(
-        '[Chat] sendMessage: "$content" taskId=$_taskId model=${_preferredModelReader()} mode=${state.mode}');
+    appLog.d('[Chat] sendMessage: "${content.length > 100 ? '${content.substring(0, 100)}…' : content}" taskId=$_taskId model=${_preferredModelReader()} mode=${state.mode}');
     if (content.trim().isEmpty || state.isResponding || _creating) return;
 
     // 1. 立即显示用户消息
@@ -1137,16 +1226,20 @@ class ChatNotifier extends StateNotifier<ChatState> {
       // 3. 新会话: 先 createSession 拿 taskId, 再订阅 + 发消息
       if (_taskId == null) {
         _creating = true;
-        debugPrint('[Chat] V4 createSession: mode=${state.mode}');
-        final session = await _relay.createSession(
+        // bridge 复用 (打开工作区时已开) + 幂等握手
+        await _relay.ensureBridgeOpen(
+            _ref.workspaceIdentity ?? _ref.workspacePath);
+        // V4 命令前必须先握手 (3.7.7 实测顺序: hello → initialize → createSession,
+        // 否则服务端报 fault.connection.handshakeRequired)
+        await _relay.v4Handshake();
+        appLog.i('[Chat] V4 createSession: mode=${state.mode}');
+        // 3.7.7 迁移: 网页端已改走 sendConversationCommandV4(type: createSession)
+        _taskId = await _relay.createSessionV4(
           workspacePath: _ref.workspacePath,
+          workspaceIdentity: _ref.workspaceIdentity,
           mode: state.mode,
         );
-        _taskId = session['session']?['sessionId'] as String? ??
-            session['sessionId'] as String?;
-        if (_taskId == null) {
-          throw Exception('创建会话失败: 未返回 sessionId');
-        }
+        appLog.i('[Chat] 会话已创建(V4): $_taskId');
         // 热切换模型
         final desiredModel = _preferredModelReader();
         if (desiredModel != null) {
@@ -1156,7 +1249,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
               sessionId: _taskId!,
               model: desiredModel,
             );
-          } catch (_) {}
+          } catch (e) {
+            appLog.w('[Chat] 新会话热切换模型失败 ($desiredModel): $e');
+          }
         }
         _onSessionCreated?.call(Task(
           id: _taskId!,
@@ -1166,10 +1261,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
           createdAt: DateTime.now(),
           updatedAt: DateTime.now(),
         ));
-        // V4 handshake + 订阅新会话
-        await _relay.v4Handshake();
+        // 订阅新会话 (V4 握手已在 createSession 前完成)
         final stream = await _relay.subscribeConversationV4(
           workspacePath: _ref.workspacePath,
+          workspaceIdentity: _ref.workspaceIdentity,
           sessionId: _taskId!,
         );
         _frameSub = stream.listen(_onV4Frame);
@@ -1182,7 +1277,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         payload: {'text': content},
       );
     } catch (e) {
-      debugPrint('[Chat] 发送失败: $e');
+      appLog.e('[Chat] 发送失败: $e');
       state = state.copyWith(
         messages: state.messages.where((m) => m.id != userMsg.id).toList(),
         isResponding: false,
@@ -1213,6 +1308,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         payload: {'text': '${q.question}=$answer'},
       );
     } catch (e) {
+      appLog.w('[Chat] 回答提交失败: $e');
       state = state.copyWith(isResponding: false, error: '回答提交失败: $e');
     }
   }
@@ -1254,6 +1350,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         },
       );
     } catch (e) {
+      appLog.w('[Chat] 权限确认失败 (permission=$permissionId, option=$optionId): $e');
       state = state.copyWith(isResponding: false, error: '权限确认失败: $e');
     }
   }
@@ -1270,6 +1367,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         payload: {'text': approved ? 'User approved the plan, proceed' : 'User rejected the plan'},
       );
     } catch (e) {
+      appLog.w('[Chat] plan 回答失败 (approved=$approved): $e');
       state = state.copyWith(isResponding: false, error: 'plan 回答失败: $e');
     }
   }
@@ -1286,7 +1384,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
                 sessionId: _taskId,
         );
       } catch (e) {
-        debugPrint('[Chat] stop 失败: $e');
+        appLog.w('[Chat] stop 失败: $e');
       }
     }
   }
@@ -1306,6 +1404,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       );
       await _loadHistory();
     } catch (e) {
+      appLog.w('[Chat] 回退失败: $e');
       state = state.copyWith(isResponding: false, error: '回退失败: $e');
     }
   }
@@ -1329,12 +1428,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
       await _relay.v4Handshake();
       final stream = await _relay.subscribeConversationV4(
         workspacePath: _ref.workspacePath,
+        workspaceIdentity: _ref.workspaceIdentity,
         sessionId: _taskId!,
       );
       _frameSub = stream.listen(_onV4Frame);
-      debugPrint('[Chat] V4 resubscribe ✓');
+      appLog.i('[Chat] V4 resubscribe ✓');
     } catch (e) {
-      debugPrint('[Chat] V4 resubscribe FAILED: $e');
+      appLog.e('[Chat] V4 resubscribe FAILED: $e');
     }
   }
 
@@ -1364,6 +1464,7 @@ final chatProvider = StateNotifierProvider.autoDispose
         ref.read(modelListProvider.notifier).mergeDiscoveredIds(ids),
     onSessionCreated: (task) {
       // 新会话加到 allTasksProvider 头部, 历史抽屉即时显示
+      appLog.i('[Chat] onSessionCreated: ${task.id} ("${task.title}") 加入任务列表');
       final tasks = List<Task>.from(ref.read(allTasksProvider));
       if (!tasks.any((t) => t.id == task.id)) {
         ref.read(allTasksProvider.notifier).state = [task, ...tasks];
@@ -1372,6 +1473,7 @@ final chatProvider = StateNotifierProvider.autoDispose
     onTitleUpdated: (taskId, newTitle) {
       // 服务端标题更新 (snapshot.meta.title): 用 copyWith 刷新对应 task,
       // 历史抽屉 (_HistoryDrawer) 等所有订阅 allTasksProvider 的 UI 自动重绘。
+      appLog.d('[Chat] onTitleUpdated: $taskId → "$newTitle"');
       final tasks = ref.read(allTasksProvider);
       final idx = tasks.indexWhere((t) => t.id == taskId);
       if (idx < 0) return;

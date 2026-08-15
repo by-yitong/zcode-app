@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:hive/hive.dart';
 
 import '../../providers/chat_provider.dart';
+import '../logging/app_logger.dart';
 
 /// 消息本地缓存 (离线可见优化, 非数据源)
 ///
@@ -48,11 +49,7 @@ class MessageCache {
       await _safeBox.put(taskId, encoded);
     } catch (e) {
       // 缓存只是体验优化, 任何失败都不应影响主流程
-      assert(() {
-        // ignore: avoid_print
-        print('[MessageCache] saveMessages 失败: $e');
-        return true;
-      }());
+      appLog.w('[MessageCache] saveMessages 失败: $e');
     }
   }
 
@@ -66,11 +63,7 @@ class MessageCache {
           .map((e) => _fromJson(e as Map<String, dynamic>))
           .toList();
     } catch (e) {
-      assert(() {
-        // ignore: avoid_print
-        print('[MessageCache] loadMessages 失败: $e');
-        return true;
-      }());
+      appLog.w('[MessageCache] loadMessages 失败: $e');
       return const [];
     }
   }
@@ -80,11 +73,7 @@ class MessageCache {
     try {
       await _safeBox.delete(taskId);
     } catch (e) {
-      assert(() {
-        // ignore: avoid_print
-        print('[MessageCache] clearTask 失败: $e');
-        return true;
-      }());
+      appLog.w('[MessageCache] clearTask 失败: $e');
     }
   }
 
@@ -93,11 +82,7 @@ class MessageCache {
     try {
       await _safeBox.clear();
     } catch (e) {
-      assert(() {
-        // ignore: avoid_print
-        print('[MessageCache] clearAll 失败: $e');
-        return true;
-      }());
+      appLog.w('[MessageCache] clearAll 失败: $e');
     }
   }
 

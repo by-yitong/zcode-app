@@ -9,12 +9,14 @@
 /// - 鉴权: Authorization: {apiKey}  ⚠️ 不加 Bearer 前缀, 裸 key
 /// - 响应 data.limits[]: type=='TOKENS_LIMIT' 的条目按 unit 分类
 ///     unit:3 → five_hour / unit:6 → weekly_limit
+///     type=='TIME_LIMIT' 的条目为 MCP 月度用量 (usage/currentValue/usageDetails)
 /// - percentage 为字符串/null 时按 0 处理; 超过 2 条 TOKENS_LIMIT 的丢弃
 library;
 
 import 'package:dio/dio.dart';
 
 import '../../data/models/glm_quota.dart';
+import '../logging/app_logger.dart';
 
 /// GLM coding plan 凭据
 class GlmCredential {
@@ -67,6 +69,7 @@ class GlmQuotaService {
 
     final base = zhipuQuotaBase(cred.baseUrl);
     final url = '$base/api/monitor/usage/quota/limit';
+    appLog.d('[GLM] 查询配额: $url');
 
     Response<Map<String, dynamic>> resp;
     try {
@@ -83,6 +86,7 @@ class GlmQuotaService {
       // 401/403 → 凭据失效
       final code = e.response?.statusCode;
       if (code == 401 || code == 403) {
+        appLog.w('[GLM] 鉴权失败 (HTTP $code), 凭据可能已失效');
         return GlmQuota(
           success: false,
           credentialStatus: GlmCredentialStatus.expired,
@@ -91,6 +95,7 @@ class GlmQuotaService {
           queriedAt: now,
         );
       }
+      appLog.w('[GLM] 网络错误: ${e.message}');
       return GlmQuota(
         success: false,
         credentialStatus: GlmCredentialStatus.valid,
@@ -101,6 +106,7 @@ class GlmQuotaService {
 
     final status = resp.statusCode ?? 0;
     if (status != 401 && status != 403 && (status < 200 || status >= 300)) {
+      appLog.w('[GLM] API 错误 (HTTP $status)');
       return GlmQuota(
         success: false,
         credentialStatus: GlmCredentialStatus.valid,
@@ -114,6 +120,7 @@ class GlmQuotaService {
     // 业务级错误 (success: false)
     if (body['success'] is bool && body['success'] as bool == false) {
       final msg = (body['msg'] as String?) ?? 'Unknown error';
+      appLog.w('[GLM] API 业务错误: $msg');
       return GlmQuota(
         success: false,
         credentialStatus: GlmCredentialStatus.valid,
@@ -124,6 +131,7 @@ class GlmQuotaService {
 
     final data = body['data'];
     if (data is! Map<String, dynamic>) {
+      appLog.w("[GLM] 响应缺少 'data' 字段: ${body.keys.toList()}");
       return GlmQuota(
         success: false,
         credentialStatus: GlmCredentialStatus.valid,
@@ -133,15 +141,63 @@ class GlmQuotaService {
     }
 
     final tiers = _parseZhipuTokenTiers(data);
+    final mcp = _parseZhipuMcpQuota(data);
     final level = data['level'] as String?;
+    appLog.i('[GLM] 配额查询成功: ${tiers.length} 个 tier, '
+        'mcp=${mcp != null ? '${mcp.used}/${mcp.total}' : '无'}, level=$level');
 
     return GlmQuota(
       success: true,
       credentialStatus: GlmCredentialStatus.valid,
       credentialMessage: level,
       tiers: tiers,
+      mcp: mcp,
       queriedAt: now,
     );
+  }
+
+  /// 解析 data.limits[] 中的 TIME_LIMIT 条目为 MCP 月度用量
+  ///
+  /// 取第一条 TIME_LIMIT (当前上游只有 1 条: unit:5+number:1 = 1 个月窗口)。
+  /// usageDetails 缺失/为空时仍返回总量信息, details 为空列表。
+  GlmMcpQuota? _parseZhipuMcpQuota(Map<String, dynamic> data) {
+    final limits = data['limits'];
+    if (limits is! List) return null;
+
+    for (final raw in limits) {
+      if (raw is! Map<String, dynamic>) continue;
+      final type = (raw['type'] as String?) ?? '';
+      if (type.toLowerCase() != 'time_limit') continue;
+
+      final percentage = _parseF64(raw['percentage']) ?? 0.0;
+      final resetMs = (raw['nextResetTime'] is num)
+          ? (raw['nextResetTime'] as num).toInt()
+          : null;
+      final details = <GlmMcpUsageDetail>[];
+      final rawDetails = raw['usageDetails'];
+      if (rawDetails is List) {
+        for (final d in rawDetails) {
+          if (d is! Map<String, dynamic>) continue;
+          final code = d['modelCode'] as String?;
+          if (code == null) continue;
+          details.add(GlmMcpUsageDetail(
+            modelCode: code,
+            usage: (d['usage'] is num) ? (d['usage'] as num).toInt() : 0,
+          ));
+        }
+      }
+
+      return GlmMcpQuota(
+        total: (raw['usage'] is num) ? (raw['usage'] as num).toInt() : 0,
+        used: (raw['currentValue'] is num)
+            ? (raw['currentValue'] as num).toInt()
+            : 0,
+        percentage: percentage,
+        resetsAt: resetMs != null ? _millisToIso8601(resetMs) : null,
+        details: details,
+      );
+    }
+    return null;
   }
 
   /// 解析智谱 data.limits[] 为 tier 列表

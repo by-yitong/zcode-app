@@ -48,6 +48,9 @@ dependencies:
   image_picker: ^1.2.2
   file_picker: ^10.0.0
   share_plus: ^12.0.2
+  url_launcher: ^6.3.1
+  flutter_foreground_task: ^10.0.0
+  flutter_local_notifications: ^22.3.0
 
 dev_dependencies:
   flutter_test:
@@ -90,3 +93,8 @@ flutter:
         - asset: assets/fonts/JetBrainsMono-Regular.ttf
         - asset: assets/fonts/JetBrainsMono-Bold.ttf
           weight: 700
+
+# flutter_markdown 已停更, vendor 进来打了崩溃补丁 (见 lib/src/builder.dart PATCH)
+dependency_overrides:
+  flutter_markdown:
+    path: third_party/flutter_markdown

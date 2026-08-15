@@ -154,6 +154,8 @@ enum TaskStatus {
 
   static TaskStatus fromString(String? value) {
     if (value == null) return TaskStatus.idle;
+    // 3.7.7 推送用 "completed" (过去式), 旧接口用 "complete"
+    if (value == 'completed') return TaskStatus.complete;
     for (final s in TaskStatus.values) {
       if (s.value == value) return s;
     }

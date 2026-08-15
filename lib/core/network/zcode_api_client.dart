@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 
 import '../config/app_config.dart';
+import '../logging/app_logger.dart';
 
 /// ZCode HTTP API 客户端
 ///
@@ -25,6 +26,15 @@ class ZcodeApiClient {
       requestBody: false,
       responseBody: false,
       requestHeader: false,
+    ));
+    // LogInterceptor 关闭了请求/响应体, 失败时只有 URL; 补一条带状态的错误日志
+    _dio.interceptors.add(InterceptorsWrapper(
+      onError: (e, handler) {
+        final req = e.requestOptions;
+        appLog.w('[Http] ${req.method} ${req.path} 失败 '
+            '(HTTP ${e.response?.statusCode ?? "-"}): ${e.message}');
+        handler.next(e);
+      },
     ));
   }
 
