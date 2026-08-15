@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/logging/app_logger.dart';
+import '../../../../shared/entry_workspace.dart';
 import '../../../../shared/theme/app_design_tokens.dart';
 import '../../../../shared/theme/app_router.dart';
 import '../../../providers/app_providers.dart';
@@ -59,7 +61,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     );
   }
 
-  /// 连接 relay + 开 bridge + 加载数据, 完成后进入主页
+  /// 连接 relay + 开 bridge + 加载数据, 完成后直达聊天页
   Future<void> _connectRelay() async {
     if (!mounted) return;
     setState(() => _status = '正在连接服务器...');
@@ -71,15 +73,20 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
       if (!mounted) return;
       setState(() => _status = '正在建立通道...');
 
-      // 2) 开第一个工作区的 bridge → RPC ready
+      // 2) 选定入口工作区 (上次打开 / 默认) 并开它的 bridge → RPC ready
       //    模型/技能都依赖 _rpcCall, 必须先开 bridge
       final workspaces = ref.read(workspaceListProvider).valueOrNull;
       final repo = ref.read(workspaceRepositoryProvider);
-      if (workspaces != null && workspaces.isNotEmpty && repo != null) {
+      final entry = await pickEntryWorkspace(workspaces ?? const []);
+      if (entry != null && repo != null) {
+        // 更新选中工作区 (聊天页标题/identity 用)
+        ref.read(selectedWorkspaceProvider.notifier).state = entry;
         try {
-          await repo.openWorkspace(workspaces.first.workspaceKey);
-        } catch (_) {
-          // bridge 失败不阻塞进主页
+          // 远程工作区 bridge-open 必须传 identity (3.7.7 实测), 本地工作区两者相同
+          await repo.openWorkspace(entry.workspaceIdentity);
+        } catch (e) {
+          // bridge 失败不阻塞进入
+          appLog.w('[Splash] 入口工作区 bridge 打开失败 (不阻塞): $e');
         }
       }
 
@@ -93,12 +100,22 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
             .read(modelListProvider.notifier)
             .refresh()
             .timeout(const Duration(seconds: 5));
-      } catch (_) {}
+      } catch (e) {
+        appLog.w('[Splash] 模型列表预加载失败/超时 (不阻塞): $e');
+      }
 
       if (!mounted) return;
-      context.go(AppRoutes.home);
+      // 直达聊天页 (对齐网页手机端); 无工作区时回退主页
+      if (entry != null) {
+        context.go(
+          '${AppRoutes.chat}?workspace=${Uri.encodeComponent(entry.workspaceKey)}',
+        );
+      } else {
+        context.go(AppRoutes.home);
+      }
     } catch (e) {
       // 连接失败也进入主页 (主页有重试)
+      appLog.w('[Splash] 启动连接失败, 直接进入主页 (主页可重试): $e');
       if (!mounted) return;
       context.go(AppRoutes.home);
     }
@@ -128,12 +145,18 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                 fit: BoxFit.contain,
               ),
               const SizedBox(height: 56),
-              SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(
-                  color: Colors.white.withValues(alpha: 0.5),
-                  strokeWidth: 2,
+              // 条状加载条 (圆角, 深色背景上克制的白色)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(AppRadius.pill),
+                child: const SizedBox(
+                  width: 128,
+                  height: 4,
+                  child: LinearProgressIndicator(
+                    minHeight: 4,
+                    backgroundColor: Color.fromRGBO(255, 255, 255, 0.10),
+                    valueColor:
+                        AlwaysStoppedAnimation(Color.fromRGBO(255, 255, 255, 0.5)),
+                  ),
                 ),
               ),
               const SizedBox(height: 16),

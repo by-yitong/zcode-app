@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/relay/relay_protocol.dart';
 import '../../../core/services/glm_quota_service.dart';
@@ -10,6 +11,7 @@ import '../../../providers/app_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/widgets/app_section_header.dart';
 import '../../../shared/widgets/app_tile_group.dart';
+import 'agent_settings_screen.dart';
 import 'remote_settings_screen.dart';
 
 /// 设置页
@@ -27,7 +29,7 @@ class SettingsScreen extends ConsumerWidget {
     final deviceId = user?.deviceSid ?? '—';
 
     return Scaffold(
-      appBar: AppBar(title: const Text('我的')),
+      appBar: AppBar(title: const Text('设置')),
       body: ListView(
         padding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.lg,
@@ -138,8 +140,15 @@ class SettingsScreen extends ConsumerWidget {
 
           // 模型与模式
           const AppSectionHeader(title: '模型与模式'),
-          const AppTileGroup(tiles: [
+          AppTileGroup(tiles: [
             AppTile(
+              icon: Icons.tune_rounded,
+              title: 'Agent 设置',
+              subtitle: '技能 / 子代理 / Hooks / 插件 / 命令',
+              showChevron: true,
+              onTap: () => _openAgentSettings(context, ref),
+            ),
+            const AppTile(
               icon: Icons.swap_horiz_rounded,
               title: '在对话内切换',
               subtitle: '打开任意工作区对话, 输入栏可切换模型 / 确认·自动模式',
@@ -179,16 +188,25 @@ class SettingsScreen extends ConsumerWidget {
 
           // 关于
           const AppSectionHeader(title: '关于'),
-          const AppTileGroup(tiles: [
-            AppTile(
+          AppTileGroup(tiles: [
+            const AppTile(
               icon: Icons.info_outline_rounded,
               title: '版本',
               value: 'v1.0.0',
             ),
             AppTile(
+              icon: Icons.code_rounded,
+              title: 'GitHub',
+              subtitle: 'github.com/by-yitong/zcode-app',
+              showChevron: true,
+              onTap: () => _openUrl('https://github.com/by-yitong/zcode-app'),
+            ),
+            AppTile(
               icon: Icons.description_outlined,
               title: '开源协议',
+              value: 'MIT',
               showChevron: true,
+              onTap: () => _showLicenseDialog(context),
             ),
           ]),
 
@@ -210,6 +228,18 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const SizedBox(height: AppSpacing.xxl),
         ],
+      ),
+    );
+  }
+
+  /// 打开 Agent 设置 (作用于当前选中工作区; 与聊天页原右上角入口一致)
+  void _openAgentSettings(BuildContext context, WidgetRef ref) {
+    final list = ref.read(workspaceListProvider).valueOrNull;
+    final ws = ref.read(selectedWorkspaceProvider) ??
+        (list != null && list.isNotEmpty ? list.first : null);
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AgentSettingsScreen(workspacePath: ws?.workspaceKey ?? ''),
       ),
     );
   }
@@ -236,6 +266,39 @@ class SettingsScreen extends ConsumerWidget {
     if (confirmed == true) {
       await ref.read(sessionProvider.notifier).logout();
     }
+  }
+
+  /// 打开外部链接 (浏览器 / GitHub app)
+  Future<void> _openUrl(String url) async {
+    final uri = Uri.parse(url);
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      // 无可处理的应用时静默忽略
+    }
+  }
+
+  /// MIT 开源协议弹窗 (完整协议文本)
+  void _showLicenseDialog(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('MIT License'),
+        content: SingleChildScrollView(
+          child: Text(kMitLicenseText,
+              style: AppText.mono(
+                  context,
+                  size: AppTextSizes.monoSm,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
   }
 
   /// 弹出主题选择器 (深色 / 浅色 / 跟随系统)
@@ -329,9 +392,11 @@ class _GlmQuotaInlineSummary extends ConsumerWidget {
 
     final weekly = quota.weeklyTier;
     final fiveHour = quota.fiveHourTier;
+    final mcp = quota.mcp;
     final parts = <String>[];
     if (weekly != null) parts.add('本周 ${_fmtPct(weekly.utilization)}');
     if (fiveHour != null) parts.add('5h ${_fmtPct(fiveHour.utilization)}');
+    if (mcp != null) parts.add('MCP ${_fmtPct(mcp.percentage)}');
     if (parts.isEmpty) return const SizedBox.shrink();
 
     return Padding(
@@ -439,8 +504,9 @@ class _GlmQuotaCard extends ConsumerWidget {
             onEdit: () => _showGlmCredentialEditor(context, ref),
           );
         }
-        // 套餐等级 + 两窗口 tier
+        // 套餐等级 + 两窗口 tier + MCP 月度用量
         final level = quota.credentialMessage;
+        final mcp = quota.mcp;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -454,6 +520,15 @@ class _GlmQuotaCard extends ConsumerWidget {
             for (final tier in quota.tiers) ...[
               _TierRow(tier: tier),
               if (tier != quota.tiers.last) const SizedBox(height: 14),
+            ],
+            if (mcp != null) ...[
+              if (quota.tiers.isNotEmpty)
+                Divider(
+                  height: 28,
+                  thickness: 1,
+                  color: theme.colorScheme.outlineVariant,
+                ),
+              _McpSection(mcp: mcp),
             ],
             const SizedBox(height: 8),
             // 更新时间 + 编辑入口
@@ -529,6 +604,107 @@ class _TierRow extends StatelessWidget {
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
           ),
+      ],
+    );
+  }
+}
+
+/// MCP 月度用量区块 (标题 + 已用/总量 + 进度条 + 重置时间 + 各 MCP 次数明细)
+class _McpSection extends StatelessWidget {
+  final GlmMcpQuota mcp;
+  const _McpSection({required this.mcp});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = _utilizationColor(mcp.percentage);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text('本月 MCP 用量',
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(fontWeight: FontWeight.w500)),
+            ),
+            Text(
+              '${_fmtPct(mcp.percentage)}%',
+              style: AppText.mono(context,
+                  size: 13, weight: FontWeight.w600, color: color),
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(
+          '${mcp.used} / ${mcp.total} 次',
+          style: theme.textTheme.bodySmall
+              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(AppRadius.xs),
+          child: LinearProgressIndicator(
+            value: (mcp.percentage / 100).clamp(0.0, 1.0),
+            minHeight: 6,
+            backgroundColor: theme.colorScheme.surfaceContainerHighest,
+            color: color,
+          ),
+        ),
+        if (mcp.resetsAt != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              '重置: ${_fmtRelative(mcp.resetsAt!)}',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ),
+        if (mcp.details.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          for (var i = 0; i < mcp.details.length; i++) ...[
+            _McpDetailRow(detail: mcp.details[i]),
+            if (i < mcp.details.length - 1) const SizedBox(height: 6),
+          ],
+        ],
+      ],
+    );
+  }
+}
+
+/// 单个 MCP 使用次数行 (展示名 + 次数)
+class _McpDetailRow extends StatelessWidget {
+  final GlmMcpUsageDetail detail;
+  const _McpDetailRow({required this.detail});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        Container(
+          width: 5,
+          height: 5,
+          margin: const EdgeInsets.only(right: AppSpacing.sm),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+            shape: BoxShape.circle,
+          ),
+        ),
+        Expanded(
+          child: Text(
+            glmMcpDisplayName(detail.modelCode),
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+        ),
+        Text(
+          '${detail.usage} 次',
+          style: AppText.mono(context,
+              size: AppTextSizes.monoSm,
+              color: theme.colorScheme.onSurfaceVariant),
+        ),
       ],
     );
   }
@@ -740,3 +916,28 @@ Color _utilizationColor(double utilization) {
   if (utilization >= 70) return AppColors.warning;
   return AppColors.accent;
 }
+
+/// MIT 协议全文 (与仓库根 LICENSE 一致)
+const String kMitLicenseText = '''
+MIT License
+
+Copyright (c) 2026 zcode-app contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+''';

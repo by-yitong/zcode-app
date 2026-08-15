@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/logging/app_logger.dart';
 import '../../../providers/app_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/widgets/app_empty_state.dart';
@@ -228,8 +229,9 @@ class _SkillsScreenState extends ConsumerState<SkillsScreen> {
         enabled: value,
         scope: skill.scope,
       );
-    } catch (_) {
+    } catch (e) {
       // RPC 失败也刷新列表 (服务器状态为准)
+      appLog.w('[Skills] ${value ? '启用' : '禁用'}技能 "${skill.name}" 失败: $e');
     }
     ref.read(skillsProvider.notifier).refresh();
   }

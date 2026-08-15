@@ -50,7 +50,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       await ref.read(sessionProvider.notifier).loginWithSession(session);
 
       if (mounted) {
-        context.go(AppRoutes.home);
+        // 登录成功 → 走 Splash: 连 relay + 加载工作区 + 直达聊天页
+        context.go(AppRoutes.splash);
       }
     } on ArgumentError catch (e) {
       setState(() {
@@ -84,6 +85,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         _urlController.text = result;
         _error = null;
       });
+      // 扫到即连, 无需手动点「连接」
+      await _login();
     }
   }
 
@@ -113,7 +116,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   style: theme.textTheme.headlineSmall
                       ?.copyWith(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              Text('扫码或粘贴连接地址, Cookie 会自动获取',
+              Text('扫码后自动连接, 也可以粘贴连接地址',
                   style: theme.textTheme.bodyMedium
                       ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
 

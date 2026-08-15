@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/logging/app_logger.dart';
 import '../../../core/relay/relay_client.dart';
 import '../../../providers/app_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
@@ -87,7 +88,7 @@ class _AgentSettingsScreenState extends ConsumerState<AgentSettingsScreen>
       if (resp.body is Map) return Map<String, dynamic>.from(resp.body as Map);
       return {'raw': resp.body};
     } catch (e) {
-      debugPrint('[AgentSettings] $channel.$method failed: $e');
+      appLog.w('[AgentSettings] $channel.$method failed: $e');
       return null;
     }
   }
