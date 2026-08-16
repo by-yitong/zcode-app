@@ -708,7 +708,7 @@ class RelayClient {
       final id = rpc.id as int;
       final completer = _pendingRpc.remove(id);
       if (completer != null && !completer.isCompleted) {
-        _log('debug', '← RPC #$id OK: body=${_trunc(rpc.body, 300)}');
+        _log('debug', '← RPC #$id OK: body=${_trunc(rpc.body, 800)}');
         completer.complete(rpc);
         return;
       }
@@ -1520,6 +1520,7 @@ class RelayClient {
     String? sessionId,
     int? baseRevision,
     String? baseLogEpoch,
+    Map<String, dynamic>? envelopeExtras,
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final cmdId = 'cmd_${now}_${Random().nextInt(0xFFFF).toRadixString(16).padLeft(4, '0')}';
@@ -1534,6 +1535,8 @@ class RelayClient {
       'sessionId': sessionId,  // null for createSession, sessionId for others
       if (baseRevision != null) 'baseRevision': baseRevision,
       if (baseLogEpoch != null) 'baseLogEpoch': baseLogEpoch,
+      // 命令专属信封字段 (如队列命令的 queueItemId — 协议信封基类字段)
+      ...?envelopeExtras,
     };
 
     final resp = await _rpcCall('zcode-agent', 'sendConversationCommandV4', [

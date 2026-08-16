@@ -671,37 +671,59 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }
 
   /// 立即发送排队项 (sendQueuedNow — 相当于引导, 立即打断注入)
+  ///
+  /// 注意不带 baseRevision/baseLogEpoch: 队列变化会推进服务端 revision,
+  /// 本地值滞后时命令会被 proto.staleRevision 静默拒绝 (实测); 网页端
+  /// 命令信封也不带这两个字段。
   Future<void> sendQueuedNow(String queueItemId) async {
     if (_taskId == null) return;
     try {
-      await _relay.sendConversationCommandV4(
+      final resp = await _relay.sendConversationCommandV4(
         workspacePath: _ref.workspacePath,
         workspaceIdentity: _ref.workspaceIdentity,
         commandType: 'sendQueuedNow',
         sessionId: _taskId,
+        payload: {'queueItemId': queueItemId},
+        // CAS 命令必须带 (服务端校验: "CAS commands require baseRevision
+        // and baseLogEpoch"); 本地 revision 由增量实时推进 (见 _trackRevision)
         baseRevision: _v4Revision,
         baseLogEpoch: _v4LogEpoch,
-        payload: {'queueItemId': queueItemId},
       );
+      final rad = (resp['revisionAtDecision'] as num?)?.toInt();
+      if (rad != null) _trackRevision(rad);
+      final status = resp['status'];
+      if (status != 'accepted') {
+        appLog.w('[Chat] 立即发送被拒绝: status=$status '
+            'reason=${resp['reasonCode']}');
+        state = state.copyWith(error: '立即发送被拒绝 ($status)');
+      }
     } catch (e) {
       appLog.w('[Chat] 立即发送排队项失败: $e');
       state = state.copyWith(error: '立即发送失败: $e');
     }
   }
 
-  /// 删除排队项
+  /// 删除排队项 (不带 baseRevision, 同上)
   Future<void> removeQueuedItem(String queueItemId) async {
     if (_taskId == null) return;
     try {
-      await _relay.sendConversationCommandV4(
+      final resp = await _relay.sendConversationCommandV4(
         workspacePath: _ref.workspacePath,
         workspaceIdentity: _ref.workspaceIdentity,
         commandType: 'deleteQueueItem',
         sessionId: _taskId,
+        payload: {'queueItemId': queueItemId},
         baseRevision: _v4Revision,
         baseLogEpoch: _v4LogEpoch,
-        payload: {'queueItemId': queueItemId},
       );
+      final rad = (resp['revisionAtDecision'] as num?)?.toInt();
+      if (rad != null) _trackRevision(rad);
+      final status = resp['status'];
+      if (status != 'accepted') {
+        appLog.w('[Chat] 删除排队项被拒绝: status=$status '
+            'reason=${resp['reasonCode']}');
+        state = state.copyWith(error: '删除排队项被拒绝 ($status)');
+      }
     } catch (e) {
       appLog.w('[Chat] 删除排队项失败: $e');
       state = state.copyWith(error: '删除排队项失败: $e');
@@ -873,6 +895,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
         for (final r in rowsList.whereType<Map>()) {
           final row = V4Row.fromJson(Map<String, dynamic>.from(r));
           _rows[row.rowId] = row;
+          _logMarkerRow(row, 'fallback');
+          _logTurnHeaderRow(row, 'fallback');
         }
         // ★ 先应用快照状态 (control.phase → isResponding), 再重建消息:
         //   rebuild 依赖 isResponding 判定最后一轮是否仍在工作
@@ -962,6 +986,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       if (!_rows.containsKey(row.rowId)) merged++;
       _rows[row.rowId] = row;
       _logMarkerRow(row, 'rowsRange');
+      _logTurnHeaderRow(row, 'rowsRange');
     }
     final first = rowsJson.whereType<Map>()
         .map((r) => (r['rowId'] as num?)?.toInt())
@@ -1252,6 +1277,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       for (final r in snap.rows.window) {
         _rows[r.rowId] = r;
         _logMarkerRow(r, 'snapshot');
+        _logTurnHeaderRow(r, 'snapshot');
       }
       // 记录尾部窗口边界: 窗口之前可能还有更早历史 (rowsRange 翻页用)
       _rowsFirstRowId = snap.rows.firstRowId;
@@ -1285,20 +1311,48 @@ class ChatNotifier extends StateNotifier<ChatState> {
     switch (delta) {
       case V4RowAppended(:final row):
         _rows[row.rowId] = row;
+        _trackRevision(row.revision);
         _logMarkerRow(row, 'delta');
+        _logTurnHeaderRow(row, 'delta-append');
       case V4RowUpserted(:final row):
         _rows[row.rowId] = row;
+        _trackRevision(row.revision);
         _logMarkerRow(row, 'delta');
+        _logTurnHeaderRow(row, 'delta-upsert');
       case V4RowRemoved(:final fromRowId):
         _rows.remove(fromRowId);
       case V4RowDeltaOp(:final rowId, :final path, :final append):
         final row = _rows[rowId];
         if (row == null) return;
         _rows[rowId] = _applyRowDelta(row, path, append);
-      case V4StateUpdated(:final patch):
+      case V4StateUpdated(:final patch, :final revision):
         _applyStatePatch(patch);
+        // state 变化 (队列增删等) 同样推进 revision
+        if (revision > 0) _trackRevision(revision);
+        final r = (patch['revision'] as num?)?.toInt();
+        if (r != null) _trackRevision(r);
       case _:
         appLog.w('[Chat] V4 delta: unhandled ${delta.runtimeType}');
+    }
+  }
+
+  /// 本地 revision 只前进不后退 — CAS 命令 (队列管理等) 需要它保持最新,
+  /// 否则服务端以 proto.staleRevision 拒绝。
+  void _trackRevision(int revision) {
+    if (revision > _v4Revision) _v4Revision = revision;
+  }
+
+  /// 调试: 记录 turnHeader 行的关键字段 (排查"已工作 X"时长缺失)。
+  /// 若完成态的 endedAt/activeMs 为 '-', 说明 host 没下发 → 显示"已处理"的根因。
+  void _logTurnHeaderRow(V4Row row, String src) {
+    if (row is V4TurnHeaderRow) {
+      appLog.d('[Chat] turnHeader($src): rowId=${row.rowId} '
+          'turn=${row.turnId.isEmpty ? '-' : row.turnId} '
+          'state=${row.state} '
+          'startedAt=${row.startedAt ?? '-'} '
+          'endedAt=${row.endedAt ?? '-'} '
+          'activeMs=${row.activeMs ?? '-'} '
+          'fileChanges=${row.fileChanges == null ? '-' : '${row.fileChanges!.files}f'}');
     }
   }
 

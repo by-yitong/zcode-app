@@ -138,9 +138,12 @@ class V4RowDeltaOp extends V4Delta {
 /// 状态 patch — 更新 snapshot 的部分字段
 class V4StateUpdated extends V4Delta {
   final Map<String, dynamic> patch;
-  const V4StateUpdated(this.patch);
+  /// delta 级 revision (状态变化推进会话 revision, CAS 命令追踪用)
+  final int revision;
+  const V4StateUpdated(this.patch, {this.revision = 0});
   factory V4StateUpdated.fromJson(Map<String, dynamic> j) =>
-      V4StateUpdated(j['patch'] as Map<String, dynamic>? ?? {});
+      V4StateUpdated(j['patch'] as Map<String, dynamic>? ?? {},
+          revision: (j['revision'] as num?)?.toInt() ?? 0);
 }
 
 class V4SessionUpserted extends V4Delta {
@@ -567,12 +570,19 @@ class V4TurnHeaderRow extends V4Row {
 
 class V4UserInputRow extends V4Row {
   final String text;
+  /// ★ 引导输入: AI 工作中途的插话 (inputRouting.mode=guide)。
+  /// 不开新轮次, 而是把当前轮次切成多个工作段 (workSegments)。
+  final bool guided;
+  /// 行实体 ID (用于匹配 workSegments[].triggerEntityId)
+  final String? entityId;
 
   V4UserInputRow({
     required super.rowId,
     super.turnId,
     super.revision,
     this.text = '',
+    this.guided = false,
+    this.entityId,
   });
 
   factory V4UserInputRow.fromJson(Map<String, dynamic> j) => V4UserInputRow(
@@ -580,6 +590,8 @@ class V4UserInputRow extends V4Row {
         turnId: j['turnId'] as String? ?? '',
         revision: (j['revision'] as num?)?.toInt() ?? 0,
         text: j['text'] as String? ?? '',
+        guided: j['guided'] as bool? ?? false,
+        entityId: j['entityId'] as String?,
       );
 
   @override
