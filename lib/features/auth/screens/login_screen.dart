@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../../../shared/theme/app_design_tokens.dart';
 import '../../../../shared/theme/app_router.dart';
 import '../../../providers/app_providers.dart';
+import '../../../providers/connections_providers.dart';
 import 'scanner_screen.dart';
 
 /// 登录页 — 扫码或粘贴 zcode 连接地址
@@ -47,6 +48,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       // loginFromUrl 自动 HTTP GET 获取 cookie, 无需用户输入
       final session = await authRepo.loginFromUrl(url);
       await authRepo.saveSession(session);
+      // 登记到已保存连接 (多连接切换)
+      await registerLogin(ref, url, session);
       await ref.read(sessionProvider.notifier).loginWithSession(session);
 
       if (mounted) {
@@ -128,7 +131,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 maxLines: 2,
                 decoration: InputDecoration(
                   labelText: '连接地址',
-                  hintText: 'https://zcode.z.ai/remote/v3?sid=...',
+                  hintText: 'https://zcode.z.ai/remote/v4?sid=...',
                   prefixIcon: const Icon(Icons.link),
                   suffixIcon: IconButton(
                     icon: const Icon(Icons.paste),

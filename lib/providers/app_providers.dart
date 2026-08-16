@@ -371,6 +371,184 @@ final taskListProvider = FutureProvider.family<List<Task>, String>((ref, workspa
 final allTasksProvider = StateProvider<List<Task>>((ref) => const <Task>[]);
 
 // ================================================================
+// 会话索引实时同步 (网页端模式: subscribeSessionsIndexV4)
+// ================================================================
+
+/// 订阅选中工作区的 sessions-index 帧, 实时更新 allTasksProvider
+/// (标题/状态/活跃时间)。重连后自动重订阅。
+final sessionsIndexSyncProvider = Provider<void>((ref) {
+  final client = ref.watch(relayClientProvider);
+  final ws = ref.watch(selectedWorkspaceProvider);
+  if (client == null || ws == null) return;
+
+  var disposed = false;
+  var subscribing = false;
+  StreamSubscription<bool>? readySub;
+  StreamSubscription<Map<String, dynamic>>? frameSub;
+  String? indexSubscriptionId;
+
+  Future<void> subscribe() async {
+    if (disposed || subscribing) return;
+    subscribing = true;
+    try {
+      await client.waitRpcReady(const Duration(seconds: 30));
+      if (disposed) return;
+      // V4 命令前必须先握手 (ChatNotifier 也会做, 这里幂等兜底)
+      await client.v4Handshake();
+      if (disposed) return;
+      await frameSub?.cancel();
+      // 旧订阅显式退订, 避免服务端订阅堆积 (bridge 重开才会自然清理)
+      final oldSub = indexSubscriptionId;
+      if (oldSub != null) {
+        indexSubscriptionId = null;
+        unawaited(client
+            .unsubscribeSessionsIndexV4(subscriptionId: oldSub)
+            .catchError((Object e) {
+          appLog.d('[SessionsIndex] 旧订阅退订失败 (可忽略): $e');
+        }));
+      }
+      final (:subscriptionId, :stream) = await client.subscribeSessionsIndexV4(
+        workspacePath: ws.workspacePath,
+        workspaceIdentity: ws.workspaceIdentity,
+      );
+      if (disposed) {
+        unawaited(client
+            .unsubscribeSessionsIndexV4(subscriptionId: subscriptionId)
+            .catchError((_) {}));
+        return;
+      }
+      indexSubscriptionId = subscriptionId;
+      frameSub = stream.listen(
+        (frame) => _applySessionsIndexFrame(ref, ws, frame),
+        onError: (Object e) => appLog.w('[SessionsIndex] 帧流错误: $e'),
+      );
+      appLog.d('[SessionsIndex] 已订阅: ${ws.name} ($subscriptionId)');
+    } catch (e) {
+      appLog.w('[SessionsIndex] 订阅失败: $e');
+      // 握手竞态等瞬时失败: 2s 后重试一次
+      if (!disposed) {
+        await Future<void>.delayed(const Duration(seconds: 2));
+        if (!disposed) await subscribe();
+      }
+    } finally {
+      subscribing = false;
+    }
+  }
+
+  // bridge 重开 (RPC ready 翻转) → 重订阅
+  readySub = client.onRpcReadyChange.listen((ready) {
+    if (ready) subscribe();
+  });
+  unawaited(subscribe());
+
+  ref.onDispose(() {
+    disposed = true;
+    readySub?.cancel();
+    frameSub?.cancel();
+    final sid = indexSubscriptionId;
+    if (sid != null) {
+      unawaited(client
+          .unsubscribeSessionsIndexV4(subscriptionId: sid)
+          .catchError((_) {}));
+    }
+  });
+});
+
+/// 解析 sessions-index 帧并合入任务列表。
+///
+/// 注意: 帧内 session.workspaceId 是完整 identity 字符串
+/// (如 remote:ssh:host:22:user:path), 不是路径; 任务列表按
+/// workspaceKey(=路径) 过滤, 所以必须用当前工作区的 key 落库。
+void _applySessionsIndexFrame(
+    Ref ref, Workspace ws, Map<String, dynamic> wire) {
+  try {
+    final frame = wire['frame'] as Map<String, dynamic>?;
+    final payload = frame?['payload'] as Map<String, dynamic>?;
+    if (payload == null) {
+      appLog.d('[SessionsIndex] 无 payload 帧: keys=${wire.keys.toList()}');
+      return;
+    }
+    final kind = payload['kind'] as String?;
+    if (kind == 'snapshot') {
+      final snap = payload['snapshot'] as Map<String, dynamic>?;
+      final sessions = (snap?['sessions'] as List?) ?? [];
+      appLog.d('[SessionsIndex] 快照: ${sessions.length} 会话 (${ws.name})');
+      _upsertIndexSessions(ref, ws,
+          sessions.whereType<Map>().map((e) => Map<String, dynamic>.from(e)));
+    } else if (kind == 'deltas') {
+      for (final d in (payload['deltas'] as List? ?? []).whereType<Map>()) {
+        final dm = Map<String, dynamic>.from(d);
+        switch (dm['op'] as String?) {
+          case 'session.upserted':
+            final s = dm['session'];
+            if (s is Map) {
+              final m = Map<String, dynamic>.from(s);
+              appLog.d('[SessionsIndex] upsert: ${m['sessionId']} '
+                  'phase=${m['phase']} ended=${m['sessionEnded']}');
+              _upsertIndexSessions(ref, ws, [m]);
+            }
+          case 'session.removed':
+            final sid = dm['sessionId'] as String?;
+            if (sid != null) {
+              appLog.d('[SessionsIndex] removed: $sid');
+              ref.read(allTasksProvider.notifier).state = ref
+                  .read(allTasksProvider)
+                  .where((t) => t.id != sid)
+                  .toList();
+            }
+        }
+      }
+    } else if (kind != 'deltas') {
+      appLog.d('[SessionsIndex] 未知帧 kind=$kind');
+    }
+  } catch (e) {
+    appLog.w('[SessionsIndex] 帧解析失败: $e');
+  }
+}
+
+void _upsertIndexSessions(
+    Ref ref, Workspace ws, Iterable<Map<String, dynamic>> sessions) {
+  final notifier = ref.read(allTasksProvider.notifier);
+  var tasks = [...notifier.state];
+  var changed = false;
+  for (final s in sessions) {
+    final task = _taskFromIndexSession(ws, s);
+    final i = tasks.indexWhere((t) => t.id == task.id);
+    if (i >= 0) {
+      tasks[i] = task;
+    } else {
+      tasks.insert(0, task);
+    }
+    changed = true;
+  }
+  if (changed) notifier.state = tasks;
+}
+
+Task _taskFromIndexSession(Workspace ws, Map<String, dynamic> s) {
+  final phase = s['phase'] as String? ?? '';
+  final status = phase == 'running'
+      ? TaskStatus.running
+      : phase.startsWith('completed')
+          ? TaskStatus.complete
+          : phase == 'error'
+              ? TaskStatus.error
+              : TaskStatus.idle;
+  int? ts(dynamic v) => v is int ? v : (v is num ? v.toInt() : null);
+  return Task(
+    id: s['sessionId'] as String? ?? '',
+    workspaceKey: ws.workspaceKey,
+    title: s['title'] as String? ?? 'Untitled',
+    status: status,
+    updatedAt: ts(s['lastActivityAt']) != null
+        ? DateTime.fromMillisecondsSinceEpoch(ts(s['lastActivityAt'])!)
+        : null,
+    createdAt: ts(s['createdAt']) != null
+        ? DateTime.fromMillisecondsSinceEpoch(ts(s['createdAt'])!)
+        : null,
+  );
+}
+
+// ================================================================
 // 全局模型目录 (RPC 就绪后加载一次, 所有对话共享)
 // ================================================================
 
@@ -698,6 +876,34 @@ class SkillItem {
 ///
 /// 正确调用: channel='skills', method='list', 参数={workspacePath, provider}
 /// 返回: {skills: [...], capability: {...}, diagnostics: [...]}
+/// 服务端 slash 命令 (readWorkspaceState.slashCommands, 如 goal/init/插件技能命令)。
+/// 网页端 / 菜单 = 客户端内置 + 此列表; app 合并展示。
+final serverSlashCommandsProvider = FutureProvider<List<String>>((ref) async {
+  final client = ref.watch(relayClientProvider);
+  final ws = ref.watch(selectedWorkspaceProvider);
+  if (client == null || ws == null) return const [];
+  try {
+    await client.waitRpcReady(const Duration(seconds: 20));
+    final state = await client.readWorkspaceState(
+      workspacePath: ws.workspacePath,
+      workspaceIdentity: ws.workspaceIdentity,
+    );
+    final raw = state['slashCommands'];
+    appLog.d('[SlashCommands] readWorkspaceState keys=${state.keys.toList()} '
+        'slashCommands=${raw is List ? raw.length : raw}');
+    if (raw is List) {
+      return raw
+          .map((e) => e is Map ? e['name'] as String? : e as String?)
+          .whereType<String>()
+          .where((s) => s.trim().isNotEmpty)
+          .toList();
+    }
+  } catch (e) {
+    appLog.w('[SlashCommands] 加载失败: $e');
+  }
+  return const [];
+});
+
 final skillsProvider =
     StateNotifierProvider<SkillsNotifier, AsyncValue<List<SkillItem>>>((ref) {
   final client = ref.watch(relayClientProvider);

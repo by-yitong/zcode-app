@@ -61,3 +61,4 @@ android/build/
 node_modules/
 tool/captures/web_*.jsonl
 tool/captures/baseline_*.jsonl
+linux/

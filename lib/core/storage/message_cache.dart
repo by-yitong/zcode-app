@@ -4,6 +4,7 @@ import 'package:hive/hive.dart';
 
 import '../../providers/chat_provider.dart';
 import '../logging/app_logger.dart';
+import '../relay/relay_events.dart';
 
 /// 消息本地缓存 (离线可见优化, 非数据源)
 ///
@@ -96,6 +97,38 @@ class MessageCache {
         if (m.thought != null) 'thought': m.thought,
         if (m.model != null) 'model': m.model,
         'createdAt': m.createdAt.millisecondsSinceEpoch,
+        if (m.workedMs != null) 'workedMs': m.workedMs,
+        if (m.turnStartedAt != null)
+          'turnStartedAt': m.turnStartedAt!.millisecondsSinceEpoch,
+        if (m.fileChanges != null)
+          'fileChanges': {
+            'additions': m.fileChanges!.additions,
+            'deletions': m.fileChanges!.deletions,
+            'files': m.fileChanges!.files,
+          },
+        if (m.parts.isNotEmpty)
+          'parts': m.parts.map((p) {
+            if (p is TextPart) return {'type': 'text', 'text': p.text};
+            if (p is ThoughtPart)
+              return {
+                'type': 'thought',
+                'text': p.text,
+                if (p.durationMs != null) 'durationMs': p.durationMs,
+              };
+            if (p is ToolPart)
+              return {
+                'type': 'tool',
+                'toolCallId': p.activity.toolCallId,
+                'toolName': p.activity.toolName,
+                'status': p.activity.status,
+                if (p.activity.elapsedMs != null)
+                  'elapsedMs': p.activity.elapsedMs,
+                if (p.activity.input != null) 'input': p.activity.input,
+                if (p.activity.result != null) 'result': p.activity.result,
+              };
+            if (p is StepPart) return {'type': 'step', 'isStart': p.isStart};
+            return {'type': 'text', 'text': ''};
+          }).toList(),
         if (m.activities.isNotEmpty)
           'activities': m.activities
               .map((a) => {
@@ -112,18 +145,41 @@ class MessageCache {
   /// 精简 JSON Map -> DisplayMessage。
   static DisplayMessage _fromJson(Map<String, dynamic> json) {
     final createdAt = json['createdAt'];
+    ToolActivity actFromJson(Map a) => ToolActivity(
+          toolCallId: a['toolCallId'] as String? ?? '',
+          toolName: a['toolName'] as String? ?? '',
+          status: a['status'] as String? ?? '',
+          elapsedMs: a['elapsedMs'] as int?,
+          input: a['input'] as Map<String, dynamic>?,
+          result: a['result'] as String?,
+        );
     final activitiesRaw = json['activities'] as List<dynamic>?;
     final activities = activitiesRaw
-            ?.map((a) => ToolActivity(
-                  toolCallId: (a as Map)['toolCallId'] as String? ?? '',
-                  toolName: a['toolName'] as String? ?? '',
-                  status: a['status'] as String? ?? '',
-                  elapsedMs: a['elapsedMs'] as int?,
-                  input: a['input'] as Map<String, dynamic>?,
-                  result: a['result'] as String?,
-                ))
+            ?.map((a) => actFromJson(Map<String, dynamic>.from(a as Map)))
             .toList() ??
-        const [];
+        const <ToolActivity>[];
+    final partsRaw = json['parts'] as List<dynamic>?;
+    final parts = partsRaw
+            ?.map((p) {
+              final pm = Map<String, dynamic>.from(p as Map);
+              switch (pm['type'] as String?) {
+                case 'text':
+                  return TextPart(pm['text'] as String? ?? '');
+                case 'thought':
+                  return ThoughtPart(pm['text'] as String? ?? '',
+                      durationMs: pm['durationMs'] as int?);
+                case 'tool':
+                  return ToolPart(actFromJson(pm));
+                case 'step':
+                  return StepPart(pm['isStart'] as bool? ?? true);
+              }
+              return null;
+            })
+            .whereType<MessagePart>()
+            .toList() ??
+        const <MessagePart>[];
+    final fcRaw = json['fileChanges'];
+    final turnStartedAt = json['turnStartedAt'];
     return DisplayMessage(
       id: json['id'] as String? ?? '',
       role: json['role'] as String? ?? 'assistant',
@@ -134,6 +190,16 @@ class MessageCache {
           ? DateTime.fromMillisecondsSinceEpoch(createdAt)
           : null,
       activities: activities,
+      parts: parts,
+      workedMs: json['workedMs'] as int?,
+      turnStartedAt: turnStartedAt is int
+          ? DateTime.fromMillisecondsSinceEpoch(turnStartedAt)
+          : null,
+      fileChanges: fcRaw is Map
+          ? V4TurnFileChanges.fromJson(
+              Map<String, dynamic>.from(fcRaw),
+            )
+          : null,
     );
   }
 }

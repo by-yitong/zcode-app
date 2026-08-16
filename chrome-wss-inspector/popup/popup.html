@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { width: 340px; font: 13px/1.5 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; background: #161b22; color: #e6edf3; padding: 14px; }
+  h3 { font-size: 14px; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+  h3 .dot { width: 8px; height: 8px; border-radius: 50%; background: #6e7681; }
+  h3 .dot.on { background: #3fb950; box-shadow: 0 0 6px #3fb950; }
+  #target { font-size: 12px; color: #8b949e; margin-bottom: 10px; word-break: break-all; max-height: 52px; overflow: hidden; }
+  #stats { font-size: 12px; color: #8b949e; margin: 10px 0; min-height: 18px; }
+  #stats b { color: #e6edf3; }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  button { flex: 1; min-width: 96px; padding: 7px 10px; border: 1px solid #30363d; border-radius: 6px; background: #21262d; color: #e6edf3; font-size: 13px; cursor: pointer; }
+  button:hover { background: #30363d; }
+  button.primary { background: #238636; border-color: #2ea043; }
+  button.primary:hover { background: #2ea043; }
+  button.danger { background: #7d2929; border-color: #b34141; }
+  label.opt { display: flex; gap: 6px; align-items: center; font-size: 12px; color: #8b949e; margin: 10px 0 4px; cursor: pointer; }
+  .tip { margin-top: 12px; font-size: 11px; color: #6e7681; border-top: 1px solid #21262d; padding-top: 10px; }
+  #err { color: #f85149; font-size: 12px; margin-top: 8px; min-height: 16px; word-break: break-all; }
+</style>
+</head>
+<body>
+  <h3><span class="dot" id="dot"></span>ZCode WSS 抓包</h3>
+  <div id="target">…</div>
+  <div class="btns">
+    <button class="primary" id="attachBtn">开始抓包</button>
+    <button class="danger" id="detachBtn" disabled>停止</button>
+  </div>
+  <div class="btns" style="margin-top:8px">
+    <button id="panelBtn">打开日志面板</button>
+    <button id="clearBtn">清空日志</button>
+  </div>
+  <label class="opt"><input type="checkbox" id="reloadChk" checked>开始后自动刷新页面 (保证从握手开始完整抓取)</label>
+  <div id="stats"></div>
+  <div id="err"></div>
+  <div class="tip">
+    · 抓包期间浏览器顶部出现「正在调试此浏览器」提示条属正常现象。<br>
+    · 不能抓取 chrome:// 等内置页面; 该页面若已开 DevTools 会附加失败。<br>
+    · 同一 device_sid 多端同时连接会互相踢下线, 注意别和 App 抢同一个 sid。
+  </div>
+
+<script src="popup.js"></script>
+</body>
+</html>

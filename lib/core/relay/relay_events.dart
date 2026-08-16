@@ -190,6 +190,7 @@ class V4ConversationSnapshot {
   final List<V4PendingInteraction> pendingInteractions;
   final List<V4BackgroundWork> backgroundWorks;
   final V4Subagents? subagents;
+  final V4Queue queue;
   final Map<String, dynamic> raw;
 
   V4ConversationSnapshot({
@@ -208,6 +209,7 @@ class V4ConversationSnapshot {
     this.pendingInteractions = const [],
     this.backgroundWorks = const [],
     this.subagents,
+    this.queue = const V4Queue(),
     this.raw = const {},
   });
 
@@ -234,6 +236,7 @@ class V4ConversationSnapshot {
               .toList()
           : [],
       rows: V4Rows.fromJson(j['rows'] as Map<String, dynamic>? ?? {}),
+      queue: V4Queue.fromJson(j['queue'] as Map<String, dynamic>? ?? {}),
       pendingInteractions: (j['pendingInteractions'] as List<dynamic>? ?? [])
           .whereType<Map>()
           .map((e) => V4PendingInteraction.fromJson(Map<String, dynamic>.from(e)))
@@ -248,6 +251,48 @@ class V4ConversationSnapshot {
       raw: j,
     );
   }
+}
+
+/// 队列项 (state.queue.items[] — 任务运行中发送、被服务端排队的消息)
+class V4QueueItem {
+  final String queueItemId;
+  final String kind; // sendText | sendGoalCommand
+  final String text;
+
+  const V4QueueItem({
+    required this.queueItemId,
+    this.kind = '',
+    this.text = '',
+  });
+
+  factory V4QueueItem.fromJson(Map<String, dynamic> j) {
+    final payload = j['payload'];
+    return V4QueueItem(
+      queueItemId: j['queueItemId'] as String? ??
+          j['sourceCommandId'] as String? ??
+          '',
+      kind: j['kind'] as String? ?? '',
+      text: (j['text'] as String?) ??
+          (payload is Map ? payload['text'] as String? : null) ??
+          '',
+    );
+  }
+}
+
+/// 队列状态 (state.queue)
+class V4Queue {
+  final List<V4QueueItem> items;
+  final bool autoDrain;
+
+  const V4Queue({this.items = const [], this.autoDrain = true});
+
+  factory V4Queue.fromJson(Map<String, dynamic> j) => V4Queue(
+        items: (j['items'] as List<dynamic>? ?? [])
+            .whereType<Map>()
+            .map((e) => V4QueueItem.fromJson(Map<String, dynamic>.from(e)))
+            .toList(),
+        autoDrain: j['autoDrain'] as bool? ?? true,
+      );
 }
 
 class V4Control {
@@ -429,10 +474,47 @@ sealed class V4Row {
   Map<String, dynamic> toJson();
 }
 
+/// turnHeader 的文件变更统计 (host Zod schema 实测 3.7.7):
+///   {additions, deletions, files, state?: "active"|"reverted"}
+/// 这是 "N 个文件已更改 +N −M" 的权威数据源。
+class V4TurnFileChanges {
+  final int additions;
+  final int deletions;
+  final int files;
+
+  V4TurnFileChanges({
+    this.additions = 0,
+    this.deletions = 0,
+    this.files = 0,
+  });
+
+  factory V4TurnFileChanges.fromJson(Map<String, dynamic> j) =>
+      V4TurnFileChanges(
+        additions: (j['additions'] as num?)?.toInt() ?? 0,
+        deletions: (j['deletions'] as num?)?.toInt() ?? 0,
+        files: (j['files'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// 轮次头 — 每个对话轮一条, 携带本轮的工作时长与文件变更。
+///
+/// 工作时长 (桌面端 asar 逆向, hyt/byt 函数):
+///   优先 activeMs (服务器算好的活跃时长, 排除等待);
+///   否则 endedAt - startedAt (已完成);
+///   运行中用 now - startedAt 实时跳动。
+///   state: running | completedSuccess | completedInterrupted | failed
 class V4TurnHeaderRow extends V4Row {
   final String origin;
   final String executionKind;
   final String state;
+  /// 轮次开始时间 (ms epoch, 必有)
+  final int? startedAt;
+  /// 轮次结束时间 (ms epoch, 完成后才有)
+  final int? endedAt;
+  /// 服务器计算的活跃时长 (优先于 endedAt-startedAt)
+  final int? activeMs;
+  /// 本轮文件变更统计 (权威来源)
+  final V4TurnFileChanges? fileChanges;
 
   V4TurnHeaderRow({
     required super.rowId,
@@ -441,6 +523,10 @@ class V4TurnHeaderRow extends V4Row {
     this.origin = 'userInput',
     this.executionKind = 'agent',
     this.state = 'running',
+    this.startedAt,
+    this.endedAt,
+    this.activeMs,
+    this.fileChanges,
   });
 
   factory V4TurnHeaderRow.fromJson(Map<String, dynamic> j) => V4TurnHeaderRow(
@@ -450,7 +536,27 @@ class V4TurnHeaderRow extends V4Row {
         origin: j['origin'] as String? ?? 'userInput',
         executionKind: j['executionKind'] as String? ?? 'agent',
         state: j['state'] as String? ?? 'running',
+        startedAt: (j['startedAt'] as num?)?.toInt(),
+        endedAt: (j['endedAt'] as num?)?.toInt(),
+        activeMs: (j['activeMs'] as num?)?.toInt(),
+        fileChanges: j['fileChanges'] is Map
+            ? V4TurnFileChanges.fromJson(
+                Map<String, dynamic>.from(j['fileChanges'] as Map))
+            : null,
       );
+
+  /// 轮次是否仍在运行
+  bool get isRunning => state == 'running';
+
+  /// 计算工作时长 (对齐桌面端 hyt: activeMs > endedAt-startedAt)。
+  /// 运行中返回 null, 由 UI 用 startedAt 实时跳动。
+  int? get workedMs {
+    if (isRunning) return null;
+    if (activeMs != null) return activeMs;
+    final s = startedAt, e = endedAt;
+    if (s != null && e != null) return (e - s).clamp(0, 1 << 40);
+    return null;
+  }
 
   @override
   Map<String, dynamic> toJson() => {
@@ -674,18 +780,37 @@ class V4SubagentRow extends V4Row {
 }
 
 class V4TimelineMarkerRow extends V4Row {
-  V4TimelineMarkerRow({required super.rowId, super.turnId, super.revision});
+  final String sourceCommandId;
+  final String lane;
+  final Map<String, dynamic> marker; // 原始 marker (compact 统计等)
+  final Map<String, dynamic> raw;
+
+  V4TimelineMarkerRow({
+    required super.rowId,
+    super.turnId,
+    super.revision,
+    this.sourceCommandId = '',
+    this.lane = '',
+    this.marker = const {},
+    this.raw = const {},
+  });
 
   factory V4TimelineMarkerRow.fromJson(Map<String, dynamic> j) =>
       V4TimelineMarkerRow(
         rowId: (j['rowId'] as num?)?.toInt() ?? 0,
         turnId: j['turnId'] as String? ?? '',
         revision: (j['revision'] as num?)?.toInt() ?? 0,
+        sourceCommandId: j['sourceCommandId'] as String? ?? '',
+        lane: j['lane'] as String? ?? '',
+        marker: j['marker'] is Map
+            ? Map<String, dynamic>.from(j['marker'] as Map)
+            : const {},
+        raw: Map<String, dynamic>.from(j),
       );
 
   @override
   Map<String, dynamic> toJson() =>
-      {'kind': 'timelineMarker', 'rowId': rowId};
+      {'kind': 'timelineMarker', 'rowId': rowId, 'lane': lane};
 }
 
 class V4UnknownRow extends V4Row {

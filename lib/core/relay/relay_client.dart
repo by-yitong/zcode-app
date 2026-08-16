@@ -163,7 +163,8 @@ class RelayClient {
     if (_state == s) return;
     _log('info', 'Relay: ${_state.name} → ${s.name}');
     _state = s;
-    _stateController.add(s);
+    // dispose() 后迟到的 WS 回调会走到这里 — controller 已关闭, 静默丢弃
+    if (!_stateController.isClosed) _stateController.add(s);
   }
 
   String _genId(String prefix) {
@@ -445,7 +446,7 @@ class RelayClient {
       case 'error':
         final code = msg['code'] ?? 'unknown';
         _log('error', 'Server error: $code');
-        _errorController.add('Server error: $code');
+        if (!_errorController.isClosed) _errorController.add('Server error: $code');
       default:
         _log('debug', 'RECV [$type]');
     }
@@ -514,7 +515,7 @@ class RelayClient {
     if (zt == 'workspace-list-updated') {
       _log('debug', '← workspace-list-updated (列表变更推送)');
       if (!_workspaceListController.isClosed) {
-        _workspaceListController.add(payload);
+        if (!_workspaceListController.isClosed) _workspaceListController.add(payload);
       }
       return;
     }
@@ -527,7 +528,7 @@ class RelayClient {
   /// bridge 降级: 立即 fail 所有 pending RPC, 尝试重连 (带防抖)
   void _onBridgeDegraded() {
     _rpcReady = false;
-    _rpcReadyController.add(false);
+    if (!_rpcReadyController.isClosed) _rpcReadyController.add(false);
 
     // fail 所有 pending RPC
     final pendingRpc = Map<int, Completer<RpcFrame>>.from(_pendingRpc);
@@ -581,9 +582,10 @@ class RelayClient {
     _rpcReqId = 0;
     _activeBridgeSession = _genId('bridge');
     _rpcReady = false;
-    _rpcReadyController.add(false);
+    if (!_rpcReadyController.isClosed) _rpcReadyController.add(false);
     _rpcReadyCompleter = Completer<void>();
     _v4HandshakeDone = false;
+    _v4HandshakeFuture = null;
     try {
       final resp = await _requestResponse('workspace-bridge-open', {
         'bridgeSessionId': _activeBridgeSession!,
@@ -677,7 +679,7 @@ class RelayClient {
       _rpcReady = true;
       _log('info', 'RPC ready (bridge init received)');
       _rpcReadyCompleter?.complete();
-      _rpcReadyController.add(true);
+      if (!_rpcReadyController.isClosed) _rpcReadyController.add(true);
       return;
     }
 
@@ -686,7 +688,7 @@ class RelayClient {
       final id = rpc.id as int;
       final completer = _pendingRpc.remove(id);
       if (completer != null && !completer.isCompleted) {
-        _log('debug', '← RPC #$id OK: body=${rpc.body.runtimeType}, len=${_trunc(rpc.body, 200).length}');
+        _log('debug', '← RPC #$id OK: body=${_trunc(rpc.body, 300)}');
         completer.complete(rpc);
         return;
       }
@@ -733,6 +735,12 @@ class RelayClient {
             _log('error', 'V4 frame decode error: $e');
           }
         }
+      }
+
+      // sessions-index frame 分发 (原始 map)
+      final indexSub = _indexFrameSubs[subId];
+      if (indexSub != null && !indexSub.isClosed && rpc.body is Map) {
+        indexSub.add(Map<String, dynamic>.from(rpc.body as Map));
       }
 
       // V3 session event 分发 (保留兼容)
@@ -890,7 +898,7 @@ class RelayClient {
 
   void _onError(dynamic error) {
     _log('error', 'WebSocket error: $error');
-    _errorController.add('$error');
+    if (!_errorController.isClosed) _errorController.add('$error');
     _setState(RelayConnectionState.error);
     _scheduleReconnect();
   }
@@ -899,7 +907,7 @@ class RelayClient {
     _log('info', 'WebSocket closed');
     _heartbeatTimer?.cancel();
     _rpcReady = false;
-    _rpcReadyController.add(false);
+    if (!_rpcReadyController.isClosed) _rpcReadyController.add(false);
     _fragBufs.clear(); // 断线后未收齐的分片作废
     if (!_intentionallyClosed) {
       _scheduleReconnect();
@@ -979,7 +987,7 @@ class RelayClient {
     final bridgeSessionId = _genId('bridge');
     _activeBridgeSession = bridgeSessionId;
     _rpcReady = false;
-    _rpcReadyController.add(false);
+    if (!_rpcReadyController.isClosed) _rpcReadyController.add(false);
     _rpcReadyCompleter = Completer<void>();
     _log('info', 'Opening bridge: workspace=$workspaceKey taskId=${taskId ?? "none"}');
 
@@ -990,6 +998,7 @@ class RelayClient {
       if (taskId != null) 'taskId': taskId,
     });
     _v4HandshakeDone = false;
+    _v4HandshakeFuture = null;
 
     // 同时等 bridge-ready + RPC Init
     final bridgeReady = await resp;
@@ -1106,6 +1115,7 @@ class RelayClient {
   Future<Map<String, dynamic>> getTaskSnapshot({
     required String taskId,
     required String workspacePath,
+    String? workspaceIdentity,
     int messageLimit = 50,
     int byteBudget = 204800,
     String? etag,
@@ -1115,6 +1125,9 @@ class RelayClient {
       {
         'taskId': taskId,
         'workspacePath': workspacePath,
+        // ★ 远程工作区必须传 identity: 服务端 workspaceKey = identity||path,
+        //   缺失时按本地 path 找不到活跃会话 → 报「没有可用的模型供应商」
+        if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
         'messageLimit': messageLimit,
         'byteBudget': byteBudget,
         'clientMode': 'web-remote-replayable',
@@ -1123,9 +1136,18 @@ class RelayClient {
     ]);
     _log('debug', 'getTaskSnapshot: resp.body type=${resp.body.runtimeType}');
     if (resp.body is Map) {
-      final m = resp.body as Map;
+      final m = Map<String, dynamic>.from(resp.body as Map);
       _log('debug', 'getTaskSnapshot: keys=${m.keys.toList()}');
-      return Map<String, dynamic>.from(m);
+      // 双形状兼容: 标准包装 {snapshot, etag}; 部分 host 版本直接返回快照本体
+      // (含 meta/messages 顶层键)。快照缺失时打 warn 便于定位静默失败。
+      var snapshot = m['snapshot'] as Map<String, dynamic>?;
+      snapshot ??= (m.containsKey('meta') || m.containsKey('messages'))
+          ? m
+          : null;
+      if (snapshot == null) {
+        _log('warn', 'getTaskSnapshot: 无 snapshot (keys=${m.keys.toList()})');
+      }
+      return {'snapshot': snapshot, 'etag': m['etag']};
     }
     _log('warn', 'getTaskSnapshot: body is NOT a Map! body=${_trunc(resp.body)}');
     return {'raw': resp.body};
@@ -1272,20 +1294,30 @@ class RelayClient {
   /// 旧名 `readState` (zcode-session / zcode-workspace) 保留为回退。
   Future<Map<String, dynamic>> readWorkspaceState({
     required String workspacePath,
+    String? workspaceIdentity,
   }) async {
     RpcFrame resp;
     try {
       resp = await _rpcCall('zcode-session', 'readWorkspaceState', [
-        {'workspacePath': workspacePath}
+        {
+          'workspacePath': workspacePath,
+          if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
+        }
       ]);
     } on RpcException {
       try {
         resp = await _rpcCall('zcode-session', 'readState', [
-          {'workspacePath': workspacePath}
+          {
+            'workspacePath': workspacePath,
+            if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
+          }
         ]);
       } on RpcException {
         resp = await _rpcCall('zcode-workspace', 'readState', [
-          {'workspacePath': workspacePath}
+          {
+            'workspacePath': workspacePath,
+            if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
+          }
         ]);
       }
     }
@@ -1345,8 +1377,23 @@ class RelayClient {
 
   /// V4 握手: hello + initialize
   /// 在 openWorkspaceBridge 后、subscribeConversationV4 前调用。
-  /// 幂等: 同一 bridge 已握过则直接返回 (切换会话不需要重新握手)。
-  Future<Map<String, dynamic>> v4Handshake() async {
+  /// 幂等: 同一 bridge 已握过 (或握手进行中) 则直接复用 —
+  /// 多处并发调用 (聊天订阅/会话索引订阅) 只握手一次。
+  Future<Map<String, dynamic>> v4Handshake() {
+    final existing = _v4HandshakeFuture;
+    if (existing != null) return existing;
+    final future = _doV4Handshake();
+    _v4HandshakeFuture = future;
+    // 失败允许重试: 清除单飞记录
+    future.catchError((_) {
+      if (identical(_v4HandshakeFuture, future)) _v4HandshakeFuture = null;
+    });
+    return future;
+  }
+
+  Future<Map<String, dynamic>>? _v4HandshakeFuture;
+
+  Future<Map<String, dynamic>> _doV4Handshake() async {
     if (_v4HandshakeDone) return {};
     // hello
     final hello = await _rpcCall('zcode-agent', 'helloConversationV4', []);
@@ -1379,38 +1426,43 @@ class RelayClient {
     Map<String, dynamic>? base,
     String? visibility,
   }) async {
-    // 步骤 1: PromiseRequest 创建订阅
-    final subResp = await _rpcCall('zcode-agent', 'subscribeConversationV4', [
-      {
-        'workspacePath': workspacePath,
-        if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
-        'sessionId': sessionId,
-        if (base != null) 'base': base,
-        if (visibility != null) 'visibility': visibility,
-      }
-    ]);
-    final subData = subResp.body is Map ? Map<String, dynamic>.from(subResp.body as Map) : <String, dynamic>{};
-    final subscriptionId = subData['ack']?['subscriptionId'] as String? ??
-        subData['subscriptionId'] as String? ?? '';
-    _log('info', 'V4 subscribe: subscriptionId=$subscriptionId');
-    _log('debug', 'V4 subscribe: subData=${_trunc(subData, 300)}');
-
-    // 步骤 2: EventListen 注册帧事件
+    // 先 listen 再 subscribe: 初始快照在 subscribe 时投给已注册的监听
+    // (网页端顺序: onDynamicConversationFrame → subscribeConversationV4)。
+    // 非 broadcast: 缓冲 subscribe 等待期间到达的快照帧。
     _rpcReqId++;
     final id = _rpcReqId;
-    final controller = StreamController<V4Frame>.broadcast();
+    final controller = StreamController<V4Frame>();
     _v4FrameSubs[id] = controller;
-
-    final data = RpcCodec.encodeListen(id, 'zcode-agent',
+    _sendRpcFrameData(RpcCodec.encodeListen(id, 'zcode-agent',
         'onDynamicConversationFrame',
           {
             'workspacePath': workspacePath,
             if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
           }
-        );
-    _sendRpcFrameData(data);
+        ));
 
-    return controller.stream;
+    try {
+      final subResp = await _rpcCall('zcode-agent', 'subscribeConversationV4', [
+        {
+          'workspacePath': workspacePath,
+          if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
+          'sessionId': sessionId,
+          if (base != null) 'base': base,
+          if (visibility != null) 'visibility': visibility,
+        }
+      ]);
+      final subData = subResp.body is Map ? Map<String, dynamic>.from(subResp.body as Map) : <String, dynamic>{};
+      final subscriptionId = subData['ack']?['subscriptionId'] as String? ??
+          subData['subscriptionId'] as String? ?? '';
+      _log('info', 'V4 subscribe: subscriptionId=$subscriptionId');
+      _log('debug', 'V4 subscribe: subData=${_trunc(subData, 300)}');
+      return controller.stream;
+    } catch (e) {
+      _v4FrameSubs.remove(id);
+      unawaited(controller.close());
+      _sendRpcFrameData(RpcCodec.encodeUnlisten(id));
+      rethrow;
+    }
   }
 
   /// V4 取消订阅
@@ -1566,6 +1618,66 @@ class RelayClient {
 
   // V4 frame 订阅分发表 (替代 _eventSubs for V4 frames)
   final Map<int, StreamController<V4Frame>> _v4FrameSubs = {};
+
+  // sessions-index 帧订阅分发表 (原始 map, 结构与 conversation 帧不同)
+  final Map<int, StreamController<Map<String, dynamic>>> _indexFrameSubs = {};
+
+  /// V4 订阅工作区会话索引 ★ (网页端模式)
+  ///
+  /// 推送 topic=sessions-index/<identity> 的帧:
+  /// payload.kind=snapshot → {sessions:[{sessionId,title,phase,lastActivityAt,...}]}
+  /// payload.kind=deltas   → [{op:"session.upserted",session:{...}} | {op:"session.removed",...}]
+  /// 返回 (subscriptionId, 帧流) — 退订时需携带 subscriptionId
+  Future<({String subscriptionId, Stream<Map<String, dynamic>> stream})>
+      subscribeSessionsIndexV4({
+    required String workspacePath,
+    String? workspaceIdentity,
+    String runtimePolicy = 'existing-only',
+  }) async {
+    // 先 listen 再 subscribe: 服务端在 subscribe 时向"当前已注册的监听"投递
+    // 初始快照 (网页端顺序: onDynamicSessionsIndexFrame → subscribeSessionsIndexV4,
+    // 顺序反了快照永远收不到)。非 broadcast: 缓冲 listen 附着前到达的帧。
+    _rpcReqId++;
+    final id = _rpcReqId;
+    final controller = StreamController<Map<String, dynamic>>();
+    _indexFrameSubs[id] = controller;
+    _sendRpcFrameData(RpcCodec.encodeListen(id, 'zcode-agent',
+        'onDynamicSessionsIndexFrame',
+        {
+          'workspacePath': workspacePath,
+          if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
+        }));
+
+    try {
+      final subResp = await _rpcCall('zcode-agent', 'subscribeSessionsIndexV4', [
+        {
+          'workspacePath': workspacePath,
+          if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
+          'runtimePolicy': runtimePolicy,
+        }
+      ]);
+      final subData = subResp.body is Map
+          ? Map<String, dynamic>.from(subResp.body as Map)
+          : <String, dynamic>{};
+      final subscriptionId =
+          subData['ack']?['subscriptionId'] as String? ?? '';
+      _log('info', 'V4 sessions-index subscribe: $subscriptionId');
+      return (subscriptionId: subscriptionId, stream: controller.stream);
+    } catch (e) {
+      _indexFrameSubs.remove(id);
+      unawaited(controller.close());
+      _sendRpcFrameData(RpcCodec.encodeUnlisten(id));
+      rethrow;
+    }
+  }
+
+  /// V4 取消会话索引订阅 (重订阅/切换工作区时调用, 避免服务端订阅堆积)
+  Future<void> unsubscribeSessionsIndexV4({required String subscriptionId}) async {
+    await _rpcCall('zcode-agent', 'unsubscribeSessionsIndexV4', [
+      {'subscriptionId': subscriptionId}
+    ]);
+    _log('info', 'V4 sessions-index unsubscribe: $subscriptionId');
+  }
 
   /// 通用 RPC 调用 (兜底, 用于尚未封装的方法)
   Future<RpcFrame> rpcCall(String channel, String method, dynamic args) {
@@ -1725,6 +1837,486 @@ class RelayClient {
     ]);
   }
 
+  // ================================================================
+  // Agent 能力域方法 (skills/subagents/commands/hooks/mcp-sync/
+  // skill-sync/settings-sync/plugins) — 协议见 docs/v4-API协议规格.md
+  // ================================================================
+
+  /// 通用: 调用并归一为 Map
+  Future<Map<String, dynamic>> _mapCall(
+      String channel, String method, List<dynamic> args) async {
+    final resp = await _rpcCall(channel, method, args);
+    if (resp.body is Map) return resp.body as Map<String, dynamic>;
+    if (resp.body == null) return {};
+    return {'raw': resp.body};
+  }
+
+  Map<String, dynamic> _ws({
+    required String workspacePath,
+    String? workspaceIdentity,
+    Map<String, dynamic>? extra,
+  }) {
+    return {
+      'workspacePath': workspacePath,
+      if (workspaceIdentity != null && workspaceIdentity.isNotEmpty)
+        'workspaceIdentity': workspaceIdentity,
+      ...?extra,
+    };
+  }
+
+  // ── skills ──
+
+  /// 删除技能 — skills/deleteSkill (plugin 技能会报错, 需卸载插件)
+  Future<void> deleteSkill({
+    required String workspacePath,
+    required String skillId,
+    String? workspaceIdentity,
+  }) async {
+    await _rpcCall('skills', 'deleteSkill', [
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
+          extra: {'skillId': skillId})
+    ]);
+  }
+
+  /// 复制技能到通用目录 — skills/copyToCommon
+  Future<Map<String, dynamic>> copySkillToCommon({
+    required String workspacePath,
+    required String skillId,
+    String? workspaceIdentity,
+  }) async {
+    return _mapCall('skills', 'copyToCommon', [
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
+          extra: {'skillId': skillId})
+    ]);
+  }
+
+  /// 从通用目录移除技能 — skills/removeFromCommon
+  Future<Map<String, dynamic>> removeSkillFromCommon({
+    required String workspacePath,
+    required String skillId,
+    String? workspaceIdentity,
+  }) async {
+    return _mapCall('skills', 'removeFromCommon', [
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
+          extra: {'skillId': skillId})
+    ]);
+  }
+
+  // ── subagents ──
+
+  /// 子智能体列表 — subagents/list
+  Future<Map<String, dynamic>> listSubagents({
+    required String workspacePath,
+    String? workspaceIdentity,
+    String mode = 'allRuntimeScopes',
+  }) async {
+    return _mapCall('subagents', 'list', [
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
+          extra: {'mode': mode})
+    ]);
+  }
+
+  /// 启用/禁用子智能体 — subagents/setEnabled
+  Future<void> setSubagentEnabled({
+    required String agentId,
+    required bool enabled,
+  }) async {
+    await _rpcCall('subagents', 'setEnabled', [
+      {'agentId': agentId, 'enabled': enabled}
+    ]);
+  }
+
+  /// 内置子智能体的模型/思考级别覆盖 — subagents/setBuiltInModelOverride
+  Future<void> setSubagentBuiltInModelOverride({
+    required String agentName,
+    required String? model,
+    String? thoughtLevel,
+  }) async {
+    await _rpcCall('subagents', 'setBuiltInModelOverride', [
+      {'agentName': agentName, 'model': model, 'thoughtLevel': thoughtLevel}
+    ]);
+  }
+
+  /// 新建子智能体 — subagents/createAgent
+  Future<Map<String, dynamic>> createSubagent({
+    required Map<String, dynamic> config,
+    String provider = 'glm',
+  }) async {
+    return _mapCall('subagents', 'createAgent', [
+      {'provider': provider, 'config': config}
+    ]);
+  }
+
+  /// 更新子智能体 — subagents/updateAgent
+  Future<Map<String, dynamic>> updateSubagent({
+    required String agentId,
+    required Map<String, dynamic> config,
+    String? oldFilePath,
+    String provider = 'glm',
+  }) async {
+    return _mapCall('subagents', 'updateAgent', [
+      {
+        'provider': provider,
+        'agentId': agentId,
+        'config': config,
+        if (oldFilePath != null) 'oldFilePath': oldFilePath,
+      }
+    ]);
+  }
+
+  /// 删除子智能体 — subagents/deleteAgent
+  Future<void> deleteSubagent({
+    required String agentId,
+    required String filePath,
+  }) async {
+    await _rpcCall('subagents', 'deleteAgent', [
+      {'agentId': agentId, 'filePath': filePath}
+    ]);
+  }
+
+  // ── commands ──
+
+  /// 命令列表 — commands/list
+  Future<Map<String, dynamic>> listCommands({
+    required String workspacePath,
+    String? workspaceIdentity,
+  }) async {
+    return _mapCall('commands', 'list', [
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity)
+    ]);
+  }
+
+  /// 新建命令 — commands/writeCommandFile
+  Future<Map<String, dynamic>> writeCommandFile({
+    required Map<String, dynamic> config,
+    String storageLevel = 'user',
+    String? workspacePath,
+  }) async {
+    return _mapCall('commands', 'writeCommandFile', [
+      {
+        'storageLevel': storageLevel,
+        if (workspacePath != null && storageLevel == 'workspace')
+          'workspacePath': workspacePath,
+        'config': config,
+      }
+    ]);
+  }
+
+  /// 更新命令 — commands/updateCommandFile
+  Future<Map<String, dynamic>> updateCommandFile({
+    required Map<String, dynamic> config,
+    required String oldFilePath,
+    String storageLevel = 'user',
+    String? workspacePath,
+  }) async {
+    return _mapCall('commands', 'updateCommandFile', [
+      {
+        'storageLevel': storageLevel,
+        if (workspacePath != null && storageLevel == 'workspace')
+          'workspacePath': workspacePath,
+        'config': config,
+        'oldFilePath': oldFilePath,
+      }
+    ]);
+  }
+
+  /// 删除命令 — commands/deleteCommandFile
+  Future<void> deleteCommandFile({required String filePath}) async {
+    await _rpcCall('commands', 'deleteCommandFile', [
+      {'filePath': filePath}
+    ]);
+  }
+
+  /// 启用/禁用命令 — commands/setCommandEnabled
+  Future<void> setCommandEnabled({
+    required String filePath,
+    required bool enabled,
+  }) async {
+    await _rpcCall('commands', 'setCommandEnabled', [
+      {'filePath': filePath, 'enabled': enabled}
+    ]);
+  }
+
+  // ── hooks ──
+
+  /// 加载钩子 — hooks/loadHooks
+  Future<Map<String, dynamic>> loadHooks({
+    required String workspacePath,
+    String? workspaceIdentity,
+  }) async {
+    return _mapCall('hooks', 'loadHooks', [
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity)
+    ]);
+  }
+
+  /// 保存钩子 — hooks/saveHooks
+  Future<void> saveHooks({
+    required String workspacePath,
+    required List<Map<String, dynamic>> hooks,
+    String? workspaceIdentity,
+  }) async {
+    await _rpcCall('hooks', 'saveHooks', [
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
+          extra: {'hooks': hooks})
+    ]);
+  }
+
+  // ── mcp-sync ──
+
+  /// MCP 服务器列表 (用户+工作区) — mcp-sync/loadMcpFromUserDirectory
+  Future<Map<String, dynamic>> loadMcpServers({
+    required String workspacePath,
+    String? workspaceIdentity,
+  }) async {
+    return _mapCall('mcp-sync', 'loadMcpFromUserDirectory', [
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity)
+    ]);
+  }
+
+  /// MCP 保存 (upsert/删除/启停) — mcp-sync/saveMcpToUserDirectory
+  /// [action] 'upsert' | 'delete' | 'set-enabled'
+  Future<void> saveMcpServer({
+    required String action,
+    required String name,
+    Map<String, dynamic>? config,
+    bool? enabled,
+    String? projectPath,
+  }) async {
+    await _rpcCall('mcp-sync', 'saveMcpToUserDirectory', [
+      {
+        'action': action,
+        'name': name,
+        if (config != null) 'config': config,
+        if (enabled != null) 'enabled': enabled,
+        if (projectPath != null && projectPath.isNotEmpty)
+          'projectPath': projectPath,
+      }
+    ]);
+  }
+
+  /// MCP 服务器运行状态 (每服务器 connected/toolCount/error) — mcp-sync
+  Future<Map<String, dynamic>> listMcpServerStatuses({
+    required String workspacePath,
+    String? workspaceIdentity,
+    String mode = 'status',
+  }) async {
+    final arg = _ws(workspacePath: workspacePath,
+        workspaceIdentity: workspaceIdentity, extra: {'mode': mode});
+    try {
+      return await _mapCall('mcp-sync', 'listWorkspaceMcpServerStatuses', [arg]);
+    } catch (_) {
+      // 旧 agent 走 zcode-agent 通道
+      return _mapCall('zcode-agent', 'listMcpServerStatuses', [arg]);
+    }
+  }
+
+  // ── settings-sync (外部 Agent 导入) ──
+
+  /// 扫描外部 Agent 可导入资源 — settings-sync/detect
+  Future<Map<String, dynamic>> detectExternalAgents({
+    String? workspacePath,
+    String? workspaceIdentity,
+    required List<String> categories,
+    String intent = 'manualImport',
+  }) async {
+    return _mapCall('settings-sync', 'detect', [
+      {
+        if (workspacePath != null && workspacePath.isNotEmpty)
+          'workspacePath': workspacePath,
+        if (workspaceIdentity != null && workspaceIdentity.isNotEmpty)
+          'workspaceIdentity': workspaceIdentity,
+        'categories': categories,
+        'intent': intent,
+      }
+    ]);
+  }
+
+  /// 导入外部 Agent 资源 — settings-sync/importSelected
+  Future<Map<String, dynamic>> importExternalAgents({
+    String? workspacePath,
+    String? workspaceIdentity,
+    required List<Map<String, dynamic>> selections,
+  }) async {
+    return _mapCall('settings-sync', 'importSelected', [
+      {
+        if (workspacePath != null && workspacePath.isNotEmpty)
+          'workspacePath': workspacePath,
+        if (workspaceIdentity != null && workspaceIdentity.isNotEmpty)
+          'workspaceIdentity': workspaceIdentity,
+        'selections': selections,
+      }
+    ]);
+  }
+
+  // ── plugins ──
+
+  /// 插件启停 — plugins/setPluginEnabled
+  Future<void> setPluginEnabled({
+    required String workspacePath,
+    required String pluginId,
+    required bool enabled,
+    String? workspaceIdentity,
+  }) async {
+    await _rpcCall('plugins', 'setPluginEnabled', [
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
+          extra: {'pluginId': pluginId, 'enabled': enabled})
+    ]);
+  }
+
+  /// 插件概览 — zcode-agent/getPluginsOverview
+  Future<Map<String, dynamic>> getPluginsOverview({
+    required String workspacePath,
+    String? workspaceIdentity,
+  }) async {
+    return _mapCall('zcode-agent', 'getPluginsOverview', [
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity)
+    ]);
+  }
+
+  /// 插件列表 — zcode-agent/listPlugins
+  Future<Map<String, dynamic>> listPlugins({
+    required String workspacePath,
+    String? workspaceIdentity,
+  }) async {
+    return _mapCall('zcode-agent', 'listPlugins', [
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity)
+    ]);
+  }
+
+  /// 插件市场目录 (可浏览安装的插件) — zcode-agent/getPluginReferenceCatalog
+  /// 返回 {plugins: [...], authority}
+  Future<Map<String, dynamic>> getPluginReferenceCatalog({
+    required String workspacePath,
+    String? workspaceIdentity,
+  }) async {
+    return _mapCall('zcode-agent', 'getPluginReferenceCatalog', [
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity)
+    ]);
+  }
+
+  /// 插件详情 (组件清单: 命令/技能/钩子/MCP 等) — zcode-agent/describePlugin
+  Future<Map<String, dynamic>> describePlugin({
+    required String workspacePath,
+    required String marketplace,
+    required String pluginName,
+    String? workspaceIdentity,
+  }) async {
+    return _mapCall('zcode-agent', 'describePlugin', [
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
+          extra: {'marketplace': marketplace, 'pluginName': pluginName})
+    ]);
+  }
+
+  /// 安装插件 — zcode-agent/installPlugin
+  Future<Map<String, dynamic>> installPlugin({
+    required String workspacePath,
+    required String pluginName,
+    required String marketplace,
+    String? scope,
+    String? operationId,
+    String? workspaceIdentity,
+  }) async {
+    return _mapCall('zcode-agent', 'installPlugin', [
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
+          extra: {
+        'pluginName': pluginName,
+        'marketplace': marketplace,
+        if (scope != null) 'scope': scope,
+        if (operationId != null) 'operationId': operationId,
+      })
+    ]);
+  }
+
+  /// 卸载插件 — zcode-agent/uninstallPlugin
+  Future<Map<String, dynamic>> uninstallPlugin({
+    required String workspacePath,
+    String? pluginId,
+    String? pluginName,
+    String? marketplace,
+    bool removeCache = false,
+    String? workspaceIdentity,
+  }) async {
+    return _mapCall('zcode-agent', 'uninstallPlugin', [
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
+          extra: {
+        if (pluginId != null) 'pluginId': pluginId,
+        if (pluginName != null) 'pluginName': pluginName,
+        if (marketplace != null) 'marketplace': marketplace,
+        'removeCache': removeCache,
+      })
+    ]);
+  }
+
+  /// 更新插件 — zcode-agent/updatePlugin
+  Future<Map<String, dynamic>> updatePlugin({required String pluginId}) async {
+    return _mapCall('zcode-agent', 'updatePlugin', [
+      {'pluginId': pluginId}
+    ]);
+  }
+
+  /// 取消插件操作 — zcode-agent/cancelPluginOperation
+  Future<void> cancelPluginOperation({required String operationId}) async {
+    await _rpcCall('zcode-agent', 'cancelPluginOperation', [
+      {'operationId': operationId}
+    ]);
+  }
+
+  /// 恢复内置插件 — zcode-agent/restoreBuiltinPlugin
+  Future<Map<String, dynamic>> restoreBuiltinPlugin(
+      {required String pluginId}) async {
+    return _mapCall('zcode-agent', 'restoreBuiltinPlugin', [
+      {'pluginId': pluginId}
+    ]);
+  }
+
+  /// 添加插件市场 — zcode-agent/addPluginMarketplace
+  Future<Map<String, dynamic>> addPluginMarketplace({
+    required String workspacePath,
+    required String source,
+    String? workspaceIdentity,
+  }) async {
+    return _mapCall('zcode-agent', 'addPluginMarketplace', [
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
+          extra: {'source': source})
+    ]);
+  }
+
+  /// 移除插件市场 — zcode-agent/removePluginMarketplace
+  Future<Map<String, dynamic>> removePluginMarketplace({
+    required String workspacePath,
+    required String marketplace,
+    String? workspaceIdentity,
+  }) async {
+    return _mapCall('zcode-agent', 'removePluginMarketplace', [
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
+          extra: {'marketplace': marketplace})
+    ]);
+  }
+
+  /// 更新插件市场 — zcode-agent/updatePluginMarketplace
+  Future<Map<String, dynamic>> updatePluginMarketplace({
+    required String workspacePath,
+    String? marketplace,
+    String? workspaceIdentity,
+  }) async {
+    return _mapCall('zcode-agent', 'updatePluginMarketplace', [
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
+          extra: {if (marketplace != null) 'marketplace': marketplace})
+    ]);
+  }
+
+  // ── setting (桌面端设置) ──
+
+  /// 读取桌面端设置 — setting/get (无参 = 全部)
+  Future<Map<String, dynamic>> getSettings() async {
+    return _mapCall('setting', 'get', []);
+  }
+
+  /// 更新桌面端设置 — setting/update
+  Future<void> updateSettings(Map<String, dynamic> settings) async {
+    await _rpcCall('setting', 'update', [settings]);
+  }
+
   void dispose() {
     _log('info', 'RelayClient disposed');
     disconnect();
@@ -1736,6 +2328,10 @@ class RelayClient {
       c.close();
     }
     _v4FrameSubs.clear();
+    for (final c in _indexFrameSubs.values) {
+      c.close();
+    }
+    _indexFrameSubs.clear();
     _stateController.close();
     _agentEventController.close();
     _sessionEventController.close();

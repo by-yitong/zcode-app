@@ -7,7 +7,7 @@ import '../theme/app_design_tokens.dart';
 /// 取代 settings 屏散落的 `Container(surfaceHighest, borderRadius)` 逐个独立卡。
 /// 每个 tile 可有 leading 图标方块 / 标题 / 副标题 / 右侧值 / chevron。
 class AppTileGroup extends StatelessWidget {
-  final List<AppTile> tiles;
+  final List<Widget> tiles; // 通常是 AppTile; 也允许 GestureDetector 包裹 (长按等)
 
   const AppTileGroup({super.key, required this.tiles});
 
@@ -42,6 +42,7 @@ class AppTileGroup extends StatelessWidget {
 /// 单个设置项 tile (AppTileGroup 的子元素)。
 class AppTile extends StatelessWidget {
   final IconData? icon;
+  final Widget? customLeading; // 完全自定义前导 (优先于 icon, 如插件图标)
   final String title;
   final String? subtitle;
   final String? value; // 右侧 mono 值 (如 "深色" / "v1.0.0")
@@ -49,10 +50,12 @@ class AppTile extends StatelessWidget {
   final bool showChevron;
   final VoidCallback? onTap;
   final Color? iconTint;
+  final int? subtitleMaxLines; // 副标题截断 (长描述场景, 默认不限制)
 
   const AppTile({
     super.key,
     this.icon,
+    this.customLeading,
     required this.title,
     this.subtitle,
     this.value,
@@ -60,6 +63,7 @@ class AppTile extends StatelessWidget {
     this.showChevron = false,
     this.onTap,
     this.iconTint,
+    this.subtitleMaxLines,
   });
 
   @override
@@ -73,7 +77,10 @@ class AppTile extends StatelessWidget {
       ),
       child: Row(
         children: [
-          if (icon != null) ...[
+          if (customLeading != null) ...[
+            customLeading!,
+            const SizedBox(width: AppSpacing.md),
+          ] else if (icon != null) ...[
             Container(
               width: 28,
               height: 28,
@@ -96,6 +103,10 @@ class AppTile extends StatelessWidget {
                     padding: const EdgeInsets.only(top: 1),
                     child: Text(
                       subtitle!,
+                      maxLines: subtitleMaxLines,
+                      overflow: subtitleMaxLines != null
+                          ? TextOverflow.ellipsis
+                          : null,
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),

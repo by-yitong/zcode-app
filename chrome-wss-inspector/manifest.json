@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "ZCode WSS 抓包分析器",
+  "version": "1.0.0",
+  "description": "捕获 zcode.z.ai 远程页面的 WebSocket 帧, 自动解码 dataBase64 里的 RPC 二进制协议, 可视化浏览与筛选",
+  "permissions": ["debugger", "tabs", "storage"],
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "ZCode WSS 抓包"
+  }
+}

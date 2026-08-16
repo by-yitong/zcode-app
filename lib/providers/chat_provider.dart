@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -287,7 +288,9 @@ class TextPart extends MessagePart {
 /// 思考过程片段 (web part type: "reasoning" / "thought")
 class ThoughtPart extends MessagePart {
   final String text;
-  const ThoughtPart(this.text);
+  /// 思考耗时 (wire: reasoning.durationMs), 完成后才有
+  final int? durationMs;
+  const ThoughtPart(this.text, {this.durationMs});
 }
 
 /// 工具调用片段 (web part type: "tool" / "tool-call")
@@ -304,9 +307,16 @@ class StepPart extends MessagePart {
 }
 
 /// 显示用消息
+/// 服务端排队中的消息 (任务运行中发送, state.queue.items)
+class QueuedMessage {
+  final String id; // queueItemId
+  final String text;
+  const QueuedMessage({required this.id, required this.text});
+}
+
 class DisplayMessage {
   final String id;
-  final String role; // 'user' | 'assistant' | 'error'
+  final String role; // 'user' | 'assistant' | 'error' | 'marker'
   final String content;
   final String? thought;
   final String? model;
@@ -317,6 +327,15 @@ class DisplayMessage {
   /// 否则回退到旧的 content/thought/activities 固定顺序渲染。
   final List<MessagePart> parts;
 
+  // ── 轮次元数据 (turnHeader 行携带, 对齐 ZCode 客户端) ──
+  /// 本轮工作时长 (activeMs > endedAt-startedAt)。运行中为 null,
+  /// UI 用 [turnStartedAt] 实时跳动显示 "工作中 X"。
+  final int? workedMs;
+  /// 轮次开始时间 (wire: turnHeader.startedAt)
+  final DateTime? turnStartedAt;
+  /// 本轮文件变更统计 (wire: turnHeader.fileChanges, 权威来源)
+  final V4TurnFileChanges? fileChanges;
+
   DisplayMessage({
     required this.id,
     required this.role,
@@ -326,6 +345,9 @@ class DisplayMessage {
     this.isStreaming = false,
     this.activities = const [],
     this.parts = const [],
+    this.workedMs,
+    this.turnStartedAt,
+    this.fileChanges,
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
 
@@ -336,6 +358,9 @@ class DisplayMessage {
     bool? isStreaming,
     List<ToolActivity>? activities,
     List<MessagePart>? parts,
+    int? workedMs,
+    DateTime? turnStartedAt,
+    V4TurnFileChanges? fileChanges,
   }) {
     return DisplayMessage(
       id: id,
@@ -346,6 +371,9 @@ class DisplayMessage {
       isStreaming: isStreaming ?? this.isStreaming,
       activities: activities ?? this.activities,
       parts: parts ?? this.parts,
+      workedMs: workedMs ?? this.workedMs,
+      turnStartedAt: turnStartedAt ?? this.turnStartedAt,
+      fileChanges: fileChanges ?? this.fileChanges,
       createdAt: createdAt,
     );
   }
@@ -386,6 +414,9 @@ class ChatState {
   /// AI 提议的计划 (ExitPlanMode 工具触发), 非空时 UI 弹批准/拒绝卡。
   /// 内容用最近 assistant 消息文本兜底 (plan 原文 wire 上 inputOmitted)。
   final String? pendingPlan;
+  /// 服务端排队中的消息 (任务运行中发送, state.queue.items)。
+  /// 非空时输入框上方显示队列条 (立即/编辑/删除)。
+  final List<QueuedMessage> queuedMessages;
 
   const ChatState({
     this.messages = const [],
@@ -403,6 +434,7 @@ class ChatState {
     this.pendingPermissions = const [],
     this.isPlanMode = false,
     this.pendingPlan,
+    this.queuedMessages = const [],
   });
 
   ChatState copyWith({
@@ -421,6 +453,7 @@ class ChatState {
     List<PendingPermission>? pendingPermissions,
     bool? isPlanMode,
     Object? pendingPlan,
+    List<QueuedMessage>? queuedMessages,
   }) {
     return ChatState(
       messages: messages ?? this.messages,
@@ -438,6 +471,7 @@ class ChatState {
       plan: plan ?? this.plan,
       pendingPermissions: pendingPermissions ?? this.pendingPermissions,
       isPlanMode: isPlanMode ?? this.isPlanMode,
+      queuedMessages: queuedMessages ?? this.queuedMessages,
       // pendingPlan: sentinel 区分"不传"(保留旧值) 和"传null"(清空)
       pendingPlan: identical(pendingPlan, _clearPendingPlan)
           ? null
@@ -477,6 +511,18 @@ class ChatNotifier extends StateNotifier<ChatState> {
   int _v4Seq = 0;
   int _v4Revision = 0;
 
+  // ── 行日志加载 (网页端模式: conversationRowsRangeV4) ──
+  /// 流快照窗口的第一行 id (窗口之前还有更早历史)
+  int? _rowsFirstRowId;
+  /// 行日志总行数 (totalCount > 已有行数 = 有更早历史可翻)
+  int _rowsTotalCount = 0;
+  /// rowsRange 响应标记的 hasMore (更早方向)
+  bool _hasMoreOlder = false;
+  /// 翻页进行中标志
+  bool _loadingOlder = false;
+  /// 流首帧快照到达信号 (历史加载等它先渲染尾部窗口)
+  Completer<void>? _streamSnapshotDone;
+
   // ── 后台通知去重 ──
   /// 已通知过的权限请求 id (permissionId 会在多次 state patch 中重复出现)
   final Set<String> _notifiedPermIds = {};
@@ -489,6 +535,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }) async {
     final resp = await _relay.sendConversationCommandV4(
       workspacePath: _ref.workspacePath,
+      workspaceIdentity: _ref.workspaceIdentity,
       commandType: commandType,
       payload: payload,
       sessionId: sessionId ?? _taskId,
@@ -550,6 +597,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     try {
       await _relay.sendConversationCommandV4(
         workspacePath: _ref.workspacePath,
+        workspaceIdentity: _ref.workspaceIdentity,
         commandType: 'switchCollaborationMode',
               sessionId: _taskId,
               baseRevision: _v4Revision,
@@ -576,6 +624,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       final parts = modelId.split('/');
       await _relay.sendConversationCommandV4(
         workspacePath: _ref.workspacePath,
+        workspaceIdentity: _ref.workspaceIdentity,
         commandType: 'switchModelConfig',
               sessionId: _taskId,
               baseRevision: _v4Revision,
@@ -604,6 +653,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     try {
       await _relay.sendConversationCommandV4(
         workspacePath: _ref.workspacePath,
+        workspaceIdentity: _ref.workspaceIdentity,
         commandType: 'compact',
               sessionId: _taskId,
               baseRevision: _v4Revision,
@@ -612,6 +662,44 @@ class ChatNotifier extends StateNotifier<ChatState> {
     } catch (e) {
       appLog.w('[Chat] 压缩失败: $e');
       state = state.copyWith(isResponding: false, error: '压缩失败: $e');
+    }
+  }
+
+  /// 立即发送排队项 (sendQueuedNow — 相当于引导, 立即打断注入)
+  Future<void> sendQueuedNow(String queueItemId) async {
+    if (_taskId == null) return;
+    try {
+      await _relay.sendConversationCommandV4(
+        workspacePath: _ref.workspacePath,
+        workspaceIdentity: _ref.workspaceIdentity,
+        commandType: 'sendQueuedNow',
+        sessionId: _taskId,
+        baseRevision: _v4Revision,
+        baseLogEpoch: _v4LogEpoch,
+        payload: {'queueItemId': queueItemId},
+      );
+    } catch (e) {
+      appLog.w('[Chat] 立即发送排队项失败: $e');
+      state = state.copyWith(error: '立即发送失败: $e');
+    }
+  }
+
+  /// 删除排队项
+  Future<void> removeQueuedItem(String queueItemId) async {
+    if (_taskId == null) return;
+    try {
+      await _relay.sendConversationCommandV4(
+        workspacePath: _ref.workspacePath,
+        workspaceIdentity: _ref.workspaceIdentity,
+        commandType: 'deleteQueueItem',
+        sessionId: _taskId,
+        baseRevision: _v4Revision,
+        baseLogEpoch: _v4LogEpoch,
+        payload: {'queueItemId': queueItemId},
+      );
+    } catch (e) {
+      appLog.w('[Chat] 删除排队项失败: $e');
+      state = state.copyWith(error: '删除排队项失败: $e');
     }
   }
 
@@ -625,6 +713,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       final parts = modelId.split('/');
       await _relay.sendConversationCommandV4(
         workspacePath: _ref.workspacePath,
+        workspaceIdentity: _ref.workspaceIdentity,
         commandType: 'switchModelConfig',
               sessionId: _taskId,
               baseRevision: _v4Revision,
@@ -677,20 +766,19 @@ class ChatNotifier extends StateNotifier<ChatState> {
         workspaceIdentity: _ref.workspaceIdentity,
         sessionId: _taskId!,
       );
-      final snapshotDone = Completer<void>();
-      var gotSnapshot = false;
+      _streamSnapshotDone = Completer<void>();
       _frameSub = stream.listen((f) {
         _onV4Frame(f);
-        if (!gotSnapshot && f.payload is V4SnapshotPayload) {
-          gotSnapshot = true;
-          if (!snapshotDone.isCompleted) snapshotDone.complete();
+        if (f.payload is V4SnapshotPayload) {
+          final c = _streamSnapshotDone;
+          if (c != null && !c.isCompleted) c.complete();
         }
       });
 
-      // 双路竞速: 订阅流 snapshot / getTaskSnapshot 并行, 先到先渲染
-      // (state 更新幂等)。流路不 await — 大会话的流快照可能迟到/缺席,
-      // 到达时 _onV4Frame 会自动刷新; RPC 路必达, 以它为准结束 init。
-      unawaited(snapshotDone.future.then((_) {
+      // 双路竞速: 订阅流 snapshot / 行日志直读并行, 先到先渲染。
+      // 流路不 await — 大会话的流快照可能迟到/缺席; _loadHistory 里
+      // 会短暂等它, 然后用 conversationRowsRangeV4 补齐更早历史。
+      unawaited(_streamSnapshotDone!.future.then((_) {
         appLog.d('[Chat] _init: 流 snapshot 到达');
       }).catchError((_) {}));
       final histSw = Stopwatch()..start();
@@ -708,21 +796,59 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   Future<void> _loadHistory() async {
     try {
-      final resp = await _relay.getTaskSnapshot(
-        taskId: _taskId!,
-        workspacePath: _ref.workspacePath,
-        messageLimit: 50,
-      );
+      // 断连恢复中 (后台切回): 先等 RPC ready, 期间 UI 顶部显示同步条,
+      // 而不是立即失败/静默无反馈
+      try {
+        await _relay.waitRpcReady(const Duration(seconds: 12));
+      } catch (_) {
+        // 等待超时 → 走下方兜底路径的错误分支
+      }
+
+      // ── 行日志直读 (网页端模式) ★ ──
+      // conversationRowsRangeV4 只读行日志, 不触发会话冷恢复,
+      // 不依赖 provider registry — 避开「模型供应商未就绪」整类问题。
+      // 先短暂等订阅流的首帧快照 (它自带尾部窗口), 再补读窗口之前的更早行。
+      try {
+        await _streamSnapshotDone?.future
+            .timeout(const Duration(milliseconds: 1200));
+      } catch (_) {}
+      try {
+        var rowsLoaded = false;
+        if (_rows.isEmpty) {
+          // 无流快照 (空闲会话常见): 直接读尾部
+          rowsLoaded = await _fetchRowsRange();
+        } else if (_rowsFirstRowId != null && _rowsFirstRowId! > 1) {
+          // 流快照是尾部窗口: 补读窗口之前的全部更早行 (一次拉满)
+          await _fetchRowsRange(beforeRowId: _rowsFirstRowId);
+          rowsLoaded = _rows.isNotEmpty;
+        } else if (_rows.isNotEmpty) {
+          // 流快照已含全部行
+          rowsLoaded = true;
+        }
+        if (rowsLoaded) {
+          _cacheCurrentMessages();
+          state = state.copyWith(isLoadingHistory: false);
+          return;
+        }
+      } catch (e) {
+        appLog.w('[Chat] 行日志加载失败, 降级快照兜底: $e');
+      }
+
+      // ── 兜底: 任务门面快照 (legacy 会话无行日志 / 行日志为空) ──
+      final resp = await _fetchSnapshotWithRetry();
       final snapshot = resp['snapshot'] as Map<String, dynamic>?;
       if (snapshot == null) {
+        appLog.w('[Chat] _loadHistory: 响应无 snapshot, 保留现有内容 (keys=${resp.keys.toList()})');
         state = state.copyWith(isLoadingHistory: false);
         return;
       }
       // V4 snapshot 可能用 rows 或 messages (host 版本决定)
       final rowsObj = snapshot['rows'] as Map<String, dynamic>?;
-      final rowsList = rowsObj?['window'] as List<dynamic>?;
+      List<dynamic>? rowsList = rowsObj?['window'] as List<dynamic>?;
+      // rows 也可能是直接数组 (host 版本差异)
+      rowsList ??= snapshot['rows'] as List<dynamic>?;
       final messagesJson = snapshot['messages'] as List<dynamic>?;
-      
+
       if (rowsList != null && rowsList.isNotEmpty) {
         // V4 rows 格式
         _rows.clear();
@@ -739,6 +865,21 @@ class ChatNotifier extends StateNotifier<ChatState> {
             .whereType<Map>()
             .map((e) => _displayFromV3Message(Map<String, dynamic>.from(e)))
             .toList();
+        // 诊断: 每条消息的结构与文本提取结果 (排查合并回合/字段变形)
+        for (var i = 0; i < messagesJson.length && i < messages.length; i++) {
+          final raw = messagesJson[i];
+          if (raw is! Map) continue;
+          final m = Map<String, dynamic>.from(raw);
+          final parts = (m['parts'] as List?) ?? [];
+          final partTypes = parts
+              .whereType<Map>()
+              .map((p) =>
+                  '${p['type'] ?? p['kind'] ?? '?'}(${(p['text'] ?? p['content'] ?? '').toString().length})')
+              .join(',');
+          appLog.d('[Chat] v3[$i]: role=${m['role']} '
+              'parts=[$partTypes] tools=${(m['tools'] as List?)?.length ?? 0} '
+              'textLen=${messages[i].content.length} keys=${m.keys.toList()}');
+        }
         final meta = snapshot['meta'] as Map<String, dynamic>?;
         state = state.copyWith(
           messages: messages,
@@ -751,17 +892,132 @@ class ChatNotifier extends StateNotifier<ChatState> {
         appLog.d('[Chat] _loadHistory: ${messages.length} messages (v3 format)');
         try { MessageCache.saveMessages(_taskId!, messages); } catch (_) {}
       } else {
+        // 不可解析的快照形状: 打日志定位, 不清空已有内容
+        appLog.w(
+            '[Chat] _loadHistory: 快照无 rows/messages (keys=${snapshot.keys.toList()})');
         state = state.copyWith(isLoadingHistory: false);
       }
     } catch (e) {
       appLog.e('[Chat] _loadHistory: FAILED: $e');
       // 已有内容 (缓存/流快照先渲染) 时不覆盖为全局错误
       if (state.messages.isEmpty) {
-        state = state.copyWith(isLoadingHistory: false, error: '历史加载失败: $e');
+        state = state.copyWith(
+          isLoadingHistory: false,
+          error: _isProviderNotReady(e)
+              ? '桌面端模型供应商未就绪（刚重启或会话空闲时可能出现）。已在后台重试仍未成功，'
+                    '请点「重试」，或在电脑端打开该工作区后刷新'
+              : '历史加载失败: $e',
+        );
       } else {
         state = state.copyWith(isLoadingHistory: false);
       }
     }
+  }
+
+  /// 行日志按区间读取 (网页端模式核心)
+  ///
+  /// [beforeRowId] 为空 = 从尾部取; 否则取该 rowId 之前的更早行。
+  /// 响应 {rows[], atSeq, atLogEpoch, hasMore} — atLogEpoch 与本地纪元
+  /// 不一致时整批丢弃 (服务端 schema 注明的陈旧读防护)。
+  Future<bool> _fetchRowsRange({int? beforeRowId, int limit = 200}) async {
+    final resp = await _relay.conversationRowsRangeV4(
+      workspacePath: _ref.workspacePath,
+      workspaceIdentity: _ref.workspaceIdentity,
+      sessionId: _taskId!,
+      beforeRowId: beforeRowId,
+      limit: limit,
+    );
+    final epoch = resp['atLogEpoch'] as String?;
+    if (_v4LogEpoch != null &&
+        _v4LogEpoch!.isNotEmpty &&
+        epoch != null &&
+        epoch != _v4LogEpoch) {
+      appLog.w('[Chat] rowsRange 陈旧读丢弃 (epoch $epoch ≠ $_v4LogEpoch)');
+      return false;
+    }
+    final rowsJson = (resp['rows'] as List?) ?? [];
+    var merged = 0;
+    for (final r in rowsJson.whereType<Map>()) {
+      final row = V4Row.fromJson(Map<String, dynamic>.from(r));
+      if (!_rows.containsKey(row.rowId)) merged++;
+      _rows[row.rowId] = row;
+      _logMarkerRow(row, 'rowsRange');
+    }
+    final first = rowsJson.whereType<Map>()
+        .map((r) => (r['rowId'] as num?)?.toInt())
+        .whereType<int>()
+        .fold<int?>(null, (a, b) => a == null ? b : (a < b ? a : b));
+    if (first != null && (_rowsFirstRowId == null || first < _rowsFirstRowId!)) {
+      _rowsFirstRowId = first;
+    }
+    _hasMoreOlder = resp['hasMore'] == true;
+    _rebuildMessagesFromRows();
+    appLog.d('[Chat] rowsRange: +$merged 行 (before=$beforeRowId '
+        '共${_rows.length} hasMore=$_hasMoreOlder)');
+    return rowsJson.isNotEmpty;
+  }
+
+  /// 往上翻页: 加载更早的历史行 (滚动到顶部附近触发)
+  Future<void> loadOlder() async {
+    if (_taskId == null || _loadingOlder || !_hasMoreOlder) return;
+    final oldest = _rows.keys.reduce((a, b) => a < b ? a : b);
+    if (oldest <= 1) {
+      _hasMoreOlder = false;
+      return;
+    }
+    _loadingOlder = true;
+    state = state.copyWith(isLoadingHistory: true);
+    try {
+      final got = await _fetchRowsRange(beforeRowId: oldest, limit: 100);
+      if (!got) _hasMoreOlder = false;
+      _cacheCurrentMessages();
+    } catch (e) {
+      appLog.w('[Chat] loadOlder 失败: $e');
+    } finally {
+      _loadingOlder = false;
+      state = state.copyWith(isLoadingHistory: false);
+    }
+  }
+
+  void _cacheCurrentMessages() {
+    if (_taskId == null) return;
+    try {
+      MessageCache.saveMessages(_taskId!, state.messages);
+    } catch (_) {}
+  }
+
+  /// 拉取任务快照, 对「模型供应商未就绪」自动退避重试。
+  ///
+  /// 服务端 getTaskSnapshot 走 session 冷恢复, 需要工作区的 provider registry
+  /// 就绪; 桌面端刚重启/registry 同步中会瞬时拒绝 (zcode-server 实测), 重试可恢复。
+  Future<Map<String, dynamic>> _fetchSnapshotWithRetry() async {
+    const attempts = 3;
+    for (var i = 1;; i++) {
+      try {
+        return await _relay.getTaskSnapshot(
+          taskId: _taskId!,
+          workspacePath: _ref.workspacePath,
+          workspaceIdentity: _ref.workspaceIdentity,
+          messageLimit: 50,
+        );
+      } on Exception catch (e) {
+        if (i >= attempts || !_isProviderNotReady(e)) rethrow;
+        appLog.w('[Chat] _loadHistory: 模型供应商未就绪 (第$i次), 2.5s 后重试');
+        await Future<void>.delayed(const Duration(milliseconds: 2500));
+      }
+    }
+  }
+
+  static bool _isProviderNotReady(Object e) {
+    final s = e.toString();
+    return s.contains('模型供应商') || s.contains('请先登录或配置');
+  }
+
+  /// 手动重试加载历史 (错误横幅「重试」按钮)
+  Future<void> reloadHistory() async {
+    if (_taskId == null) return;
+    state = state.copyWith(isLoadingHistory: true, error: null);
+    await _loadHistory();
   }
 
   /// 对比状态变化, 触发后台事件通知 (需要确认/需要回答)。
@@ -857,6 +1113,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
       isResponding: control.isRunning,
       plan: plan,
       pendingPermissions: perms,
+      queuedMessages: snap.queue.items
+          .map((e) => QueuedMessage(id: e.queueItemId, text: e.text))
+          .toList(),
       tokenUsage: usage != null
           ? (input: usage.usedTokens, output: 0, max: usage.maxTokens)
           : state.tokenUsage,
@@ -947,20 +1206,40 @@ class ChatNotifier extends StateNotifier<ChatState> {
   void _onV4Frame(V4Frame frame) {
     appLog.d('[Chat] V4 frame: topic=${frame.topic} fromSeq=${frame.fromSeq} toSeq=${frame.toSeq}');
 
+    // topic = conversation/<sessionId>: 只处理本会话的帧,
+    // 防止工作区级推送的其他会话快照/增量串台覆盖当前显示
+    if (_taskId != null && frame.topic.isNotEmpty &&
+        !frame.topic.endsWith('/$_taskId')) {
+      appLog.w('[Chat] V4 帧串台忽略: topic=${frame.topic} (当前 $_taskId)');
+      return;
+    }
+
     if (frame.payload is V4SnapshotPayload) {
       final snap = (frame.payload as V4SnapshotPayload).snapshot;
       _v4SubscriptionId = frame.subscriptionId;
       _v4LogEpoch = snap.logEpoch;
       _v4Seq = snap.seq;
       _v4Revision = snap.revision;
+      // 空 window 的快照 (会话未物化/订阅退化) 不清空已渲染内容,
+      // 否则点击历史会话时会闪掉缓存变成"新会话"空屏
+      if (snap.rows.window.isEmpty && _rows.isNotEmpty) {
+        appLog.w('[Chat] V4 空快照到达, 忽略 (topic=${frame.topic} '
+            'sub=${frame.subscriptionId} 现有 ${_rows.length} rows)');
+        return;
+      }
       // 清空并重建 rows
       _rows.clear();
       for (final r in snap.rows.window) {
         _rows[r.rowId] = r;
+        _logMarkerRow(r, 'snapshot');
       }
+      // 记录尾部窗口边界: 窗口之前可能还有更早历史 (rowsRange 翻页用)
+      _rowsFirstRowId = snap.rows.firstRowId;
+      _rowsTotalCount = snap.rows.totalCount;
       _rebuildMessagesFromRows();
       _applySnapshotState(snap);
-      appLog.d('[Chat] V4 snapshot: ${_rows.length} rows');
+      appLog.d('[Chat] V4 snapshot: ${_rows.length} rows '
+          '(first=${snap.rows.firstRowId ?? '-'} total=${snap.rows.totalCount})');
     } else if (frame.payload is V4DeltasPayload) {
       final deltas = (frame.payload as V4DeltasPayload).deltas;
       appLog.d('[Chat] V4 deltas: ${deltas.length} ops');
@@ -971,13 +1250,24 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
+  /// 调试: 记录 marker/未知行的原始结构 (压缩提示开发期)
+  void _logMarkerRow(V4Row row, String src) {
+    if (row is V4TimelineMarkerRow) {
+      appLog.d('[Chat] marker行($src): ${jsonEncode(row.raw)}');
+    } else if (row is V4UnknownRow) {
+      appLog.d('[Chat] 未知行($src): kind=${row.kind} ${jsonEncode(row.raw)}');
+    }
+  }
+
   /// 应用单个 delta 到 _rows / state
   void _applyDelta(V4Delta delta) {
     switch (delta) {
       case V4RowAppended(:final row):
         _rows[row.rowId] = row;
+        _logMarkerRow(row, 'delta');
       case V4RowUpserted(:final row):
         _rows[row.rowId] = row;
+        _logMarkerRow(row, 'delta');
       case V4RowRemoved(:final fromRowId):
         _rows.remove(fromRowId);
       case V4RowDeltaOp(:final rowId, :final path, :final append):
@@ -1048,6 +1338,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
         if (_taskId != null) _onTitleUpdated?.call(_taskId!, meta.title);
       }
     }
+    if (patch.containsKey('queue')) {
+      final q = V4Queue.fromJson(patch['queue'] as Map<String, dynamic>? ?? {});
+      state = state.copyWith(
+          queuedMessages:
+              q.items.map((e) => QueuedMessage(id: e.queueItemId, text: e.text)).toList());
+    }
     if (patch.containsKey('pendingInteractions')) {
       final raw = patch['pendingInteractions'] as List<dynamic>? ?? [];
       final interactions = raw.whereType<Map>()
@@ -1092,99 +1388,165 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }
 
   /// 从 _rows 重建 DisplayMessage 列表 (适配 UI)
+  /// 按 rowId 顺序把 V4 rows 重建成消息列表。
+  ///
+  /// 对齐 ZCode 客户端的分组方式: 一个 turn (turnHeader) = 一条 assistant
+  /// 消息, 内部按真实发生顺序交错渲染 (思考 → 工具 → 正文 → 工具 → …),
+  /// 轮次元数据 (workedMs/turnStartedAt/fileChanges) 附着在消息上。
   void _rebuildMessagesFromRows() {
     final messages = <DisplayMessage>[];
-    final sortedRows = _rows.values.toList()..sort((a, b) => a.rowId.compareTo(b.rowId));
+    final sortedRows = _rows.values.toList()
+      ..sort((a, b) => a.rowId.compareTo(b.rowId));
+
+    // ── 当前轮次累积器 ──
+    var turnId = '';
+    V4TurnHeaderRow? header;
+    var parts = <MessagePart>[];
+    var activities = <ToolActivity>[];
+    var contentBuf = StringBuffer();
+    var thoughtBuf = StringBuffer();
+    var lastTextState = '';
+    var anyToolRunning = false;
+
+    void flushTurn() {
+      if (header == null && parts.isEmpty) return;
+      final isRunning = (header?.isRunning ?? false) ||
+          lastTextState == 'streaming' ||
+          anyToolRunning;
+      // 轮次为空且非运行中就不渲染 (ZCode 同样吞掉空轮次)
+      if (parts.isEmpty && !isRunning) {
+        header = null;
+        return;
+      }
+      messages.add(DisplayMessage(
+        id: 'turn_${turnId}_r${header?.rowId ?? 0}',
+        role: 'assistant',
+        content: contentBuf.toString(),
+        thought: thoughtBuf.isEmpty ? null : thoughtBuf.toString(),
+        model: null,
+        isStreaming: isRunning,
+        activities: activities,
+        parts: parts,
+        workedMs: header?.workedMs,
+        turnStartedAt: header?.startedAt == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(header!.startedAt!),
+        fileChanges: header?.fileChanges,
+        createdAt: header?.startedAt == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(header!.startedAt!),
+      ));
+      header = null;
+      parts = [];
+      activities = [];
+      contentBuf = StringBuffer();
+      thoughtBuf = StringBuffer();
+      lastTextState = '';
+      anyToolRunning = false;
+    }
+
+    /// turnHeader 缺失时 (老数据/异常) 也能累积内容行;
+    /// turnId 变化说明新轮次开始, 先冲刷上一轮
+    void ensureTurn(String rowTurnId) {
+      if (header == null && turnId != rowTurnId) {
+        flushTurn();
+        turnId = rowTurnId;
+      }
+    }
 
     for (final row in sortedRows) {
       switch (row) {
         case V4TurnHeaderRow():
-          // 轮次标题: 不渲染为消息, 但可标记 turn 边界
-          continue;
+          flushTurn();
+          turnId = row.turnId;
+          header = row;
         case V4UserInputRow():
+          flushTurn();
           messages.add(DisplayMessage(
             id: 'row_${row.rowId}',
             role: 'user',
             content: row.text,
           ));
         case V4AssistantTextRow():
-          if (row.text.isNotEmpty || row.state == 'streaming') {
-            messages.add(DisplayMessage(
-              id: 'row_${row.rowId}',
-              role: 'assistant',
-              content: row.text,
-              model: row.model,
-              isStreaming: row.state == 'streaming',
-            ));
-          }
-        case V4ReasoningRow():
-          // 思考行: 作为独立消息或附加到前一条 assistant 消息的 thought
-          // 简化: 如果前一条是 assistant, 附加 thought; 否则单独显示
+          if (row.text.isEmpty && row.state != 'streaming') continue;
+          ensureTurn(row.turnId);
           if (row.text.isNotEmpty) {
-            if (messages.isNotEmpty && messages.last.role == 'assistant') {
-              final last = messages.last;
-              messages[messages.length - 1] = last.copyWith(
-                thought: (last.thought ?? '') + row.text,
-              );
-            } else {
-              messages.add(DisplayMessage(
-                id: 'row_${row.rowId}',
-                role: 'assistant',
-                content: '',
-                thought: row.text,
-                isStreaming: row.state == 'streaming',
-              ));
-            }
+            parts.add(TextPart(row.text));
+            if (contentBuf.isNotEmpty) contentBuf.write('\n');
+            contentBuf.write(row.text);
           }
+          lastTextState = row.state;
+        case V4ReasoningRow():
+          if (row.text.isEmpty) continue;
+          ensureTurn(row.turnId);
+          parts.add(ThoughtPart(row.text, durationMs: row.durationMs));
+          thoughtBuf.write(row.text);
         case V4ToolCallRow():
-          // 工具调用: 附加到前一条 assistant 消息的 activities
+          ensureTurn(row.turnId);
           final activity = ToolActivity(
             toolCallId: row.toolCallId,
             toolName: row.toolName,
             status: row.status,
-            input: row.input,
+            input: row.input ?? _tryParseInputText(row.inputText),
             result: row.output?.text,
           );
-          if (messages.isNotEmpty && messages.last.role == 'assistant') {
-            final last = messages.last;
-            final activities = [...last.activities, activity];
-            messages[messages.length - 1] = last.copyWith(activities: activities);
-          } else {
-            messages.add(DisplayMessage(
-              id: 'row_${row.rowId}',
-              role: 'assistant',
-              content: '',
-              activities: [activity],
-              isStreaming: row.isRunning,
-            ));
-          }
+          parts.add(ToolPart(activity));
+          activities.add(activity);
+          if (row.isRunning) anyToolRunning = true;
         case V4SubagentRow():
-          // 子代理: 作为工具活动显示
+          ensureTurn(row.turnId);
           final activity = ToolActivity(
             toolCallId: 'subagent_${row.rowId}',
             toolName: 'subagent (${row.subagentType})',
             status: row.status == 'running' ? 'running' : 'done',
             result: row.summaryText.isNotEmpty ? row.summaryText : null,
           );
-          if (messages.isNotEmpty && messages.last.role == 'assistant') {
-            final last = messages.last;
-            messages[messages.length - 1] = last.copyWith(
-              activities: [...last.activities, activity],
-            );
-          }
+          parts.add(ToolPart(activity));
+          activities.add(activity);
+          if (row.status == 'running') anyToolRunning = true;
         case V4TimelineMarkerRow():
-          continue;
+          // 压缩标记: 渲染为时间线分割线 (running=压缩中, 其余=已完成)
+          if (row.marker['type'] == 'compact') {
+            flushTurn();
+            final status = row.marker['status'] as String? ?? '';
+            final before = (row.marker['tokensBefore'] as num?)?.toInt();
+            final after = (row.marker['tokensAfter'] as num?)?.toInt();
+            String fmtTok(int v) =>
+                v >= 1000 ? '${(v / 1000).toStringAsFixed(1)}k' : '$v';
+            var label = status == 'running' ? '正在压缩对话' : '已压缩对话';
+            if (status != 'running') {
+              if (before != null && after != null) {
+                label += ' · ${fmtTok(before)} → ${fmtTok(after)} tokens';
+              } else if (before != null) {
+                label += ' · ${fmtTok(before)} tokens';
+              }
+            }
+            final createdMs = (row.raw['createdAt'] as num?)?.toInt();
+            messages.add(DisplayMessage(
+              id: 'row_${row.rowId}',
+              role: 'marker',
+              content: label,
+              isStreaming: status == 'running',
+              createdAt: createdMs != null
+                  ? DateTime.fromMillisecondsSinceEpoch(createdMs)
+                  : null,
+            ));
+          }
         case V4UnknownRow():
           continue;
       }
     }
+    flushTurn();
 
-    // AI 正在回复但还没有新文本行 → 显示 "思考中" 占位
+    // AI 正在回复但还没有新文本行 → 显示 "思考中" 占位。
+    // 压缩进行中除外 — 压缩标记药丸已在展示进度, 再叠"思考中"就重复了。
     if (state.isResponding) {
+      final compactRunning =
+          messages.any((m) => m.role == 'marker' && m.isStreaming);
       final lastIsStreamingAi = messages.isNotEmpty &&
           messages.last.role == 'assistant' &&
           messages.last.isStreaming;
-      if (!lastIsStreamingAi) {
+      if (!lastIsStreamingAi && !compactRunning) {
         messages.add(DisplayMessage(
           id: 'thinking_placeholder',
           role: 'assistant',
@@ -1201,10 +1563,42 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
+  /// inputText (流式 JSON 文本) → Map。input 字段缺失时兜底解析。
+  static Map<String, dynamic>? _tryParseInputText(String text) {
+    if (text.isEmpty) return null;
+    try {
+      final v = jsonDecode(text);
+      return v is Map<String, dynamic> ? v : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// 发送消息
   Future<void> sendMessage(String content) async {
     appLog.d('[Chat] sendMessage: "${content.length > 100 ? '${content.substring(0, 100)}…' : content}" taskId=$_taskId model=${_preferredModelReader()} mode=${state.mode}');
-    if (content.trim().isEmpty || state.isResponding || _creating) return;
+    if (content.trim().isEmpty || _creating) return;
+
+    // 任务运行中发送 → 服务端排队 (followupMode=queue), 不本地拦截。
+    // 此时消息进队列不进消息列表 (queue 状态到达后由队列条展示)。
+    final queued = state.isResponding && _taskId != null;
+    if (queued) {
+      state = state.copyWith(error: null);
+      try {
+        await _relay.sendConversationCommandV4(
+          workspacePath: _ref.workspacePath,
+          workspaceIdentity: _ref.workspaceIdentity,
+          commandType: 'sendText',
+          sessionId: _taskId,
+          payload: {'text': content},
+        );
+        appLog.d('[Chat] 已加入队列 (${content.length} 字)');
+      } catch (e) {
+        appLog.w('[Chat] 排队发送失败: $e');
+        state = state.copyWith(error: '发送失败: $e');
+      }
+      return;
+    }
 
     // 1. 立即显示用户消息
     final userMsg = DisplayMessage(
@@ -1272,6 +1666,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       // 4. V4 发送命令
       await _relay.sendConversationCommandV4(
         workspacePath: _ref.workspacePath,
+        workspaceIdentity: _ref.workspaceIdentity,
         commandType: 'sendText',
               sessionId: _taskId,
         payload: {'text': content},
@@ -1303,6 +1698,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     try {
       await _relay.sendConversationCommandV4(
         workspacePath: _ref.workspacePath,
+        workspaceIdentity: _ref.workspaceIdentity,
         commandType: 'sendText',
               sessionId: _taskId,
         payload: {'text': '${q.question}=$answer'},
@@ -1335,6 +1731,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     try {
       await _relay.sendConversationCommandV4(
         workspacePath: _ref.workspacePath,
+        workspaceIdentity: _ref.workspaceIdentity,
         commandType: 'resolveInteraction',
               sessionId: _taskId,
               baseRevision: _v4Revision,
@@ -1362,6 +1759,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     try {
       await _relay.sendConversationCommandV4(
         workspacePath: _ref.workspacePath,
+        workspaceIdentity: _ref.workspaceIdentity,
         commandType: 'sendText',
               sessionId: _taskId,
         payload: {'text': approved ? 'User approved the plan, proceed' : 'User rejected the plan'},
@@ -1380,6 +1778,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       try {
         await _relay.sendConversationCommandV4(
           workspacePath: _ref.workspacePath,
+          workspaceIdentity: _ref.workspaceIdentity,
           commandType: 'stop',
                 sessionId: _taskId,
         );
@@ -1396,6 +1795,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     try {
       await _relay.sendConversationCommandV4(
         workspacePath: _ref.workspacePath,
+        workspaceIdentity: _ref.workspaceIdentity,
         commandType: 'applyFileRewind',
               sessionId: _taskId,
               baseRevision: _v4Revision,

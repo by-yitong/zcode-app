@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:logger/logger.dart';
 
 /// 全局统一日志门面
@@ -22,7 +21,9 @@ class AppLogger {
   AppLogger()
       : _logger = Logger(
           filter: ProductionFilter(),
-          level: kDebugMode ? Level.trace : Level.info,
+          // 协议调试期: release 真机也需要 d 级 (RPC keys / V4 帧 / 解析路径),
+          // 否则线上问题无线索。稳定后可改回 kDebugMode ? trace : info。
+          level: Level.trace,
           printer: PrettyPrinter(
             methodCount: 0,
             errorMethodCount: 5,

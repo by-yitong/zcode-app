@@ -4,6 +4,7 @@ import '../../core/logging/app_logger.dart';
 import '../../core/relay/relay_client.dart';
 import '../../core/relay/relay_events.dart';
 import '../../core/storage/secure_storage.dart';
+import '../../data/models/saved_connection.dart';
 import '../../data/models/zcode_session.dart';
 
 /// 认证 Repository
@@ -103,6 +104,48 @@ class AuthRepository {
 
   Future<void> logout() async {
     await _storage.clearSession();
+  }
+
+  // ── 多远程连接 ──────────────────────────────────────────
+
+  /// 已保存的连接列表 (按最近使用倒序)
+  Future<List<SavedConnection>> listConnections() {
+    return _storage.getConnections();
+  }
+
+  /// 保存/更新一条连接 (按 deviceSid 去重, 更新 lastUsedAt 与最新 URL)
+  Future<void> addConnection(String loginUrl, ZcodeSession session) async {
+    final conns = await _storage.getConnections();
+    final fresh = SavedConnection.fromUrl(loginUrl);
+    final idx = conns.indexWhere((c) => c.id == fresh.id);
+    if (idx >= 0) {
+      // 保留用户改过的 label, 更新 URL 与时间
+      conns[idx] = conns[idx]
+          .copyWith(loginUrl: fresh.loginUrl, lastUsedAt: DateTime.now());
+    } else {
+      conns.insert(0, fresh);
+    }
+    await _storage.saveConnections(conns);
+  }
+
+  Future<void> deleteConnection(String id) async {
+    final conns = await _storage.getConnections();
+    await _storage
+        .saveConnections([for (final c in conns) if (c.id != id) c]);
+  }
+
+  Future<void> renameConnection(String id, String label) async {
+    final conns = await _storage.getConnections();
+    final idx = conns.indexWhere((c) => c.id == id);
+    if (idx < 0) return;
+    conns[idx] = conns[idx].copyWith(label: label.trim());
+    await _storage.saveConnections(conns);
+  }
+
+  /// 切换到已保存的连接: 重新走 loginFromUrl (取新 Cookie, 规避过期)。
+  /// 目标桌面端需在线, 否则抛错。
+  Future<ZcodeSession> reconnect(SavedConnection conn) async {
+    return loginFromUrl(conn.loginUrl);
   }
 }
 

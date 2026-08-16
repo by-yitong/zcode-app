@@ -6,7 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
-import '../../skills/screens/skills_screen.dart';
+import '../../agent/screens/cap_pages.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -14,8 +14,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:markdown/markdown.dart' as md;
 
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/logging/app_logger.dart';
+import '../../../core/relay/relay_events.dart';
 import '../../../core/relay/relay_protocol.dart';
 import '../../../data/models/glm_quota.dart' as glm;
 import '../../../data/models/workspace.dart';
@@ -23,6 +25,7 @@ import '../../../providers/app_providers.dart';
 import '../../../providers/chat_provider.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/theme/app_router.dart';
+import '../../../shared/theme/chat_markdown_style.dart';
 import '../../../shared/widgets/code_highlight.dart';
 import '../../../shared/widgets/glass_bars.dart';
 import '../../../shared/widgets/app_empty_state.dart';
@@ -52,15 +55,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final GlobalKey<_ChatScaffoldState> _chatScaffoldKey =
       GlobalKey<_ChatScaffoldState>();
 
+  /// 上次按返回键时间 — 「再按一次退出应用」防误触
+  DateTime? _lastBackAt;
+
   /// 打开搜索页 (抽屉已自行关闭)
   void _openSearchFromDrawer() {
     _chatScaffoldKey.currentState?.openSearch();
+  }
+
+  /// 新建技能: 关闭 Agent 设置页, 回到对话并预填 skill-creator 引导语
+  void _startSkillCreation() {
+    Navigator.of(context).pop(); // AgentSettingsScreen
+    _chatScaffoldKey.currentState?.prefillInput('帮我创建一个新技能');
   }
 
   @override
   Widget build(BuildContext context) {
     final workspace = ref.watch(selectedWorkspaceProvider);
     final title = workspace?.name ?? '对话';
+    // 会话列表实时同步 (sessions-index 订阅, 根页面常驻)
+    ref.watch(sessionsIndexSyncProvider);
 
     // taskId 可空: null = 新会话 (首发消息时创建)
     final chatRef = ChatRef(
@@ -70,43 +84,67 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     );
     final chatState = ref.watch(chatProvider(chatRef));
 
-    return Scaffold(
-      key: _scaffoldKey,
-      // 右滑任意位置可拉开抽屉 (默认仅屏幕左缘 20px)
-      drawerEdgeDragWidth: MediaQuery.sizeOf(context).width,
-      drawer: _HistoryDrawer(
-        workspacePath: widget.workspaceKey,
-        currentTaskId: widget.taskId,
-        onSelected: (selectedTaskId) {
-          // 选了历史会话: 用新 taskId 跳转
-          // replace: 原地替换当前 chat 路由, 不叠加新 chat, 保持工作区列表在栈底
-          context.replace(
-            '${AppRoutes.chat}?workspace=${Uri.encodeComponent(widget.workspaceKey)}'
-            '&task=${Uri.encodeComponent(selectedTaskId)}',
+    // 聊天页是根页面: 拦截返回键, 2 秒内按两次才退出 (防误触)
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        final now = DateTime.now();
+        if (_lastBackAt != null &&
+            now.difference(_lastBackAt!) < const Duration(seconds: 2)) {
+          SystemNavigator.pop(); // 真正退出 app
+          return;
+        }
+        _lastBackAt = now;
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('再按一次退出应用'),
+              duration: Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+            ),
           );
-        },
-        onNewChat: () {
-          // 新对话: 跳回不带 task 的聊天页 (replace: 原地替换, 保持返回栈)
-          context.replace(
-            '${AppRoutes.chat}?workspace=${Uri.encodeComponent(widget.workspaceKey)}',
-          );
-        },
-        onSwitchWorkspace: (ws) {
-          // 切换项目: 更新选中工作区 + 跳转新工作区聊天页 (新会话)
-          ref.read(selectedWorkspaceProvider.notifier).state = ws;
-          context.replace(
-            '${AppRoutes.chat}?workspace=${Uri.encodeComponent(ws.workspaceKey)}',
-          );
-        },
-        onOpenSearch: _openSearchFromDrawer,
-      ),
-      body: _ChatScaffold(
-        key: _chatScaffoldKey,
-        title: title,
-        workspacePath: widget.workspaceKey,
-        chatRef: chatRef,
-        state: chatState,
-        onMenuTap: () => _scaffoldKey.currentState?.openDrawer(),
+      },
+      child: Scaffold(
+        key: _scaffoldKey,
+        // 右滑任意位置可拉开抽屉 (默认仅屏幕左缘 20px)
+        drawerEdgeDragWidth: MediaQuery.sizeOf(context).width,
+        drawer: _HistoryDrawer(
+          workspacePath: widget.workspaceKey,
+          currentTaskId: widget.taskId,
+          onSelected: (selectedTaskId) {
+            // 选了历史会话: 用新 taskId 跳转
+            // replace: 原地替换当前 chat 路由, 不叠加新 chat, 保持工作区列表在栈底
+            context.replace(
+              '${AppRoutes.chat}?workspace=${Uri.encodeComponent(widget.workspaceKey)}'
+              '&task=${Uri.encodeComponent(selectedTaskId)}',
+            );
+          },
+          onNewChat: () {
+            // 新对话: 跳回不带 task 的聊天页 (replace: 原地替换, 保持返回栈)
+            context.replace(
+              '${AppRoutes.chat}?workspace=${Uri.encodeComponent(widget.workspaceKey)}',
+            );
+          },
+          onSwitchWorkspace: (ws) {
+            // 切换项目: 更新选中工作区 + 跳转新工作区聊天页 (新会话)
+            ref.read(selectedWorkspaceProvider.notifier).state = ws;
+            context.replace(
+              '${AppRoutes.chat}?workspace=${Uri.encodeComponent(ws.workspaceKey)}',
+            );
+          },
+          onOpenSearch: _openSearchFromDrawer,
+          onNewSkill: _startSkillCreation,
+        ),
+        body: _ChatScaffold(
+          key: _chatScaffoldKey,
+          title: title,
+          workspacePath: widget.workspaceKey,
+          chatRef: chatRef,
+          state: chatState,
+          onMenuTap: () => _scaffoldKey.currentState?.openDrawer(),
+        ),
       ),
     );
   }
@@ -155,8 +193,9 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
     _scrollController.addListener(_onScrollChanged);
     // 记住本次工作区, 下次启动直达 (splash 读取)
     unawaited(
-      SharedPreferences.getInstance()
-          .then((p) => p.setString('lastWorkspaceKey', widget.workspacePath)),
+      SharedPreferences.getInstance().then(
+        (p) => p.setString('lastWorkspaceKey', widget.workspacePath),
+      ),
     );
     // 键盘弹起 (输入框聚焦) 时消息列表会被压缩, 自动滚到底部,
     // 避免最新消息被输入区遮挡 (等键盘动画完成再滚)
@@ -187,6 +226,12 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
     // 用户主动向上翻 (offset 减小) → 立即脱离"贴底"态
     if (current < _lastOffset - 1) {
       if (_isAtBottom) setState(() => _isAtBottom = false);
+      // 滚到顶部附近 → 加载更早历史 (reverse 列表顶部即 offset 0)
+      if (current < 120 && !widget.state.isLoadingHistory) {
+        ref
+            .read(chatProvider(widget.chatRef).notifier)
+            .loadOlder();
+      }
     } else {
       // 向下滚回底部附近 (距底部 < 60) → 恢复"贴底"态, 重新启用自动跟随
       final nearBottom = (maxScroll - current) < 60;
@@ -228,7 +273,8 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
 
   void _sendMessage() {
     final text = _messageController.text.trim();
-    if (text.isEmpty || widget.state.isResponding) return;
+    if (text.isEmpty) return;
+    // 任务运行中不禁发 — followupMode=queue, 服务端会排队 (队列条可管理)
 
     // 不 await, 让 UI 立即响应; 错误由 chatProvider 状态反映
     ref.read(chatProvider(widget.chatRef).notifier).sendMessage(text);
@@ -422,7 +468,13 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
             },
           ),
           if (state.error != null)
-            _ErrorBanner(message: state.error!, theme: theme),
+            _ErrorBanner(
+              message: state.error!,
+              theme: theme,
+              onRetry: () => ref
+                  .read(chatProvider(widget.chatRef).notifier)
+                  .reloadHistory(),
+            ),
           // plan 提议批准卡 (AI 调 ExitPlanMode, 等用户批准/拒绝)
           if (state.pendingPlan != null)
             _PlanApprovalCard(
@@ -461,6 +513,17 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                     ? _buildWorkspaceHome(theme)
                     : Stack(
                         children: [
+                          // 已有缓存内容时的同步指示条 (断连恢复/刷新中)
+                          if (state.isLoadingHistory)
+                            const Positioned(
+                              top: 0,
+                              left: 0,
+                              right: 0,
+                              child: LinearProgressIndicator(
+                                minHeight: 2,
+                                backgroundColor: Colors.transparent,
+                              ),
+                            ),
                           ListView.builder(
                             controller: _scrollController,
                             // Column 已在顶部留出 状态栏+标题栏 空间, 这里只需小间距
@@ -474,6 +537,13 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                             itemBuilder: (context, index) {
                               final realIndex = index;
                               final msg = state.messages[realIndex];
+                              // 压缩标记: 居中药丸, 不走消息气泡
+                              if (msg.role == 'marker') {
+                                return _CompactMarkerPill(
+                                  label: msg.content,
+                                  running: msg.isStreaming,
+                                );
+                              }
                               // 日期分组: 第一条(视觉最顶)或日期变化时插入分隔线
                               final showDateSeparator =
                                   realIndex == 0 ||
@@ -809,6 +879,33 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // 排队消息 (任务运行中发送 → 服务端排队): 立即/编辑/删除
+              if (widget.state.queuedMessages.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final q in widget.state.queuedMessages)
+                        _QueuedMessageRow(
+                          text: q.text,
+                          onSendNow: () => ref
+                              .read(chatProvider(widget.chatRef).notifier)
+                              .sendQueuedNow(q.id),
+                          onEdit: () {
+                            ref
+                                .read(chatProvider(widget.chatRef).notifier)
+                                .removeQueuedItem(q.id);
+                            _messageController.text = q.text;
+                            _inputFocusNode.requestFocus();
+                          },
+                          onDelete: () => ref
+                              .read(chatProvider(widget.chatRef).notifier)
+                              .removeQueuedItem(q.id),
+                        ),
+                    ],
+                  ),
+                ),
               // 统一提及面板 (@文件 / #会话 / $技能 / /命令)
               ValueListenableBuilder<TextEditingValue>(
                 valueListenable: _messageController,
@@ -870,7 +967,10 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                     valueListenable: _messageController,
                     builder: (context, value, _) {
                       final hasText = value.text.trim().isNotEmpty;
-                      return widget.state.isResponding
+                      // 有文字 = 发送 (任务运行中发送会进入服务端队列);
+                      // 无文字且任务运行中 = 暂停
+                      final showStop = widget.state.isResponding && !hasText;
+                      return showStop
                           ? _ComposerSendButton(
                               icon: Icons.stop_rounded,
                               onPressed: () => notifier.stopResponding(),
@@ -945,6 +1045,14 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
 
   /// /model 命令 + 模型按钮共用: 打开模型选择底部表 (模型列表读全局 modelListProvider)
   /// 打开全屏搜索页 (抽屉搜索按钮入口; 合并 会话搜索 + 斜杠命令)
+  /// 预填输入框 (如"新建技能"引导)
+  void prefillInput(String text) {
+    _messageController.text = text;
+    _inputFocusNode.requestFocus();
+    _messageController.selection = TextSelection.fromPosition(
+        TextPosition(offset: _messageController.text.length));
+  }
+
   void openSearch() {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -978,9 +1086,8 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
   /// 搜索页选择会话 → 跳转 (跨工作区时先切换 selectedWorkspace, ChatRef 需要其 identity)
   void _handleSearchSelectTask(Task task) {
     if (!mounted) return;
-    final wsList = ref
-        .read(workspaceListProvider)
-        .valueOrNull ?? const <Workspace>[];
+    final wsList =
+        ref.read(workspaceListProvider).valueOrNull ?? const <Workspace>[];
     for (final w in wsList) {
       if (w.workspaceKey == task.workspaceKey) {
         ref.read(selectedWorkspaceProvider.notifier).state = w;
@@ -1230,7 +1337,7 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
     _messageController.selection = TextSelection.collapsed(offset: newPos);
     _messageController.notifyListeners();
 
-    // 如果是 / 命令, 执行对应操作
+    // 如果是 / 命令, 执行对应操作 (内置命令立即执行; 服务端命令留在输入框补参数)
     if (trigger == '/' && insertText.startsWith('/')) {
       final cmd = _slashCommands.where((c) => c.name == insertText).firstOrNull;
       if (cmd != null) {
@@ -1238,6 +1345,22 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
         _runCommand(cmd);
       }
     }
+  }
+
+  /// 内置 + 服务端命令合并表 (供面板过滤/选中分发)
+  List<_SlashCommand> get _mergedSlashCommands {
+    final builtinNames =
+        _slashCommands.map((c) => c.name.substring(1)).toSet();
+    final skills =
+        ref.read(skillsProvider).valueOrNull ?? const <SkillItem>[];
+    final server = (ref.read(serverSlashCommandsProvider).valueOrNull ??
+            const <String>[])
+        .where((s) => !builtinNames.contains(s))
+        .map((s) {
+      final skill = skills.where((sk) => sk.name == s).firstOrNull;
+      return _SlashCommand('/$s', skill?.description ?? '服务端命令');
+    }).toList();
+    return [..._slashCommands, ...server];
   }
 
   /// 插入图片 — 从手机选图, 压缩后 base64 嵌入消息
@@ -1648,8 +1771,10 @@ class _PlusMenuItem extends StatelessWidget {
 class _ErrorBanner extends StatelessWidget {
   final String message;
   final ThemeData theme;
+  final VoidCallback? onRetry;
 
-  const _ErrorBanner({required this.message, required this.theme});
+  const _ErrorBanner(
+      {required this.message, required this.theme, this.onRetry});
 
   @override
   Widget build(BuildContext context) {
@@ -1657,12 +1782,41 @@ class _ErrorBanner extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       color: theme.colorScheme.errorContainer,
-      child: Text(
-        message,
-        style: TextStyle(
-          color: theme.colorScheme.onErrorContainer,
-          fontSize: AppTextSizes.bodySm,
-        ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(
+                color: theme.colorScheme.onErrorContainer,
+                fontSize: AppTextSizes.bodySm,
+              ),
+            ),
+          ),
+          if (onRetry != null)
+            Padding(
+              padding: const EdgeInsets.only(left: 8),
+              child: GestureDetector(
+                onTap: onRetry,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.refresh_rounded,
+                        size: 14, color: theme.colorScheme.onErrorContainer),
+                    const SizedBox(width: 4),
+                    Text(
+                      '重试',
+                      style: TextStyle(
+                        color: theme.colorScheme.onErrorContainer,
+                        fontSize: AppTextSizes.label,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -2700,7 +2854,7 @@ class _MentionOverlay extends ConsumerWidget {
     final q = query.toLowerCase();
     switch (trigger) {
       case '/':
-        return _buildCommands(q);
+        return _buildCommands(ref, q);
       case '@':
         return _buildFiles(ref, q);
       case '#':
@@ -2712,9 +2866,20 @@ class _MentionOverlay extends ConsumerWidget {
     }
   }
 
-  // /命令
-  List<_MentionItem> _buildCommands(String q) {
-    final matches = _slashCommands
+  // /命令 (内置 + 服务端 slashCommands, 描述尽量从技能列表带出)
+  List<_MentionItem> _buildCommands(WidgetRef ref, String q) {
+    final builtinNames =
+        _slashCommands.map((c) => c.name.substring(1)).toSet();
+    final skills = ref.watch(skillsProvider).valueOrNull ?? const <SkillItem>[];
+    final server = (ref.watch(serverSlashCommandsProvider).valueOrNull ??
+            const <String>[])
+        .where((s) => !builtinNames.contains(s))
+        .map((s) {
+      final skill = skills.where((sk) => sk.name == s).firstOrNull;
+      return _SlashCommand('/$s', skill?.description ?? '服务端命令');
+    }).toList();
+    final all = [..._slashCommands, ...server];
+    final matches = all
         .where((c) => c.name.toLowerCase().contains(q.isEmpty ? '/' : q))
         .toList();
     return matches
@@ -3203,7 +3368,8 @@ class _ComposerIconBtn extends StatelessWidget {
       tooltip: tooltip,
       icon: Icon(icon, size: 18),
       style: IconButton.styleFrom(
-        foregroundColor: color ?? Theme.of(context).colorScheme.onSurfaceVariant,
+        foregroundColor:
+            color ?? Theme.of(context).colorScheme.onSurfaceVariant,
         minimumSize: const Size(36, 36),
         padding: const EdgeInsets.all(6),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -3259,8 +3425,8 @@ class _ContextLengthIndicator extends StatelessWidget {
                   color: ratio > 0.9
                       ? AppColors.danger
                       : ratio > 0.7
-                          ? AppColors.warning
-                          : theme.colorScheme.primary,
+                      ? AppColors.warning
+                      : theme.colorScheme.primary,
                 ),
               ),
               const SizedBox(height: 10),
@@ -3310,8 +3476,8 @@ class _ContextLengthIndicator extends StatelessWidget {
     final barColor = ratio > 0.9
         ? AppColors.danger
         : ratio > 0.7
-            ? AppColors.warning
-            : theme.colorScheme.primary;
+        ? AppColors.warning
+        : theme.colorScheme.primary;
     return InkWell(
       onTap: has ? () => _openDetails(context) : null,
       borderRadius: BorderRadius.circular(AppRadius.sm),
@@ -3629,7 +3795,11 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final ctx = _currentKey.currentContext;
       if (ctx != null) {
-        Scrollable.ensureVisible(ctx, alignment: 0.3, duration: const Duration(milliseconds: 250));
+        Scrollable.ensureVisible(
+          ctx,
+          alignment: 0.3,
+          duration: const Duration(milliseconds: 250),
+        );
       }
     });
   }
@@ -3867,12 +4037,12 @@ class _ModelSelector extends StatelessWidget {
       onPressed: (models.isEmpty && !isLoading)
           ? null
           : () => showModelPicker(
-                context,
-                models: models,
-                current: current,
-                onSelected: onSelected,
-                providerNames: providerNames,
-              ),
+              context,
+              models: models,
+              current: current,
+              onSelected: onSelected,
+              providerNames: providerNames,
+            ),
       tooltip: models.isEmpty
           ? (isLoading ? '正在加载模型...' : '模型列表未加载')
           : '模型: $_label',
@@ -3890,6 +4060,154 @@ class _ModelSelector extends StatelessWidget {
 /// 判断两个 DateTime 是否同一天
 bool _isSameDay(DateTime a, DateTime b) {
   return a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
+/// 排队消息行 (输入框上方; 单行文字 + 立即/编辑/删除)
+class _QueuedMessageRow extends StatelessWidget {
+  final String text;
+  final VoidCallback onSendNow;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  const _QueuedMessageRow({
+    required this.text,
+    required this.onSendNow,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest.withValues(
+            alpha: 0.5,
+          ),
+          borderRadius: BorderRadius.circular(AppRadius.md),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.schedule_rounded,
+              size: 14,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: AppTextSizes.caption,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            _QueueAction(
+              icon: Icons.play_arrow_rounded,
+              tooltip: '立即发送',
+              onTap: onSendNow,
+            ),
+            _QueueAction(icon: Icons.edit_outlined, tooltip: '编辑', onTap: onEdit),
+            _QueueAction(
+              icon: Icons.close_rounded,
+              tooltip: '删除',
+              onTap: onDelete,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _QueueAction extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  const _QueueAction({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        child: Padding(
+          padding: const EdgeInsets.all(6),
+          child: Icon(icon, size: 16, color: theme.colorScheme.onSurfaceVariant),
+        ),
+      ),
+    );
+  }
+}
+
+/// 压缩标记 (居中药丸形; running 态转圈)
+class _CompactMarkerPill extends StatelessWidget {
+  final String label;
+  final bool running;
+
+  const _CompactMarkerPill({required this.label, this.running = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest.withValues(
+              alpha: 0.6,
+            ),
+            borderRadius: BorderRadius.circular(AppRadius.pill),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (running)
+                SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.6,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                )
+              else
+                Icon(
+                  Icons.compress_outlined,
+                  size: 12,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: AppTextSizes.caption,
+                  fontWeight: FontWeight.w500,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// 日期分组标签 (居中药丸形)
@@ -4253,7 +4571,17 @@ class _MessageBubbleState extends State<_MessageBubble> {
     );
   }
 
-  /// AI 气泡的 Markdown 正文块 (硬编码高对比样式, 两种渲染路径共用)。
+  /// markdown 链接点击 → 外部浏览器打开
+  Future<void> _onMarkdownLink(String text, String? href, String? title) async {
+    if (href == null) return;
+    try {
+      await launchUrl(Uri.parse(href), mode: LaunchMode.externalApplication);
+    } catch (_) {
+      // 无可处理的应用时静默忽略
+    }
+  }
+
+  /// AI 气泡的 Markdown 正文块 (统一样式见 chatMarkdownStyleSheet, 两种渲染路径共用)。
   /// 提取并独立渲染 data URI 图片 (MarkdownBody 无法渲染 data: URI)。
   /// ★ 表格 (GFM table) 单独拆出, 用横向滚动渲染, 不受气泡宽度限制。
   Widget _buildMarkdown(
@@ -4264,12 +4592,12 @@ class _MessageBubbleState extends State<_MessageBubble> {
   ) {
     final (images, cleanText) = _extractImages(data);
     final segments = _splitMarkdownByTables(cleanText);
-
-    final isDark = theme.brightness == Brightness.dark;
+    final styleSheet = chatMarkdownStyleSheet(
+      theme,
+      ink: aiInk,
+      codeBg: aiCodeBg,
+    );
     final borderColor = theme.colorScheme.outlineVariant.withValues(alpha: 0.4);
-    final headerBg = isDark
-        ? theme.colorScheme.surfaceContainerHighest
-        : theme.colorScheme.surfaceContainerHigh;
 
     final widgets = <Widget>[];
 
@@ -4290,36 +4618,8 @@ class _MessageBubbleState extends State<_MessageBubble> {
                   scrollDirection: Axis.horizontal,
                   child: MarkdownBody(
                     data: seg.text,
-                    styleSheet: MarkdownStyleSheet(
-                      p: TextStyle(color: aiInk, fontSize: AppTextSizes.bodyMd),
-                      tableColumnWidth: const IntrinsicColumnWidth(),
-                      tableHead: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        color: aiInk,
-                        fontSize: AppTextSizes.bodySm,
-                      ),
-                      tableBody: TextStyle(
-                        color: aiInk,
-                        fontSize: AppTextSizes.bodySm,
-                      ),
-                      tableCellsPadding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
-                      ),
-                      tableHeadAlign: TextAlign.center,
-                      tableBorder: TableBorder(
-                        top: BorderSide(color: borderColor),
-                        bottom: BorderSide(color: borderColor),
-                        left: BorderSide(color: borderColor),
-                        right: BorderSide(color: borderColor),
-                        horizontalInside: BorderSide(
-                          color: borderColor.withValues(alpha: 0.5),
-                        ),
-                        verticalInside: BorderSide(
-                          color: borderColor.withValues(alpha: 0.5),
-                        ),
-                      ),
-                    ),
+                    styleSheet: styleSheet,
+                    onTapLink: _onMarkdownLink,
                   ),
                 ),
               ),
@@ -4330,23 +4630,8 @@ class _MessageBubbleState extends State<_MessageBubble> {
         widgets.add(
           MarkdownBody(
             data: seg.text,
-            styleSheet: MarkdownStyleSheet(
-              p: TextStyle(
-                color: aiInk,
-                fontSize: AppTextSizes.bodyMd,
-                height: 1.6,
-              ),
-              code: TextStyle(
-                backgroundColor: aiCodeBg,
-                fontSize: AppTextSizes.bodySm,
-                fontFamily: kMonoFont,
-                color: aiInk,
-              ),
-              codeblockDecoration: BoxDecoration(
-                color: aiCodeBg,
-                borderRadius: BorderRadius.circular(AppRadius.sm),
-              ),
-            ),
+            styleSheet: styleSheet,
+            onTapLink: _onMarkdownLink,
             builders: {'pre': _CodeBlockBuilder(theme: theme)},
           ),
         );
@@ -4403,70 +4688,113 @@ class _MessageBubbleState extends State<_MessageBubble> {
     final respondPermission = widget.onRespondPermission;
 
     if (message.parts.isNotEmpty) {
-      // ── 新: 按 parts[] 顺序交错渲染 ──
+      // ── parts 路径: 按 parts[] 顺序交错渲染 ──
       // 连续的非计划工具先累积, 遇到文本/思考/计划卡时 flush 成一张工具卡。
       final pendingTools = <ToolActivity>[];
-      void flushTools() {
-        if (pendingTools.isEmpty) return;
-        final snapshot = List<ToolActivity>.from(pendingTools);
+      List<Widget> buildRange(List<MessagePart> range) {
+        final out = <Widget>[];
+        void flushTools() {
+          if (pendingTools.isEmpty) return;
+          final snapshot = List<ToolActivity>.from(pendingTools);
+          out.add(
+            Padding(
+              padding: const EdgeInsets.only(top: AppSpacing.sm),
+              child: _ToolActivityCards(
+                activities: snapshot,
+                theme: theme,
+                inkColor: aiInk,
+              ),
+            ),
+          );
+          pendingTools.clear();
+        }
+
+        for (final part in range) {
+          switch (part) {
+            case TextPart(:final text):
+              flushTools();
+              out.add(_buildMarkdown(text, theme, aiInk, aiCodeBg));
+            case ThoughtPart(:final text, :final durationMs):
+              flushTools();
+              out.add(
+                _ThoughtBlock(
+                  thought: text,
+                  theme: theme,
+                  durationMs: durationMs,
+                ),
+              );
+            case StepPart():
+              flushTools();
+              // 只在 step-finish 后插入分隔线 (表示一个步骤完成)
+              if (!part.isStart && out.isNotEmpty) {
+                out.add(
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                    child: Divider(
+                      height: 1,
+                      color: theme.colorScheme.outlineVariant.withValues(
+                        alpha: 0.3,
+                      ),
+                    ),
+                  ),
+                );
+              }
+            case ToolPart(:final activity):
+              if (_isPlanTool(activity)) {
+                flushTools();
+                out.add(
+                  Padding(
+                    padding: const EdgeInsets.only(top: AppSpacing.sm),
+                    child: _PlanCard(
+                      activity: activity,
+                      theme: theme,
+                      inkColor: aiInk,
+                      permission: planPerm,
+                      onRespondPermission: respondPermission,
+                    ),
+                  ),
+                );
+              } else {
+                pendingTools.add(activity);
+              }
+          }
+        }
+        flushTools();
+        return out;
+      }
+
+      // ★ 历史/尾段拆分 (对齐 ZCode 网页端): 最后一串正文之前的全部内容
+      //   (思考/工具/早期正文) 折叠进 "已工作 X" 状态行后面; 尾段正文始终可见。
+      //   运行中默认展开 (实时滚动), 完成后自动折叠 (自动隐藏)。
+      final hasText = message.parts.any((p) => p is TextPart);
+      var splitIdx = message.parts.length;
+      if (hasText) {
+        for (var i = message.parts.length - 1; i >= 0; i--) {
+          if (message.parts[i] is! TextPart) break;
+          splitIdx = i;
+        }
+      }
+      final historyParts =
+          hasText ? message.parts.sublist(0, splitIdx) : message.parts;
+      final tailParts = hasText
+          ? message.parts.sublist(splitIdx)
+          : const <MessagePart>[];
+
+      if (historyParts.isNotEmpty) {
         children.add(
-          Padding(
-            padding: const EdgeInsets.only(top: AppSpacing.sm),
-            child: _ToolActivityCards(
-              activities: snapshot,
-              theme: theme,
-              inkColor: aiInk,
+          _WorkHistory(
+            message: message,
+            theme: theme,
+            // 无正文的轮次折叠会藏掉全部内容, 保持展开 (ZCode 同款)
+            defaultOpen: message.isStreaming || !hasText,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: buildRange(historyParts),
             ),
           ),
         );
-        pendingTools.clear();
       }
-
-      for (final part in message.parts) {
-        switch (part) {
-          case TextPart(:final text):
-            flushTools();
-            children.add(_buildMarkdown(text, theme, aiInk, aiCodeBg));
-          case ThoughtPart(:final text):
-            flushTools();
-            children.add(_ThoughtBlock(thought: text, theme: theme));
-          case StepPart():
-            flushTools();
-            // 只在 step-finish 后插入分隔线 (表示一个步骤完成)
-            if (!part.isStart && children.isNotEmpty) {
-              children.add(
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-                  child: Divider(
-                    height: 1,
-                    color: theme.colorScheme.outlineVariant.withValues(
-                      alpha: 0.3,
-                    ),
-                  ),
-                ),
-              );
-            }
-          case ToolPart(:final activity):
-            if (_isPlanTool(activity)) {
-              flushTools();
-              children.add(
-                Padding(
-                  padding: const EdgeInsets.only(top: AppSpacing.sm),
-                  child: _PlanCard(
-                    activity: activity,
-                    theme: theme,
-                    inkColor: aiInk,
-                    permission: planPerm,
-                    onRespondPermission: respondPermission,
-                  ),
-                ),
-              );
-            } else {
-              pendingTools.add(activity);
-            }
-        }
-      }
-      flushTools();
+      children.addAll(buildRange(tailParts));
 
       // 流式光标 (parts 路径极少流式, 兜底放末尾)
       if (message.isStreaming) {
@@ -4477,8 +4805,11 @@ class _MessageBubbleState extends State<_MessageBubble> {
           ),
         );
       }
-      // 变更文件摘要 (始终在末尾, 聚合全部工具活动)
-      if (message.activities.any(_isFileActivity) && !message.isStreaming) {
+      // 变更文件摘要 (始终在末尾; 优先 turnHeader.fileChanges 权威数据)
+      final hasFileData = message.fileChanges != null &&
+          message.fileChanges!.files > 0;
+      if ((hasFileData || message.activities.any(_isFileActivity)) &&
+          !message.isStreaming) {
         children.add(
           Padding(
             padding: const EdgeInsets.only(top: AppSpacing.sm),
@@ -4486,12 +4817,24 @@ class _MessageBubbleState extends State<_MessageBubble> {
               activities: message.activities,
               theme: theme,
               inkColor: aiInk,
+              fileChanges: message.fileChanges,
             ),
           ),
         );
       }
     } else {
-      // ── 旧: 固定顺序渲染 (无 parts 数据时回退) ──
+      // ── 旧: 固定顺序渲染 (无 parts 数据时回退, 如缓存消息) ──
+      // 轮次状态行 (有 workedMs/turnStartedAt 元数据时)
+      if (message.workedMs != null || message.turnStartedAt != null) {
+        children.add(
+          _TurnStatusLine(
+            running: message.isStreaming,
+            workedMs: message.workedMs,
+            startedAt: message.turnStartedAt,
+            theme: theme,
+          ),
+        );
+      }
       // 思考过程 (折叠)
       if (message.thought != null && message.thought!.isNotEmpty) {
         children.add(_ThoughtBlock(thought: message.thought!, theme: theme));
@@ -4533,8 +4876,11 @@ class _MessageBubbleState extends State<_MessageBubble> {
               ),
             ),
       );
-      // 变更文件摘要
-      if (message.activities.any(_isFileActivity) && !message.isStreaming) {
+      // 变更文件摘要 (优先 turnHeader.fileChanges 权威数据)
+      final hasFileData =
+          message.fileChanges != null && message.fileChanges!.files > 0;
+      if ((hasFileData || message.activities.any(_isFileActivity)) &&
+          !message.isStreaming) {
         children.add(
           Padding(
             padding: const EdgeInsets.only(top: AppSpacing.sm),
@@ -4542,6 +4888,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
               activities: message.activities,
               theme: theme,
               inkColor: aiInk,
+              fileChanges: message.fileChanges,
             ),
           ),
         );
@@ -5071,11 +5418,15 @@ class _ChangedFilesSummary extends StatefulWidget {
   final List<ToolActivity> activities;
   final ThemeData theme;
   final Color inkColor;
+  /// turnHeader.fileChanges 权威统计 (additions/deletions/files);
+  /// null 时回退到从工具活动刮取
+  final V4TurnFileChanges? fileChanges;
 
   const _ChangedFilesSummary({
     required this.activities,
     required this.theme,
     required this.inkColor,
+    this.fileChanges,
   });
 
   @override
@@ -5104,18 +5455,27 @@ class _ChangedFilesSummaryState extends State<_ChangedFilesSummary>
     }
     final files = fileMap.keys.toList();
 
-    // 统计增删行数 (从 result 中尝试提取 +N -M)
-    int totalAdded = 0;
-    int totalRemoved = 0;
-    for (final a in fileActivities) {
-      final result = a.result ?? '';
-      // 匹配 +N -M 格式
-      final addMatch = RegExp(r'\+(\d+)').firstMatch(result);
-      final delMatch = RegExp(r'-(\d+)').firstMatch(result);
-      if (addMatch != null) totalAdded += int.tryParse(addMatch.group(1)!) ?? 0;
-      if (delMatch != null)
-        totalRemoved += int.tryParse(delMatch.group(1)!) ?? 0;
+    // 增删行数: 优先 turnHeader.fileChanges 权威数据, 否则从 result 刮 +N -M
+    final fc = widget.fileChanges;
+    var totalAdded = 0;
+    var totalRemoved = 0;
+    if (fc != null) {
+      totalAdded = fc.additions;
+      totalRemoved = fc.deletions;
+    } else {
+      for (final a in fileActivities) {
+        final result = a.result ?? '';
+        final addMatch = RegExp(r'\+(\d+)').firstMatch(result);
+        final delMatch = RegExp(r'-(\d+)').firstMatch(result);
+        if (addMatch != null) {
+          totalAdded += int.tryParse(addMatch.group(1)!) ?? 0;
+        }
+        if (delMatch != null) {
+          totalRemoved += int.tryParse(delMatch.group(1)!) ?? 0;
+        }
+      }
     }
+    final fileCount = fc != null && fc.files > 0 ? fc.files : files.length;
 
     final cardBg = isDark
         ? theme.colorScheme.surfaceContainerHighest
@@ -5147,7 +5507,7 @@ class _ChangedFilesSummaryState extends State<_ChangedFilesSummary>
                   ),
                   const SizedBox(width: 6),
                   Text(
-                    '${files.length} 个文件已更改',
+                    '$fileCount 个文件已更改',
                     style: TextStyle(
                       fontSize: AppTextSizes.label,
                       fontWeight: FontWeight.w500,
@@ -5295,19 +5655,18 @@ class _ToolActivityCards extends StatefulWidget {
 
 class _ToolActivityCardsState extends State<_ToolActivityCards>
     with SingleTickerProviderStateMixin {
-  bool _expanded = false;
-  bool _subagentsExpanded = false;
+  /// null = 跟随自动状态 (运行中展开, 完成后折叠); 手动点按后固定。
+  /// 完成态重新变为运行态时重置 (对齐 ZCode 的 defaultOpen 同步)。
+  bool? _manualExpanded;
   // 记录哪些工具行被单独展开 (按 toolCallId)
   final Set<String> _expandedRows = {};
 
-  /// 是否为子代理调用 (Agent / Explore / Task 等)
-  bool _isSubagent(ToolActivity a) {
-    final n = a.toolName.toLowerCase();
-    return n == 'agent' ||
-        n == 'task' ||
-        n == 'explore' ||
-        n.contains('subagent') ||
-        n.startsWith('explore');
+  @override
+  void didUpdateWidget(covariant _ToolActivityCards oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final wasRunning = oldWidget.activities.any((a) => a.isRunning);
+    final nowRunning = widget.activities.any((a) => a.isRunning);
+    if (wasRunning != nowRunning) _manualExpanded = null;
   }
 
   @override
@@ -5316,14 +5675,15 @@ class _ToolActivityCardsState extends State<_ToolActivityCards>
     final activities = widget.activities;
     if (activities.isEmpty) return const SizedBox.shrink();
 
-    // planTools 已在消息气泡中单独渲染 (_PlanCard), 这里排除
-    final subagents = activities.where(_isSubagent).toList();
+    // plan/todo 工具已单独渲染 (_PlanCard / plan 面板), 这里排除;
+    // 子代理 (Agent/Explore/Task) 作为普通行渲染 (专属图标 + 摘要)
     final tools = activities
-        .where((a) => !_isSubagent(a) && !_isPlanTool(a) && !_isTodoTool(a))
+        .where((a) => !_isPlanTool(a) && !_isTodoTool(a))
         .toList();
+    if (tools.isEmpty) return const SizedBox.shrink();
 
-    final running = activities.where((a) => a.isRunning).length;
-    final completed = activities
+    final running = tools.where((a) => a.isRunning).length;
+    final completed = tools
         .where(
           (a) =>
               a.status == 'result' ||
@@ -5333,9 +5693,12 @@ class _ToolActivityCardsState extends State<_ToolActivityCards>
               a.status == 'success',
         )
         .length;
-    final errors = activities
+    final errors = tools
         .where((a) => a.status == 'error' || a.status == 'failed')
         .length;
+
+    // ★ 自动隐藏: 运行中展开 (实时滚动), 全部完成后折叠成一行摘要
+    final expanded = _manualExpanded ?? running > 0;
 
     final isDark = theme.brightness == Brightness.dark;
     final cardBg = isDark
@@ -5354,7 +5717,7 @@ class _ToolActivityCardsState extends State<_ToolActivityCards>
         children: [
           // 头部: 摘要 + 折叠箭头
           InkWell(
-            onTap: () => setState(() => _expanded = !_expanded),
+            onTap: () => setState(() => _manualExpanded = !expanded),
             child: Padding(
               padding: const EdgeInsets.symmetric(
                 horizontal: AppSpacing.sm + 2,
@@ -5363,13 +5726,13 @@ class _ToolActivityCardsState extends State<_ToolActivityCards>
               child: Row(
                 children: [
                   Icon(
-                    Icons.build_outlined,
+                    Icons.terminal,
                     size: 14,
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                   const SizedBox(width: 6),
                   Text(
-                    '${activities.length} 个工具调用',
+                    '${tools.length} 个工具调用',
                     style: TextStyle(
                       fontSize: AppTextSizes.label,
                       fontWeight: FontWeight.w500,
@@ -5377,7 +5740,7 @@ class _ToolActivityCardsState extends State<_ToolActivityCards>
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // 状态摘要: M✓ K● ✗N
+                  // 状态摘要: M 完成 · K 运行中 · N 出错
                   Flexible(
                     child: Text(
                       [
@@ -5404,16 +5767,17 @@ class _ToolActivityCardsState extends State<_ToolActivityCards>
                         valueColor: AlwaysStoppedAnimation(AppColors.accent),
                       ),
                     )
-                  else
-                    Icon(
-                      errors > 0 ? Icons.error_outline : Icons.check_circle,
+                  else if (errors > 0)
+                    const Icon(
+                      Icons.error_outline,
                       size: 13,
-                      color: errors > 0 ? AppColors.danger : AppColors.success,
+                      color: AppColors.danger,
                     ),
                   const Spacer(),
                   AnimatedRotation(
-                    turns: _expanded ? 0.25 : 0,
-                    duration: const Duration(milliseconds: 150),
+                    turns: expanded ? 0.25 : 0,
+                    duration: AppDur.fast,
+                    curve: AppEase.inOut,
                     child: Icon(
                       Icons.chevron_right,
                       size: 16,
@@ -5424,66 +5788,38 @@ class _ToolActivityCardsState extends State<_ToolActivityCards>
               ),
             ),
           ),
-          // 展开后: 子代理区 + 普通工具行
+          // 展开后: 工具行 (含子代理行)
           AnimatedSize(
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeInOut,
-            child: _expanded
-                ? Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // 子代理 (整体折叠, 因为内容多)
-                      if (subagents.isNotEmpty)
-                        _SubagentSection(
-                          subagents: subagents,
-                          theme: theme,
-                          inkColor: widget.inkColor,
-                          expanded: _subagentsExpanded,
-                          onToggle: () => setState(
-                            () => _subagentsExpanded = !_subagentsExpanded,
+            duration: AppDur.base,
+            curve: AppEase.inOut,
+            child: expanded
+                ? Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.sm + 2,
+                      0,
+                      AppSpacing.sm + 2,
+                      AppSpacing.sm,
+                    ),
+                    child: Column(
+                      children: [
+                        for (final a in tools) ...[
+                          _ToolActivityRow(
+                            activity: a,
+                            theme: theme,
+                            inkColor: widget.inkColor,
+                            expanded: _expandedRows.contains(a.toolCallId),
+                            onToggle: () => setState(() {
+                              if (_expandedRows.contains(a.toolCallId)) {
+                                _expandedRows.remove(a.toolCallId);
+                              } else {
+                                _expandedRows.add(a.toolCallId);
+                              }
+                            }),
                           ),
-                          expandedRows: _expandedRows,
-                          onRowToggle: (id) => setState(() {
-                            if (_expandedRows.contains(id)) {
-                              _expandedRows.remove(id);
-                            } else {
-                              _expandedRows.add(id);
-                            }
-                          }),
-                        ),
-                      // 普通工具行
-                      if (tools.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(
-                            AppSpacing.sm + 2,
-                            0,
-                            AppSpacing.sm + 2,
-                            AppSpacing.sm,
-                          ),
-                          child: Column(
-                            children: [
-                              for (final a in tools) ...[
-                                _ToolActivityRow(
-                                  activity: a,
-                                  theme: theme,
-                                  inkColor: widget.inkColor,
-                                  expanded: _expandedRows.contains(
-                                    a.toolCallId,
-                                  ),
-                                  onToggle: () => setState(() {
-                                    if (_expandedRows.contains(a.toolCallId)) {
-                                      _expandedRows.remove(a.toolCallId);
-                                    } else {
-                                      _expandedRows.add(a.toolCallId);
-                                    }
-                                  }),
-                                ),
-                                const SizedBox(height: 2),
-                              ],
-                            ],
-                          ),
-                        ),
-                    ],
+                          const SizedBox(height: 2),
+                        ],
+                      ],
+                    ),
                   )
                 : const SizedBox.shrink(),
           ),
@@ -5507,149 +5843,95 @@ String _formatToolName(String name) {
   return name;
 }
 
-/// 工具名 → emoji 图标 (顶层函数, 供多处复用)
-String _emojiFor(String name) {
+/// 工具名 → 图标 (按工具类型精确定位, 不用 emoji)
+IconData _iconForTool(String name) {
   final n = name.toLowerCase();
-  if (n.contains('search') ||
-      n.contains('grep') ||
-      n.contains('glob') ||
-      n.contains('find')) {
-    return '🔍';
-  }
-  if (n.contains('edit') ||
-      n.contains('write') ||
-      n.contains('create') ||
-      n.contains('str_replace') ||
-      n.contains('file')) {
-    return '📝';
-  }
+  if (n.startsWith('mcp__')) return Icons.extension;
+  if (_isSubagentToolName(n)) return Icons.account_tree_outlined;
   if (n.contains('bash') ||
       n.contains('shell') ||
       n.contains('terminal') ||
       n.contains('cmd') ||
-      n.contains('run') ||
       n.contains('exec')) {
-    return '⚡';
+    return Icons.terminal;
   }
+  if (n.contains('grep') ||
+      n.contains('glob') ||
+      n.contains('search') ||
+      n.contains('find')) {
+    return Icons.search;
+  }
+  if (n.contains('edit') ||
+      n.contains('write') ||
+      n.contains('create') ||
+      n.contains('str_replace')) {
+    return Icons.edit_outlined;
+  }
+  if (n.contains('read') || n.contains('notebook')) return Icons.description_outlined;
   if (n.contains('web') ||
       n.contains('browser') ||
       n.contains('fetch') ||
       n.contains('curl') ||
       n.contains('url')) {
-    return '🌐';
+    return Icons.travel_explore;
   }
-  if (n == 'agent' || n == 'task' || n.contains('subagent') || n == 'explore') {
-    return '🤖';
+  if (n.contains('todo') || n.contains('plan')) return Icons.checklist;
+  return Icons.build_outlined;
+}
+
+bool _isSubagentToolName(String n) {
+  return n == 'agent' ||
+      n == 'task' ||
+      n == 'explore' ||
+      n.contains('subagent') ||
+      n.startsWith('explore');
+}
+
+/// 工具调用的目标摘要 (行内灰色补充): 命令首行 / 文件名 / 搜索词 / URL
+String? _toolTarget(ToolActivity a) {
+  final input = a.input;
+  if (input == null) return null;
+  String? firstNonEmpty(List<String> keys) {
+    for (final k in keys) {
+      final v = input[k];
+      if (v is String && v.trim().isNotEmpty) return v;
+    }
+    return null;
+  }
+
+  final n = a.toolName.toLowerCase();
+  if (n.contains('bash') || n.contains('shell') || n.contains('terminal')) {
+    final cmd = firstNonEmpty(['command', 'cmd', 'script']);
+    if (cmd == null) return null;
+    final line = cmd.split('\n').first.trim();
+    return line.length > 60 ? '${line.substring(0, 60)}…' : line;
   }
   if (n.startsWith('mcp__')) {
-    return '🔌';
+    return firstNonEmpty(['query', 'url', 'path', 'name', 'text']);
   }
-  return '🔧';
+  if (_isSubagentToolName(n)) {
+    return firstNonEmpty(['description', 'prompt', 'query']);
+  }
+  if (n.contains('grep') || n.contains('glob') || n.contains('search')) {
+    return firstNonEmpty(['pattern', 'query', 'q', 'search']);
+  }
+  if (n.contains('web') || n.contains('fetch') || n.contains('url')) {
+    final url = firstNonEmpty(['url', 'link']);
+    if (url == null) return null;
+    final uri = Uri.tryParse(url);
+    return uri?.host ?? url;
+  }
+  // 文件类与其余: 显示文件名/路径
+  final path = firstNonEmpty(['file_path', 'path', 'filename', 'file']);
+  if (path != null) {
+    final base = path.split('/').last;
+    return base.length > 48 ? '…${base.substring(base.length - 47)}' : base;
+  }
+  return null;
 }
 
-/// 子代理调用区 (Agent/Explore/Task, 整体可折叠, 默认折叠)
-class _SubagentSection extends StatelessWidget {
-  final List<ToolActivity> subagents;
-  final ThemeData theme;
-  final Color inkColor;
-  final bool expanded;
-  final VoidCallback onToggle;
-  final Set<String> expandedRows;
-  final void Function(String id) onRowToggle;
-
-  const _SubagentSection({
-    required this.subagents,
-    required this.theme,
-    required this.inkColor,
-    required this.expanded,
-    required this.onToggle,
-    required this.expandedRows,
-    required this.onRowToggle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = this.theme;
-    final running = subagents.where((a) => a.isRunning).length;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        InkWell(
-          onTap: onToggle,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.sm + 2,
-              vertical: AppSpacing.sm - 2,
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.hub_outlined, size: 14, color: AppColors.accent),
-                const SizedBox(width: 6),
-                Text(
-                  '${subagents.length} 个子任务',
-                  style: TextStyle(
-                    fontSize: AppTextSizes.label,
-                    fontWeight: FontWeight.w500,
-                    color: theme.colorScheme.onSurface,
-                  ),
-                ),
-                if (running > 0) ...[
-                  const SizedBox(width: 6),
-                  const SizedBox(
-                    width: 11,
-                    height: 11,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 1.5,
-                      valueColor: AlwaysStoppedAnimation(AppColors.accent),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '$running 运行中',
-                    style: const TextStyle(
-                      fontSize: AppTextSizes.caption,
-                      color: AppColors.accent,
-                    ),
-                  ),
-                ],
-                const Spacer(),
-                AnimatedRotation(
-                  turns: expanded ? 0.25 : 0,
-                  duration: const Duration(milliseconds: 150),
-                  child: Icon(
-                    Icons.chevron_right,
-                    size: 14,
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        if (expanded)
-          Padding(
-            padding: const EdgeInsets.only(bottom: AppSpacing.xs),
-            child: Column(
-              children: [
-                for (final a in subagents) ...[
-                  _ToolActivityRow(
-                    activity: a,
-                    theme: theme,
-                    inkColor: inkColor,
-                    expanded: expandedRows.contains(a.toolCallId),
-                    onToggle: () => onRowToggle(a.toolCallId),
-                  ),
-                  const SizedBox(height: 2),
-                ],
-              ],
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-/// 工具调用精简单行 (无独立卡片背景, 点击展开详情)
+/// 工具调用精简单行 (ZCode 风格: 图标 + mono 工具名 + 目标摘要 + 状态,
+/// 无独立卡片背景, 点击展开详情)
 class _ToolActivityRow extends StatelessWidget {
   final ToolActivity activity;
   final ThemeData theme;
@@ -5672,17 +5954,13 @@ class _ToolActivityRow extends StatelessWidget {
     final running = a.isRunning;
     final isError = a.status == 'error' || a.status == 'failed';
 
-    final emoji = _emojiFor(a.toolName);
-    final statusText = switch (a.status) {
-      'scheduled' => '排队',
-      'started' || 'progress' || 'running' => '运行中',
-      'result' || 'done' || 'complete' || 'completed' || 'success' => '完成',
-      'error' || 'failed' => '出错',
-      _ => a.status,
-    };
+    final toolLabel = _formatToolName(a.toolName);
+    final target = _toolTarget(a);
     final elapsed = a.elapsedMs != null
-        ? ' · ${(a.elapsedMs! / 1000).toStringAsFixed(1)}s'
-        : '';
+        ? (a.elapsedMs! >= 60000
+            ? _formatWorkDuration(a.elapsedMs!)
+            : '${(a.elapsedMs! / 1000).toStringAsFixed(1)}s')
+        : null;
 
     final Widget statusIcon;
     if (running) {
@@ -5695,21 +5973,13 @@ class _ToolActivityRow extends StatelessWidget {
         ),
       );
     } else if (isError) {
-      statusIcon = const Text(
-        '✗',
-        style: TextStyle(
-          color: AppColors.danger,
-          fontSize: AppTextSizes.bodySm,
-        ),
+      statusIcon = const Icon(
+        Icons.close,
+        size: 12,
+        color: AppColors.danger,
       );
     } else {
-      statusIcon = const Text(
-        '✓',
-        style: TextStyle(
-          color: AppColors.success,
-          fontSize: AppTextSizes.bodySm,
-        ),
-      );
+      statusIcon = const SizedBox.shrink();
     }
 
     final hasDetail =
@@ -5729,40 +5999,59 @@ class _ToolActivityRow extends StatelessWidget {
             padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 2),
             child: Row(
               children: [
-                Text(
-                  emoji,
-                  style: const TextStyle(fontSize: AppTextSizes.bodySm),
+                Icon(
+                  _iconForTool(a.toolName),
+                  size: 14,
+                  color: running
+                      ? AppColors.accent
+                      : theme.colorScheme.onSurfaceVariant,
                 ),
-                const SizedBox(width: 5),
+                const SizedBox(width: 6),
+                // mono 工具名 + 目标摘要 (同行, 摘要灰色收缩)
                 Flexible(
-                  child: Text(
-                    _formatToolName(a.toolName),
-                    style: TextStyle(
-                      fontSize: AppTextSizes.label,
-                      fontFamily: kMonoFont,
-                      color: inkColor,
+                  child: Text.rich(
+                    TextSpan(
+                      text: toolLabel,
+                      style: TextStyle(
+                        fontSize: AppTextSizes.label,
+                        fontFamily: kMonoFont,
+                        color: isError ? AppColors.danger : inkColor,
+                      ),
+                      children: [
+                        if (target != null)
+                          TextSpan(
+                            text: '  $target',
+                            style: TextStyle(
+                              fontSize: AppTextSizes.caption,
+                              fontFamily: kMonoFont,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                      ],
                     ),
                     overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                 ),
                 const Spacer(),
                 const SizedBox(width: 4),
-                Text(
-                  '$statusText$elapsed',
-                  style: TextStyle(
-                    fontSize: AppTextSizes.caption,
-                    color: running
-                        ? AppColors.accent
-                        : theme.colorScheme.onSurfaceVariant,
+                if (elapsed != null && !running)
+                  Text(
+                    elapsed,
+                    style: TextStyle(
+                      fontSize: AppTextSizes.monoXs,
+                      fontFamily: kMonoFont,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
-                ),
                 const SizedBox(width: 4),
                 statusIcon,
                 if (hasDetail) ...[
                   const SizedBox(width: 2),
                   AnimatedRotation(
                     turns: expanded ? 0.25 : 0,
-                    duration: const Duration(milliseconds: 150),
+                    duration: AppDur.fast,
+                    curve: AppEase.inOut,
                     child: Icon(
                       Icons.chevron_right,
                       size: 13,
@@ -5974,12 +6263,215 @@ class _ToolActivityRow extends StatelessWidget {
   }
 }
 
-/// 思考过程折叠块
+/// 工作时长格式化 (对齐 ZCode 桌面端 Nvt):
+/// 秒级取整 (最少 1s), 天/时/分/秒最多保留两个单位。
+/// 62000ms → "1 分 2 秒"; 3900000ms → "1 时 5 分"; 45000 → "45 秒"。
+String _formatWorkDuration(int ms) {
+  final s = (ms / 1000).round();
+  if (s < 1) return '1 秒';
+  final d = s ~/ 86400;
+  final h = (s % 86400) ~/ 3600;
+  final m = (s % 3600) ~/ 60;
+  final sec = s % 60;
+  final units = <String>[];
+  if (d > 0) units.add('$d 天');
+  if (h > 0) units.add('$h 时');
+  if (m > 0) units.add('$m 分');
+  if (sec > 0 || units.isEmpty) units.add('$sec 秒');
+  return units.take(2).join(' ');
+}
+
+/// 轮次工作状态行 (ZCode 同款, 桌面端 zvt 组件):
+/// 运行中 = "工作中 X 分 Y 秒" (实时跳动); 完成 = "已工作 X 分 Y 秒";
+/// 无时长数据 = "已处理"。底部发丝线, 可作为折叠历史的开关头。
+class _TurnStatusLine extends StatefulWidget {
+  final bool running;
+  final int? workedMs;
+  final DateTime? startedAt;
+  final ThemeData theme;
+  /// 折叠历史的展开态 (显示旋转箭头); null = 不作为折叠头
+  final bool? expanded;
+  final VoidCallback? onToggle;
+
+  const _TurnStatusLine({
+    required this.running,
+    required this.workedMs,
+    required this.startedAt,
+    required this.theme,
+    this.expanded,
+    this.onToggle,
+  });
+
+  @override
+  State<_TurnStatusLine> createState() => _TurnStatusLineState();
+}
+
+class _TurnStatusLineState extends State<_TurnStatusLine> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncTicker();
+  }
+
+  @override
+  void didUpdateWidget(covariant _TurnStatusLine oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.running != widget.running) _syncTicker();
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  /// 运行中且有起点 → 每秒跳动刷新 "工作中 X"
+  void _syncTicker() {
+    _ticker?.cancel();
+    _ticker = null;
+    if (widget.running && widget.startedAt != null) {
+      _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = widget.theme;
+    final ms = widget.workedMs ??
+        (widget.running && widget.startedAt != null
+            ? DateTime.now().difference(widget.startedAt!).inMilliseconds
+            : null);
+    final duration = ms != null ? _formatWorkDuration(ms) : '';
+    final label = widget.running
+        ? (duration.isEmpty ? '工作中' : '工作中 $duration')
+        : (duration.isEmpty ? '已处理' : '已工作 $duration');
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            width: 1,
+            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+          ),
+        ),
+      ),
+      child: InkWell(
+        onTap: widget.onToggle,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          child: Row(
+            children: [
+              Flexible(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: AppTextSizes.label,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              if (widget.expanded != null) ...[
+                const SizedBox(width: 4),
+                AnimatedRotation(
+                  turns: widget.expanded! ? 0.25 : 0,
+                  duration: AppDur.fast,
+                  curve: AppEase.inOut,
+                  child: Icon(
+                    Icons.chevron_right,
+                    size: 14,
+                    color: theme.colorScheme.onSurfaceVariant.withValues(
+                      alpha: 0.7,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 轮次历史折叠区 (ZCode "自动隐藏" 机制):
+/// 运行中默认展开实时滚动; 完成后自动折叠到状态行后面, 点按可再展开。
+/// 手动开关在运行态翻转时重置 (对齐 ZCode defaultOpen 同步)。
+class _WorkHistory extends StatefulWidget {
+  final DisplayMessage message;
+  final ThemeData theme;
+  final bool defaultOpen;
+  final Widget child;
+
+  const _WorkHistory({
+    required this.message,
+    required this.theme,
+    required this.defaultOpen,
+    required this.child,
+  });
+
+  @override
+  State<_WorkHistory> createState() => _WorkHistoryState();
+}
+
+class _WorkHistoryState extends State<_WorkHistory> {
+  /// null = 跟随 defaultOpen
+  bool? _userOpen;
+
+  @override
+  void didUpdateWidget(covariant _WorkHistory oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.defaultOpen != widget.defaultOpen) {
+      _userOpen = null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final open = _userOpen ?? widget.defaultOpen;
+    final tappable = !widget.defaultOpen;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _TurnStatusLine(
+            running: widget.message.isStreaming,
+            workedMs: widget.message.workedMs,
+            startedAt: widget.message.turnStartedAt,
+            theme: widget.theme,
+            expanded: tappable ? open : null,
+            onToggle: tappable ? () => setState(() => _userOpen = !open) : null,
+          ),
+          AnimatedSize(
+            duration: AppDur.base,
+            curve: AppEase.inOut,
+            child: open ? widget.child : const SizedBox.shrink(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 思考过程折叠块 (ZCode 风格: 可带耗时, 左侧发丝线, 弱化墨色)
 class _ThoughtBlock extends StatefulWidget {
   final String thought;
   final ThemeData theme;
+  /// 思考耗时 (wire: reasoning.durationMs)
+  final int? durationMs;
 
-  const _ThoughtBlock({required this.thought, required this.theme});
+  const _ThoughtBlock({
+    required this.thought,
+    required this.theme,
+    this.durationMs,
+  });
 
   @override
   State<_ThoughtBlock> createState() => _ThoughtBlockState();
@@ -5991,45 +6483,67 @@ class _ThoughtBlockState extends State<_ThoughtBlock>
 
   @override
   Widget build(BuildContext context) {
+    final theme = widget.theme;
+    final duration = widget.durationMs != null
+        ? ' · ${_formatWorkDuration(widget.durationMs!)}'
+        : '';
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           InkWell(
             onTap: () => setState(() => _expanded = !_expanded),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  _expanded ? Icons.expand_less : Icons.expand_more,
-                  size: 16,
-                  color: widget.theme.colorScheme.onSurface,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  '思考过程',
-                  style: TextStyle(
-                    fontSize: AppTextSizes.label,
-                    color: widget.theme.colorScheme.onSurface,
-                    fontStyle: FontStyle.italic,
+            borderRadius: BorderRadius.circular(AppRadius.xs),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AnimatedRotation(
+                    turns: _expanded ? 0.25 : 0,
+                    duration: AppDur.fast,
+                    curve: AppEase.inOut,
+                    child: Icon(
+                      Icons.chevron_right,
+                      size: 14,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
-                ),
-              ],
+                  const SizedBox(width: 4),
+                  Text(
+                    '思考过程$duration',
+                    style: TextStyle(
+                      fontSize: AppTextSizes.label,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           AnimatedSize(
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeInOut,
+            duration: AppDur.base,
+            curve: AppEase.inOut,
             child: _expanded
-                ? Padding(
-                    padding: const EdgeInsets.only(top: 4, left: 8),
+                ? Container(
+                    margin: const EdgeInsets.only(top: AppSpacing.xs),
+                    padding: const EdgeInsets.only(left: AppSpacing.sm + 2),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        left: BorderSide(
+                          width: 2,
+                          color: theme.colorScheme.outlineVariant
+                              .withValues(alpha: 0.5),
+                        ),
+                      ),
+                    ),
                     child: Text(
                       widget.thought,
                       style: TextStyle(
                         fontSize: AppTextSizes.label,
-                        color: widget.theme.colorScheme.onSurface,
-                        height: 1.4,
+                        color: theme.colorScheme.onSurfaceVariant,
+                        height: 1.5,
                       ),
                     ),
                   )
@@ -6312,6 +6826,9 @@ class _HistoryDrawer extends ConsumerStatefulWidget {
   /// 打开搜索页 (跳转全屏搜索, 合并原顶栏搜索)
   final VoidCallback onOpenSearch;
 
+  /// 新建技能 (跳会话预填 skill-creator 引导)
+  final VoidCallback? onNewSkill;
+
   const _HistoryDrawer({
     required this.workspacePath,
     required this.currentTaskId,
@@ -6319,6 +6836,7 @@ class _HistoryDrawer extends ConsumerStatefulWidget {
     required this.onNewChat,
     required this.onSwitchWorkspace,
     required this.onOpenSearch,
+    this.onNewSkill,
   });
 
   @override
@@ -6648,8 +7166,9 @@ class _HistoryDrawerState extends ConsumerState<_HistoryDrawer> {
             Icon(
               icon,
               size: 19,
-              color:
-                  accent ? AppColors.accent : theme.colorScheme.onSurfaceVariant,
+              color: accent
+                  ? AppColors.accent
+                  : theme.colorScheme.onSurfaceVariant,
             ),
             const SizedBox(width: AppSpacing.md),
             Text(
@@ -6748,9 +7267,10 @@ class _HistoryDrawerState extends ConsumerState<_HistoryDrawer> {
               label: '技能',
               onTap: () {
                 Navigator.pop(context);
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const SkillsScreen()),
-                );
+                Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) =>
+                      SkillsPage(onNewSkill: widget.onNewSkill),
+                ));
               },
             ),
             // 对话历史区标题 + 归档切换
@@ -6773,8 +7293,7 @@ class _HistoryDrawerState extends ConsumerState<_HistoryDrawer> {
                   ),
                   const Spacer(),
                   GestureDetector(
-                    onTap: () =>
-                        setState(() => _showArchived = !_showArchived),
+                    onTap: () => setState(() => _showArchived = !_showArchived),
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: AppSpacing.sm,
@@ -6925,9 +7444,11 @@ class _HistoryDrawerState extends ConsumerState<_HistoryDrawer> {
   void _openProjectSwitcher(BuildContext context, List<Workspace> workspaces) {
     final theme = Theme.of(context);
     // 默认工作区固定最上, 其余按名称排序
-    final sorted = [...workspaces]..sort((a, b) {
-        final d = (_isDefaultWorkspace(b) ? 1 : 0)
-            .compareTo(_isDefaultWorkspace(a) ? 1 : 0);
+    final sorted = [...workspaces]
+      ..sort((a, b) {
+        final d = (_isDefaultWorkspace(b) ? 1 : 0).compareTo(
+          _isDefaultWorkspace(a) ? 1 : 0,
+        );
         if (d != 0) return d;
         return a.name.compareTo(b.name);
       });
@@ -6951,7 +7472,11 @@ class _HistoryDrawerState extends ConsumerState<_HistoryDrawer> {
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.sm),
+                  AppSpacing.lg,
+                  0,
+                  AppSpacing.lg,
+                  AppSpacing.sm,
+                ),
                 child: Text('切换项目', style: theme.textTheme.titleMedium),
               ),
               for (final w in sorted)

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../data/models/saved_connection.dart';
 import '../../data/models/zcode_session.dart';
 import '../logging/app_logger.dart';
 import '../services/glm_quota_service.dart';
@@ -14,6 +15,7 @@ class SecureStorageService {
   static const _keySession = 'zcode_session';
   static const _keyDeviceId = 'zcode_device_id';
   static const _keyGlmCredential = 'glm_credential';
+  static const _keyConnections = 'zcode_connections';
 
   /// GLM 凭据默认 base URL (国内 bigmodel.cn)
   static const defaultGlmBaseUrl = 'https://open.bigmodel.cn/api/paas/v4';
@@ -46,6 +48,32 @@ class SecureStorageService {
   /// 清除会话
   Future<void> clearSession() async {
     await _secure.delete(key: _keySession);
+  }
+
+  // ── 多远程连接 ──────────────────────────────────────────
+
+  /// 读取已保存的连接列表 (按 lastUsedAt 倒序)
+  Future<List<SavedConnection>> getConnections() async {
+    final json = await _secure.read(key: _keyConnections);
+    if (json == null) return [];
+    try {
+      final list = jsonDecode(json) as List;
+      final conns = list
+          .whereType<Map>()
+          .map((m) => SavedConnection.fromJson(Map<String, dynamic>.from(m)))
+          .toList();
+      conns.sort((a, b) => b.lastUsedAt.compareTo(a.lastUsedAt));
+      return conns;
+    } catch (e) {
+      appLog.w('[Storage] 连接列表解析失败: $e');
+      return [];
+    }
+  }
+
+  /// 保存连接列表
+  Future<void> saveConnections(List<SavedConnection> connections) async {
+    final json = jsonEncode([for (final c in connections) c.toJson()]);
+    await _secure.write(key: _keyConnections, value: json);
   }
 
   /// 获取或生成设备 ID

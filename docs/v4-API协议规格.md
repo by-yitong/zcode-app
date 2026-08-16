@@ -24,6 +24,10 @@
 
 **Channel 变化**: 整个对话协议从 `zcode-task`/`zcode-session` 迁移到 **`zcode-agent`** channel。
 **注意**: `getTaskSnapshotWithEtag` 仍在 **`zcode-task`** channel 上。
+⚠️ 2026-08-16 网页端实测: 网页加载历史**不走** `getTaskSnapshotWithEtag` (它走 session 冷恢复,
+需要 provider registry 就绪, 桌面端刚重启/会话空闲时会报「当前没有可用的模型供应商和模型」)。
+网页主路径 = `subscribeConversationV4` (尾部窗口) + `conversationRowsRangeV4` (行日志直读+分页)。
+app 已切换到同一模式, getTaskSnapshotWithEtag 仅作 legacy 会话兜底。
 
 ## v4 连接握手 (3步)
 
@@ -94,13 +98,29 @@ args: [{
 ```
 
 #### subscribeSessionsIndexV4
-订阅工作区会话列表变更。
+订阅工作区会话列表变更 (2026-08-16 网页端抓包实测)。
 ```typescript
 args: [{
   workspacePath, workspaceIdentity?,
-  base?: { logEpoch, seq },
-  visibility?: "foreground" | "background"
+  runtimePolicy?: "existing-only"   // 网页端用 existing-only, agent 未运行时不拉起
 }]
+→ { ack: { subscriptionId: "six-...", mode: "snapshot", logEpoch } }
+```
+帧 (onDynamicConversationFrame 同机制, topic 不同):
+```typescript
+topic: "sessions-index/<workspaceIdentity>"
+payload.kind == "snapshot" → { snapshot: { workspaceId, logEpoch, sessions: [{
+  sessionId, workspaceId, title, titleSource,
+  phase: "running"|"completedSuccess"|...,
+  sessionEnded, hasBackgroundWork,
+  lastActivityAt, lastAssistantPreview,   // 列表预览文本
+  lastTerminalQuery: { queryId, historyRoundCount },
+  createdAt
+}] } }
+payload.kind == "deltas" → { deltas: [
+  { op: "session.upserted", session: {...同上} },
+  { op: "session.removed", sessionId }
+] }
 ```
 
 #### subscribeWorkspaceConfigV4
@@ -229,20 +249,32 @@ args: [{ workspacePath, workspaceIdentity?, commands: [{sessionId, commandId}[]]
 ```
 
 #### conversationRowsRangeV4
-分页加载历史消息 (rows)。
+分页加载历史消息 (rows)。**★ 2026-08-16 网页端实测: 网页加载历史会话的主路径就是它
+(不是 getTaskSnapshotWithEtag)** — 纯行日志读取, 不触发会话冷恢复、不依赖 provider
+registry 就绪; 首屏 limit=200, 上滑翻页 limit=60~100 逐段向前。
 ```typescript
 args: [{
   workspacePath, workspaceIdentity?,
   sessionId,
-  beforeRowId?: number,  // 向上翻页
+  beforeRowId?: number,  // 向上翻页 (取该 rowId 之前的更早行); 空 = 尾部
   limit: number
 }]
+→ {
+  rows: [...],            // rowId 升序的行数组
+  atSeq: number,          // 读取时水位
+  atLogEpoch: string,     // 陈旧读防护: ≠ 当前 epoch 时整批丢弃
+  hasMore: boolean        // beforeRowId 方向是否还有更早行
+}
 ```
+行 kind: turnHeader (回合头, 含 state/activeMs/fileChanges) / userInput /
+assistantText / reasoning / toolCall / subagent / timelineMarker。
+注意 workspaceIdentity 必传 (远程工作区缺它 → 按 path 解析 → 「没有可用的模型供应商」类错误)。
 
 #### conversationPlansV4
 获取会话计划。
 ```typescript
 args: [{ workspacePath, workspaceIdentity?, sessionId }]
+→ { plans: [...], atSeq, atLogEpoch }
 ```
 
 #### conversationFileChangesV4
@@ -493,13 +525,36 @@ Row 是 v4 的核心显示单元，替代了 v3 的 `messages[]`。每行有 `ki
 
 | kind | 说明 | 特有字段 |
 |------|------|---------|
-| `turnHeader` | 轮次标题 | origin, executionKind, state |
+| `turnHeader` | 轮次标题 | origin, executionKind, state, startedAt, endedAt?, activeMs?, workSegments?, fileChanges? ★ |
 | `userInput` | 用户消息 | text, origin, originMeta |
 | `assistantText` | AI 正文 | text, state, model, feedback |
 | `reasoning` | AI 思考 | text, state, durationMs |
 | `toolCall` | 工具调用 | toolCallId, toolName, status, inputText, input, output, error |
 | `subagent` | 子代理 | parentToolCallId, subagentType, status, summaryText, childSessionId |
 | `timelineMarker` | 时间线标记 | sourceCommandId, lane, marker |
+
+> ★ turnHeader 完整字段 (桌面端 3.7.7 asar Zod schema 逆向确认, 2026-08-16):
+> ```typescript
+> {
+>   kind: "turnHeader", rowId, turnId, revision,
+>   createdAt, createdAtSeq,
+>   origin: "userInput" | "backgroundResult" | "goalContinuation" | "editRerun",
+>   executionKind?: "agent" | "controlOnly",
+>   sourceCommandId?: string,
+>   historyRoundCount?: number,
+>   state: "running" | "completedSuccess" | "completedInterrupted" | "failed",
+>   startedAt: number,                    // 轮次开始 (必有)
+>   endedAt?: number,                     // 轮次结束 (完成后)
+>   activeMs?: number,                    // 服务器算好的活跃时长 (最优先)
+>   workSegments?: [{segmentId, triggerEntityId?, startedAt, endedAt?, activeMs?}],
+>   fileChanges?: { additions: number, deletions: number, files: number,
+>                   state?: "active" | "reverted" },
+> }
+> ```
+> **"已工作 X 分 Y 秒"的数据源**就是 turnHeader (桌面端 hyt/byt 函数):
+> activeMs 优先 → endedAt−startedAt → 运行中 now−startedAt 实时跳动。
+> 格式化 (Nvt): 秒取整最少 1s, 天/时/分/秒最多两个单位。
+> **"N 个文件已更改 +N −M"** 用 fileChanges, 不必从工具 result 里刮。
 
 ### Row 详细结构
 
@@ -831,13 +886,6 @@ Workspace-Config Delta:
 | `info` | — | 系统信息 |
 | `listIntegratedTerminalShells` | — | 终端 shell 列表 |
 
-### setting channel
-| 方法 | 参数 | 说明 |
-|------|------|------|
-| `get` | `(key: string)` | 获取设置 |
-| `update` | `({...settings})` | 更新设置 |
-| `updateDataBaseDir` | `(path)` | 更新数据目录 |
-
 ### credential channel
 | 方法 | 参数 | 说明 |
 |------|------|------|
@@ -857,30 +905,87 @@ Workspace-Config Delta:
 |------|------|------|
 | `list` | `{workspacePath, workspaceIdentity?, provider}` | 技能列表 |
 | `setEnabled` | `{workspacePath, skillId, enabled, scope?, provider, workspaceIdentity?}` | 启用/禁用 |
+| `deleteSkill` | `{workspacePath, skillId, workspaceIdentity?}` | 删除技能 (plugin scope 报错"请卸载对应插件") |
+| `copyToCommon` | `{workspacePath, skillId, workspaceIdentity?}` | 复制到通用目录 (~/.zcode/skills 或工作区) |
+| `removeFromCommon` | `{workspacePath, skillId, workspaceIdentity?}` | 从通用目录移除 |
+
+### skill-sync channel (3.7.7 asar 确认)
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `listLocalUserSkillCandidates` | — | `{candidates:[{id,name,directoryName,description,path,sizeBytes}], maxArchiveBytes}` 扫描 ~/.zcode/skills + ~/.agents/skills |
+| `listRemoteUserSkillStatuses` | `{directoryNames, skills?}` | `{statuses:[{directoryName, exists, path}]}` |
+| `exportSkillsArchive` | `{skillIds}` | `{archive(base64 tar.gz), archiveBytes, skills}` |
+| `importSkillsArchive` | `{archive, overwrite?}` | 解压导入到 ~/.zcode/skills (不支持覆盖) |
+| `checkRemoteUserSkillWriteAccess` | — | `{ok, path, error?}` |
+
+> 网页端"新建技能"不走 RPC —— 它创建一个 skill-creator 会话引导用户写 SKILL.md。
+
+### mcp-sync channel (3.7.7 asar 确认)
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `loadMcpFromUserDirectory` | `{workspacePath}` | `{servers:[{source:"zcodeagentmcp", scope:"user"|"workspace", name, config, enabled, projectPath?, location, file}]}` (workspace 优先) |
+| `saveMcpToUserDirectory` | `{action, name, ...}` | action=`set-enabled`{enabled, projectPath?} / `upsert`{config, projectPath?} / 其它=删除; projectPath 存在→workspace 作用域 |
+| `listWorkspaceMcpServerStatuses` | `{workspacePath, workspaceIdentity?, mcpServers?, mode?}` | 每服务器运行状态 (connected/toolCount/error), 代理到 zcode-agent |
+| `listLocalUserMcpCandidates` | — | `{candidates, localHomeDir}` |
+| `listRemoteUserMcpStatuses` | `{names}` | `{remoteHomeDir, statuses}` |
+| `exportMcpServers` | `{serverIds}` | `{localHomeDir, servers}` |
+| `importMcpServers` | `{archive, overwrite?}` | 导入 |
+| `checkRemoteUserMcpWriteAccess` | — | `{ok, path, error?}` |
 
 ### plugins channel
 | 方法 | 参数 | 说明 |
 |------|------|------|
 | `setPluginEnabled` | `{workspacePath, pluginId, enabled, workspaceIdentity?}` | 启用/禁用插件 |
 
-### subagents channel
+### subagents channel (3.7.7 asar 确认)
 | 方法 | 参数 | 说明 |
 |------|------|------|
-| `createAgent` | `{provider, config}` | 创建 agent |
-| `updateAgent` | `{provider, agentId, config, oldFilePath}` | 更新 agent |
-| `deleteAgent` | `{agentId, filePath}` | 删除 agent |
+| `list` | `{workspacePath, workspaceIdentity?, mode?}` | mode: `allRuntimeScopes`(默认)/`settingsUserOnly`; → `{agents, userAgents, pluginAgents, capability, diagnostics}` |
+| `createAgent` | `{provider, config}` | config: `{name(3-50,[a-zA-Z0-9-]), description, systemPrompt, color?, model?, thoughtLevel?, tools?, disallowedTools?, skills?, permissionMode?, maxTurns?, background?, injectAgentsMd?, mcpServers?}` → `{agent}` (写 `<name小写>.md`) |
+| `updateAgent` | `{provider, agentId, config, oldFilePath}` | 同上; 重命名时删旧文件 |
+| `deleteAgent` | `{agentId, filePath}` | 删除 agent 文件 |
 | `setEnabled` | `{agentId, enabled}` | 启用/禁用 |
+| `setBuiltInModelOverride` | `{agentName, model, thoughtLevel?}` | 内置 agent 的模型/思考级别覆盖 (model=null 清除) |
+| `getPrimaryUserAgentsDirectory` | `{workspacePath?}` | `{path}` |
 
-### commands channel
+> AgentEntry: `{id,name,description,systemPrompt,color,model,thoughtLevel,tools,disallowedTools,skills,permissionMode,maxTurns,background,injectAgentsMd,mcpServers,path,scope,source,enabled,readOnly}` (scope=built-in 时 readOnly=true)
+
+### commands channel (3.7.7 asar 确认)
 | 方法 | 参数 | 说明 |
 |------|------|------|
-| `getPrimaryUserCommandsDirectory` | — | 用户命令目录 |
+| `list` | `{workspacePath?, workspaceIdentity?, agentSource?}` | → `{commands, userCommands, pluginCommands, capability}` |
+| `writeCommandFile` | `{agentSource?, storageLevel, workspacePath?, config}` | 新建命令; config: `{name, description?, argumentHint?, content/prompt}` |
+| `updateCommandFile` | `{agentSource?, storageLevel, workspacePath?, config, oldFilePath}` | 更新命令 |
+| `deleteCommandFile` | `{filePath}` | 删除命令文件 |
+| `setCommandEnabled` | `{filePath, enabled}` | 启用/禁用 |
+| `getPrimaryUserCommandsDirectory` | — | `{path}` 用户命令目录 |
 
-### hooks channel
+> storageLevel: `user` | `workspace`(需 workspacePath)。
+
+### hooks channel (3.7.7 asar 确认)
 | 方法 | 参数 | 说明 |
 |------|------|------|
-| `loadHooks` | `{workspacePath, workspaceIdentity?}` | 加载 hooks |
-| `saveHooks` | `{workspacePath, hooks, workspaceIdentity?}` | 保存 hooks |
+| `loadHooks` | `{workspacePath, workspaceIdentity?}` | → `{hooks:[{id,event,matcher?,type:"command"|"process",command,args?,async?,shell?,statusMessage?,timeout?,enabled,custom?,location:{source,scope}}], hooksEnabled}` (扫 zcode/agents/claude × user+project) |
+| `saveHooks` | `{workspacePath, hooks}` | 按 location.scope 拆分写入 user/project 配置; 序列化为 `{enabled, events:{[event]:[{matcher?, hooks:[...]}]}}` |
+
+### settings-sync channel (3.7.7 asar 确认)
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `detect` | `{workspacePath?, workspaceIdentity?, categories, intent}` | 扫描外部 Agent (claudeCode/codexCli/openCode/openClaw/augment/continue/goose/qwenCode/qode/windsurf/trae/kiroCli/roo/codeBuddy) 的 skills/commands/plugins/mcpServers → `{agents:[{categories:[...]}]}` |
+| `importSelected` | `{workspacePath?, workspaceIdentity?, selections:[{category, agent, sourceScope, targetScope, importMode, skillPaths|commandPaths|pluginPaths|mcpServerPaths}]}` | → `{successCount, skippedCount, failedCount, taskResults}` (importMode: symlink/copy) |
+| `getFirstRunPromptState` / `markFirstRunPromptHandled` | — | 首次提示 |
+
+### zcode-agent 插件方法 (3.7.7 asar 确认参数)
+`getPluginsOverview{workspacePath}` · `listPlugins{workspacePath}` · `getPluginReferenceCatalog{workspacePath, sessionId?}` · `addPluginMarketplace{workspacePath, source, dryRun?, operationId?}` · `removePluginMarketplace{workspacePath, marketplace}` · `updatePluginMarketplace{workspacePath, marketplace?}` · `installPlugin{workspacePath, pluginName, marketplace, scope?, dryRun?, operationId?}` · `cancelPluginOperation{operationId}` · `uninstallPlugin{workspacePath, pluginId?|pluginName?, marketplace?, removeCache?}` · `restoreBuiltinPlugin` · `describePlugin` · `validatePlugin` · `configurePlugin{pluginId, options}` · `listMcpServerStatuses{workspacePath, mcpServers?, mode?}`
+
+### setting channel
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `get` | `(key: string)` | 获取设置 (无参=全部) |
+| `update` | `({...settings})` | 更新设置 (locale, zcodeInteractionBehavior, messageStreamShowReasoning, messageStreamShowTodos, taskAutoArchiveEnabled, taskAutoArchiveOlderThanDays, terminalInheritSystemProfile 等) |
+| `updateDataBaseDir` | `(path)` | 更新数据目录 |
+
+> 补充: 新版网页端 /remote/v4 连接 URL 必须带 `t=<毫秒时间戳>` 参数, 否则客户端校验直接报 "Missing or invalid Web remote control relay parameters"。
 
 ### usage-stats channel
 | 方法 | 参数 | 说明 |

@@ -199,8 +199,12 @@ class AppTheme {
       ),
 
       // ── SnackBar ──
+      // 正文/按钮色必须显式指定: M3 默认用 inverseOnSurface (亮色),
+      // 覆写深色背景后文字会不可读
       snackBarTheme: SnackBarThemeData(
         backgroundColor: surfaceHigh,
+        contentTextStyle: TextStyle(color: ink, fontSize: 14),
+        actionTextColor: AppColors.accent,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.md),

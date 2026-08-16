@@ -8,10 +8,12 @@ import '../../../core/services/glm_quota_service.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../../../data/models/glm_quota.dart';
 import '../../../providers/app_providers.dart';
+import '../../../providers/connections_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/widgets/app_section_header.dart';
 import '../../../shared/widgets/app_tile_group.dart';
-import 'agent_settings_screen.dart';
+import '../../agent/screens/cap_pages.dart';
+import 'connections_screen.dart';
 import 'remote_settings_screen.dart';
 
 /// 设置页
@@ -138,20 +140,65 @@ class SettingsScreen extends ConsumerWidget {
           const AppSectionHeader(title: 'GLM 用量'),
           _GlmQuotaCard(),
 
-          // 模型与模式
-          const AppSectionHeader(title: '模型与模式'),
+          // Agent 设置 (六项独立页面)
+          const AppSectionHeader(title: 'Agent 能力'),
           AppTileGroup(tiles: [
             AppTile(
-              icon: Icons.tune_rounded,
-              title: 'Agent 设置',
-              subtitle: '技能 / 子代理 / Hooks / 插件 / 命令',
+              icon: Icons.auto_awesome_outlined,
+              title: '技能',
+              subtitle: '技能启停 / 详情 / 新建 / 外部导入',
               showChevron: true,
-              onTap: () => _openAgentSettings(context, ref),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => SkillsPage(onNewSkill: () {
+                  Navigator.of(context)
+                      .popUntil((r) => r.isFirst || r is! MaterialPageRoute);
+                }),
+              )),
             ),
-            const AppTile(
-              icon: Icons.swap_horiz_rounded,
-              title: '在对话内切换',
-              subtitle: '打开任意工作区对话, 输入栏可切换模型 / 确认·自动模式',
+            AppTile(
+              icon: Icons.smart_toy_outlined,
+              title: '子智能体',
+              subtitle: '模型 / 思考级别 / 提示词 / 工具',
+              showChevron: true,
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => const SubagentsPage(),
+              )),
+            ),
+            AppTile(
+              icon: Icons.dns_outlined,
+              title: 'MCP',
+              subtitle: '服务器管理 / 状态 / 授权',
+              showChevron: true,
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => const McpPage(),
+              )),
+            ),
+            AppTile(
+              icon: Icons.terminal_rounded,
+              title: '命令',
+              subtitle: '斜杠命令的新建与编辑',
+              showChevron: true,
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => const CommandsPage(),
+              )),
+            ),
+            AppTile(
+              icon: Icons.webhook_outlined,
+              title: '钩子',
+              subtitle: '事件触发的自定义命令',
+              showChevron: true,
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => const HooksPage(),
+              )),
+            ),
+            AppTile(
+              icon: Icons.extension_outlined,
+              title: '插件',
+              subtitle: '已装插件与市场安装',
+              showChevron: true,
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => const PluginsPage(),
+              )),
             ),
           ]),
 
@@ -212,36 +259,37 @@ class SettingsScreen extends ConsumerWidget {
 
           const SizedBox(height: AppSpacing.xl),
 
-          // 登出 — danger 描边, 克制
-          Padding(
-            padding: EdgeInsets.zero,
-            child: OutlinedButton.icon(
-              onPressed: () => _logout(context, ref),
-              icon: const Icon(Icons.logout_rounded, color: AppColors.danger),
-              label: const Text('断开连接',
-                  style: TextStyle(color: AppColors.danger)),
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: AppColors.dangerContainer),
-                padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+          // 连接管理 — 远程连接 + 断开连接 融合为一组
+          AppTileGroup(tiles: [
+            AppTile(
+              icon: Icons.devices_rounded,
+              title: '远程连接',
+              subtitle: _connectionSubtitle(ref),
+              showChevron: true,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const ConnectionsScreen()),
               ),
             ),
-          ),
+            AppTile(
+              icon: Icons.power_settings_new_rounded,
+              iconTint: AppColors.danger,
+              title: '断开连接',
+              subtitle: '仅断开当前会话, 已保存的设备不受影响',
+              showChevron: true,
+              onTap: () => _logout(context, ref),
+            ),
+          ]),
           const SizedBox(height: AppSpacing.xxl),
         ],
       ),
     );
   }
 
-  /// 打开 Agent 设置 (作用于当前选中工作区; 与聊天页原右上角入口一致)
-  void _openAgentSettings(BuildContext context, WidgetRef ref) {
-    final list = ref.read(workspaceListProvider).valueOrNull;
-    final ws = ref.read(selectedWorkspaceProvider) ??
-        (list != null && list.isNotEmpty ? list.first : null);
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => AgentSettingsScreen(workspacePath: ws?.workspaceKey ?? ''),
-      ),
-    );
+  /// 远程连接副标题 (已保存设备数)
+  String _connectionSubtitle(WidgetRef ref) {
+    final conns = ref.watch(connectionsProvider).valueOrNull;
+    final n = conns?.length ?? 0;
+    return n <= 1 ? '管理与切换已保存的设备' : '已保存 $n 台设备, 点击切换';
   }
 
   Future<void> _logout(BuildContext context, WidgetRef ref) async {
@@ -249,7 +297,7 @@ class SettingsScreen extends ConsumerWidget {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('断开连接'),
-        content: const Text('确定要断开与 ZCode 的连接吗?需要重新登录。'),
+        content: const Text('确定断开与 ZCode 的连接?已保存的设备不受影响, 可随时重连。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),

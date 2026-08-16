@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ZCode WSS 抓包日志</title>
+<link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+<header>
+  <div class="brand">⇄ WSS 抓包</div>
+  <div id="caps" class="caps"></div>
+  <select id="dirSel" title="方向">
+    <option value="all">方向: 全部</option>
+    <option value="send">↑ 发送</option>
+    <option value="recv">↓ 接收</option>
+  </select>
+  <div id="catChips" class="chips"></div>
+  <div class="searchWrap">
+    <input id="searchInput" type="text" placeholder="搜索 channel / method / 内容…">
+    <label class="mini" title="按正则表达式搜索"><input type="checkbox" id="regexChk">正则</label>
+  </div>
+  <label class="mini" title="显示未收齐的分片条目"><input type="checkbox" id="fragChk">未完成分片</label>
+  <label class="mini"><input type="checkbox" id="scrollChk" checked>自动滚动</label>
+  <button id="pauseBtn" class="tool">⏸ 暂停</button>
+  <button id="exportBtn" class="tool">导出 NDJSON</button>
+  <button id="clearBtn" class="tool warn">清空</button>
+</header>
+
+<main>
+  <section id="listPane">
+    <div id="listNote"></div>
+    <div id="listWrap">
+      <div id="list"></div>
+    </div>
+  </section>
+  <section id="detailPane">
+    <div id="detail"></div>
+  </section>
+</main>
+
+<footer id="statusBar">连接中…</footer>
+
+<script src="viewer.js"></script>
+</body>
+</html>
