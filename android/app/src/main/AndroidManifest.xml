@@ -3,6 +3,8 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- 相机权限 (扫码) -->
     <uses-permission android:name="android.permission.CAMERA"/>
+    <!-- 应用内更新: 下载 APK 后调系统安装器 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <!-- 前台服务保活 (remoteMessaging 类型: Android 15 对 dataSync 有 6 小时限制,
          消息中继类用 remoteMessaging 无此限制) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
@@ -44,6 +46,17 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- 应用内更新: 通过 FileProvider 暴露下载的 APK 给系统安装器 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"/>
+        </provider>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

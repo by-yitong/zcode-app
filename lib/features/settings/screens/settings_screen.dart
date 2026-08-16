@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/relay/relay_protocol.dart';
 import '../../../core/services/glm_quota_service.dart';
+import '../../../core/services/update_service.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../../../data/models/glm_quota.dart';
 import '../../../providers/app_providers.dart';
@@ -12,6 +13,7 @@ import '../../../providers/connections_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/widgets/app_section_header.dart';
 import '../../../shared/widgets/app_tile_group.dart';
+import '../../../shared/widgets/update_dialog.dart';
 import '../../agent/screens/cap_pages.dart';
 import 'connections_screen.dart';
 import 'remote_settings_screen.dart';
@@ -236,10 +238,20 @@ class SettingsScreen extends ConsumerWidget {
           // 关于
           const AppSectionHeader(title: '关于'),
           AppTileGroup(tiles: [
-            const AppTile(
-              icon: Icons.info_outline_rounded,
-              title: '版本',
-              value: 'v1.0.0',
+            FutureBuilder<String>(
+              future: UpdateService.localVersion(),
+              builder: (_, snap) => AppTile(
+                icon: Icons.info_outline_rounded,
+                title: '版本',
+                value: 'v${snap.data ?? '…'}',
+              ),
+            ),
+            AppTile(
+              icon: Icons.system_update_alt_rounded,
+              title: '检查更新',
+              subtitle: 'GitHub Releases',
+              showChevron: true,
+              onTap: () => _checkUpdate(context),
             ),
             AppTile(
               icon: Icons.code_rounded,
@@ -324,6 +336,28 @@ class SettingsScreen extends ConsumerWidget {
     } catch (_) {
       // 无可处理的应用时静默忽略
     }
+  }
+
+  /// 手动检查更新 (GitHub Releases)
+  Future<void> _checkUpdate(BuildContext context) async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('正在检查更新…'), duration: Duration(seconds: 1)),
+    );
+    final info = await UpdateService.check();
+    if (!context.mounted) return;
+    if (info == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('已是最新版本 v${await UpdateService.localVersion()}'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    await UpdateService.markChecked();
+    if (!context.mounted) return;
+    final dismissed = await showUpdateDialog(context, info);
+    if (dismissed) await UpdateService.dismiss(info.tag);
   }
 
   /// MIT 开源协议弹窗 (完整协议文本)

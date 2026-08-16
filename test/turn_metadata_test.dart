@@ -62,6 +62,42 @@ void main() {
     });
   });
 
+  group('进行中状态判定 (V4 状态兼容)', () {
+    test('inputStreaming / pendingApproval 都算进行中, 过程不收起', () {
+      const streaming = ToolActivity(
+        toolCallId: 'a',
+        toolName: 'Bash',
+        status: 'inputStreaming',
+      );
+      const pending = ToolActivity(
+        toolCallId: 'b',
+        toolName: 'Edit',
+        status: 'pendingApproval',
+      );
+      const done = ToolActivity(
+        toolCallId: 'c',
+        toolName: 'Read',
+        status: 'success',
+      );
+      expect(streaming.isRunning, isTrue,
+          reason: '工具参数流式写入中不应判定为完成');
+      expect(pending.isRunning, isTrue, reason: '等待用户批准不应判定为完成');
+      expect(done.isRunning, isFalse);
+    });
+
+    test('V4ToolCallRow.isRunning 含 pendingApproval', () {
+      final row = V4ToolCallRow.fromJson({
+        'kind': 'toolCall',
+        'rowId': 9,
+        'toolCallId': 'tc',
+        'toolName': 'Write',
+        'status': 'pendingApproval',
+      });
+      expect(row.isRunning, isTrue);
+      expect(row.isPendingApproval, isTrue);
+    });
+  });
+
   group('MessageCache 新字段往返', () {
     test('workedMs/turnStartedAt/fileChanges/parts 序列化无损', () async {
       final tmp = await Directory.systemTemp.createTemp('hive_test_');

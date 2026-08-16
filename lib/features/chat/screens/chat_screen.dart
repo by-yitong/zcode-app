@@ -19,6 +19,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../core/logging/app_logger.dart';
 import '../../../core/relay/relay_events.dart';
 import '../../../core/relay/relay_protocol.dart';
+import '../../../core/services/update_service.dart';
 import '../../../data/models/glm_quota.dart' as glm;
 import '../../../data/models/workspace.dart';
 import '../../../providers/app_providers.dart';
@@ -28,6 +29,7 @@ import '../../../shared/theme/app_router.dart';
 import '../../../shared/theme/chat_markdown_style.dart';
 import '../../../shared/widgets/code_highlight.dart';
 import '../../../shared/widgets/glass_bars.dart';
+import '../../../shared/widgets/update_dialog.dart';
 import '../../../shared/widgets/app_empty_state.dart';
 import '../../../shared/widgets/app_section_header.dart';
 import '../../search/screens/search_screen.dart';
@@ -58,6 +60,27 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   /// 上次按返回键时间 — 「再按一次退出应用」防误触
   DateTime? _lastBackAt;
 
+  /// 本次进程只自动检查一次更新
+  bool _updateChecked = false;
+
+  /// 启动自动检查更新 (24h 节流 + 已忽略版本不再弹)
+  void _maybeCheckUpdate() {
+    if (_updateChecked) return;
+    _updateChecked = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        if (!await UpdateService.shouldAutoCheck()) return;
+        await UpdateService.markChecked();
+        final info = await UpdateService.check();
+        if (info == null) return;
+        if (await UpdateService.isDismissed(info.tag)) return;
+        if (!mounted) return;
+        final dismissed = await showUpdateDialog(context, info);
+        if (dismissed) await UpdateService.dismiss(info.tag);
+      } catch (_) {}
+    });
+  }
+
   /// 打开搜索页 (抽屉已自行关闭)
   void _openSearchFromDrawer() {
     _chatScaffoldKey.currentState?.openSearch();
@@ -75,6 +98,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final title = workspace?.name ?? '对话';
     // 会话列表实时同步 (sessions-index 订阅, 根页面常驻)
     ref.watch(sessionsIndexSyncProvider);
+    // 启动自动检查更新 (一次)
+    _maybeCheckUpdate();
 
     // taskId 可空: null = 新会话 (首发消息时创建)
     final chatRef = ChatRef(
