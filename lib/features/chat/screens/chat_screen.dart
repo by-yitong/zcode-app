@@ -5963,7 +5963,13 @@ class _ToolActivityRow extends StatelessWidget {
         : null;
 
     final Widget statusIcon;
-    if (running) {
+    if (a.status == 'pendingApproval') {
+      statusIcon = const Icon(
+        Icons.hourglass_top,
+        size: 12,
+        color: AppColors.warning,
+      );
+    } else if (running) {
       statusIcon = const SizedBox(
         width: 10,
         height: 10,

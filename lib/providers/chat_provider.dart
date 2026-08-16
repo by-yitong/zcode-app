@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/logging/app_logger.dart';
 import '../core/notifications/notification_service.dart';
+import '../core/services/device_info_service.dart';
 import '../core/relay/relay_client.dart';
 import '../core/relay/relay_events.dart';
 import '../core/relay/relay_protocol.dart';
@@ -69,11 +70,15 @@ class ToolActivity {
     this.result,
   });
 
+  /// 进行中判定 (含 V4 状态): inputStreaming=工具参数流式写入中,
+  /// pendingApproval=等待用户批准 — 两者期间过程都不应收起。
   bool get isRunning =>
       status == 'scheduled' ||
       status == 'started' ||
       status == 'progress' ||
-      status == 'running';
+      status == 'running' ||
+      status == 'inputStreaming' ||
+      status == 'pendingApproval';
 }
 
 /// 计划项状态 (host bundle 实测 2026-06-19, todo.status 值)
@@ -781,6 +786,19 @@ class ChatNotifier extends StateNotifier<ChatState> {
       unawaited(_streamSnapshotDone!.future.then((_) {
         appLog.d('[Chat] _init: 流 snapshot 到达');
       }).catchError((_) {}));
+
+      // 上报当前查看的会话 (桌面端设备信号里显示"正在看的对话")
+      unawaited(() async {
+        try {
+          _relay.sendMobileViewState(
+            activeWorkspaceKey:
+                _ref.workspaceIdentity ?? _ref.workspacePath,
+            activeTaskId: _taskId,
+            deviceInfo: await DeviceInfoService.build(),
+          );
+        } catch (_) {}
+      }());
+
       final histSw = Stopwatch()..start();
       await _loadHistory();
       appLog.i('[Chat] _init: done (总 ${sw.elapsedMilliseconds}ms, 历史 ${histSw.elapsedMilliseconds}ms, messages: ${state.messages.length})');
@@ -856,8 +874,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
           final row = V4Row.fromJson(Map<String, dynamic>.from(r));
           _rows[row.rowId] = row;
         }
-        _rebuildMessagesFromRows();
+        // ★ 先应用快照状态 (control.phase → isResponding), 再重建消息:
+        //   rebuild 依赖 isResponding 判定最后一轮是否仍在工作
         _applySnapshotState(V4ConversationSnapshot.fromJson(snapshot));
+        _rebuildMessagesFromRows();
         appLog.d('[Chat] _loadHistory: ${_rows.length} rows loaded');
       } else if (messagesJson != null && messagesJson.isNotEmpty) {
         // V3 messages 格式 (host 兼容)
@@ -1236,8 +1256,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
       // 记录尾部窗口边界: 窗口之前可能还有更早历史 (rowsRange 翻页用)
       _rowsFirstRowId = snap.rows.firstRowId;
       _rowsTotalCount = snap.rows.totalCount;
-      _rebuildMessagesFromRows();
+      // ★ 先应用快照状态 (control.phase → isResponding), 再重建消息
       _applySnapshotState(snap);
+      _rebuildMessagesFromRows();
       appLog.d('[Chat] V4 snapshot: ${_rows.length} rows '
           '(first=${snap.rows.firstRowId ?? '-'} total=${snap.rows.totalCount})');
     } else if (frame.payload is V4DeltasPayload) {
@@ -1537,6 +1558,21 @@ class ChatNotifier extends StateNotifier<ChatState> {
       }
     }
     flushTurn();
+
+    // ★ control.phase=running (isResponding) 是"任务仍在执行"的权威信号。
+    //   步骤间隙 (上一个工具已完成、下一个行还没到达 / 权限等待 /
+    //   turnHeader 缺失) 时, rows 里可能暂时没有任何 running 状态的行,
+    //   会被误判为"已完成"而把过程收起 — 这里兜底: 会话运行中, 最后一轮
+    //   (尚无权威完成时长 workedMs) 保持"工作中"态。
+    //   已带 workedMs 的完成轮次不受影响 (排队间隙不会误开)。
+    if (state.isResponding && messages.isNotEmpty) {
+      final last = messages.last;
+      if (last.role == 'assistant' &&
+          !last.isStreaming &&
+          last.workedMs == null) {
+        messages[messages.length - 1] = last.copyWith(isStreaming: true);
+      }
+    }
 
     // AI 正在回复但还没有新文本行 → 显示 "思考中" 占位。
     // 压缩进行中除外 — 压缩标记药丸已在展示进度, 再叠"思考中"就重复了。

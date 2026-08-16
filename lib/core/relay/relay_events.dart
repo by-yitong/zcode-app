@@ -730,7 +730,11 @@ class V4ToolCallRow extends V4Row {
       };
 
   bool get isPendingApproval => status == 'pendingApproval';
-  bool get isRunning => status == 'running' || status == 'inputStreaming';
+  /// 等待批准也算"未完成" — 轮次保持工作中态, 过程不收起
+  bool get isRunning =>
+      status == 'running' ||
+      status == 'inputStreaming' ||
+      status == 'pendingApproval';
   bool get isDone =>
       status == 'success' || status == 'error' || status == 'cancelled';
 }

@@ -9,6 +9,7 @@ import '../core/network/zcode_api_client.dart';
 import '../core/notifications/notification_service.dart';
 import '../core/relay/relay_client.dart';
 import '../core/relay/relay_protocol.dart';
+import '../core/services/device_info_service.dart';
 import '../core/services/glm_quota_service.dart';
 import '../core/storage/secure_storage.dart';
 import '../data/models/glm_quota.dart';
@@ -423,6 +424,15 @@ final sessionsIndexSyncProvider = Provider<void>((ref) {
         onError: (Object e) => appLog.w('[SessionsIndex] 帧流错误: $e'),
       );
       appLog.d('[SessionsIndex] 已订阅: ${ws.name} ($subscriptionId)');
+      // 上报设备信息 (桌面端识别连接的手机); 工作区切换/重连都会走到这里
+      try {
+        client.sendMobileViewState(
+          activeWorkspaceKey: ws.workspaceIdentity,
+          deviceInfo: await DeviceInfoService.build(),
+        );
+      } catch (e) {
+        appLog.d('[SessionsIndex] 设备信息上报失败 (可忽略): $e');
+      }
     } catch (e) {
       appLog.w('[SessionsIndex] 订阅失败: $e');
       // 握手竞态等瞬时失败: 2s 后重试一次

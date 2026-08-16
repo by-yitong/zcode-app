@@ -382,6 +382,26 @@ class RelayClient {
     _socket!.add(jsonEncode(msg));
   }
 
+  /// 上报移动端查看状态 + 设备信息 (mobile-view-state-update, 非 RPC 的
+  /// 独立信封)。桌面端用它显示"连接的设备"; [activeTaskId] 打开会话后携带。
+  void sendMobileViewState({
+    required String activeWorkspaceKey,
+    String? activeTaskId,
+    required Map<String, dynamic> deviceInfo,
+  }) {
+    _sendPayload({
+      'zcode_type': 'mobile-view-state-update',
+      'viewState': {
+        'activeWorkspaceKey': activeWorkspaceKey,
+        if (activeTaskId != null) 'activeTaskId': activeTaskId,
+        'updatedAt': _ts(),
+      },
+      'deviceInfo': deviceInfo,
+    });
+    _log('debug',
+        'mobile-view-state-update 已发送 (task=${activeTaskId ?? '-'})');
+  }
+
   /// 发送 data 层消息 (认证后的所有消息都通过 data 包裹)
   void _sendPayload(Map<String, dynamic> payload) {
     _sendRaw({
