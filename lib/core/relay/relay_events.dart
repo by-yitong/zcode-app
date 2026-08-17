@@ -551,6 +551,11 @@ class V4TurnHeaderRow extends V4Row {
   /// 轮次是否仍在运行
   bool get isRunning => state == 'running';
 
+  /// 轮次是否被打断 (用户停止/中断后落定的完成态)。
+  /// 桌面端 (AssistantMessage interrupted prop) 对应场景:
+  /// 打断的轮次无"尾段正文" → 整轮展开, 不折叠过程。
+  bool get isInterrupted => state == 'completedInterrupted';
+
   /// 计算工作时长 (对齐桌面端 hyt: activeMs > endedAt-startedAt)。
   /// 运行中返回 null, 由 UI 用 startedAt 实时跳动。
   int? get workedMs {

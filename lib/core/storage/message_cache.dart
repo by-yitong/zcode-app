@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
 
 import '../../providers/chat_provider.dart';
@@ -18,6 +19,10 @@ class MessageCache {
 
   static Box<String>? _box;
 
+  /// 每个 task 最近一次落盘的稳定消息指纹 (同载荷跳过重编码:
+  /// 流式期间稳定集合不变, 每 2s 的防抖落盘不产生任何新内容)
+  static final Map<String, int> _lastSavedFp = {};
+
   MessageCache._();
 
   /// 初始化缓存 box (应用启动时调用一次)。
@@ -35,24 +40,51 @@ class MessageCache {
     return box;
   }
 
+  /// 稳定 (非流式) 消息集合的轻量指纹: 非流式消息不可变, 变化只可能是
+  /// 追加/删除/流式转完成/完成元数据 (workedMs/interrupted/fileChanges) 补齐。
+  static int _fingerprint(List<DisplayMessage> stable) {
+    var h = stable.length * 31;
+    for (final m in stable) {
+      h = Object.hashAll(<Object?>[
+        h,
+        m.id,
+        m.content.length,
+        m.thought?.length,
+        m.parts.length,
+        m.workedMs,
+        m.interrupted,
+        m.fileChanges?.files,
+        m.activities.length,
+      ]);
+    }
+    return h;
+  }
+
   /// 缓存一个 task 的消息列表 (覆盖式写入)。
+  /// jsonEncode 在 isolate 执行 — 长会话编码是 MB 级字符串,
+  /// 在主 isolate 做会造成周期性卡顿 (每 2s 防抖落盘/退出会话 flush)。
   static Future<void> saveMessages(
     String taskId,
     List<DisplayMessage> messages,
   ) async {
     try {
-      final encoded = jsonEncode(
-        messages
-            .where((m) => !m.isStreaming) // 不缓存正在流式生成的临时消息
-            .map(_toJson)
-            .toList(),
-      );
+      final stable = messages
+          .where((m) => !m.isStreaming)
+          .toList(growable: false);
+      final fp = _fingerprint(stable);
+      if (fp == _lastSavedFp[taskId]) return;
+      final encoded = await compute(_encodeStable, stable);
       await _safeBox.put(taskId, encoded);
+      _lastSavedFp[taskId] = fp;
     } catch (e) {
       // 缓存只是体验优化, 任何失败都不应影响主流程
       appLog.w('[MessageCache] saveMessages 失败: $e');
     }
   }
+
+  /// isolate 入口: 必须是 static/顶层函数
+  static String _encodeStable(List<DisplayMessage> messages) =>
+      jsonEncode(messages.map(_toJson).toList());
 
   /// 读取一个 task 的缓存消息 (无缓存或解析失败返回空列表)。
   static List<DisplayMessage> loadMessages(String taskId) {
@@ -71,6 +103,7 @@ class MessageCache {
 
   /// 清除单个 task 的缓存。
   static Future<void> clearTask(String taskId) async {
+    _lastSavedFp.remove(taskId);
     try {
       await _safeBox.delete(taskId);
     } catch (e) {
@@ -80,6 +113,7 @@ class MessageCache {
 
   /// 清空全部缓存。
   static Future<void> clearAll() async {
+    _lastSavedFp.clear();
     try {
       await _safeBox.clear();
     } catch (e) {
@@ -96,6 +130,7 @@ class MessageCache {
         'content': m.content,
         if (m.thought != null) 'thought': m.thought,
         if (m.model != null) 'model': m.model,
+        if (m.interrupted) 'interrupted': true,
         'createdAt': m.createdAt.millisecondsSinceEpoch,
         if (m.workedMs != null) 'workedMs': m.workedMs,
         if (m.turnStartedAt != null)
@@ -186,6 +221,7 @@ class MessageCache {
       content: json['content'] as String? ?? '',
       thought: json['thought'] as String?,
       model: json['model'] as String?,
+      interrupted: json['interrupted'] == true,
       createdAt: createdAt is int
           ? DateTime.fromMillisecondsSinceEpoch(createdAt)
           : null,

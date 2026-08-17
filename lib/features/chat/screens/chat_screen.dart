@@ -212,6 +212,13 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
   /// 底部权限弹窗是否已为当前 permission 弹出 (防重复弹)
   String? _lastPermissionRequestId;
 
+  // ── 消息项 widget 缓存 ──
+  // provider 每次通知都会重建整个 ListView; 流式期间未变化的历史消息
+  // 若复用同一 widget 实例, Element 会直接跳过该子树 rebuild
+  // (含 Markdown 重解析/图片正则提取, 长会话下的主要卡顿来源)。
+  final Map<String, Widget> _itemWidgetCache = {};
+  final Map<String, String> _itemSigCache = {};
+
   @override
   void initState() {
     super.initState();
@@ -251,11 +258,12 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
     // 用户主动向上翻 (offset 减小) → 立即脱离"贴底"态
     if (current < _lastOffset - 1) {
       if (_isAtBottom) setState(() => _isAtBottom = false);
-      // 滚到顶部附近 → 加载更早历史 (reverse 列表顶部即 offset 0)
+      // 滚到顶部附近 → 加载更早历史 (reverse 列表顶部即 offset 0)。
+      // 位置锚定统一由 didUpdateWidget 的 _anchorAfterGrowth 处理。
       if (current < 120 && !widget.state.isLoadingHistory) {
-        ref
-            .read(chatProvider(widget.chatRef).notifier)
-            .loadOlder();
+        unawaited(
+          ref.read(chatProvider(widget.chatRef).notifier).loadOlder(),
+        );
       }
     } else {
       // 向下滚回底部附近 (距底部 < 60) → 恢复"贴底"态, 重新启用自动跟随
@@ -276,17 +284,31 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
     final newCount = widget.state.messages.length;
     final oldCount = oldWidget.state.messages.length;
 
-    // 历史加载完成 / 消息从空变非空 → 跳到底部
-    // 用 post-frame 包裹: didUpdateWidget 阶段 ListView 可能尚未 attach
-    // (hasClients == false 会导致 jumpTo 静默失败)。
+    // 历史加载完成 / 消息从空变非空:
+    // 贴底用户 (或首次进入) 跳到底部; 翻阅中的用户保留原阅读位置 —
+    // 内容在上方增长, 不补偿 offset 的话视口会"漂移"到更旧的内容。
+    // post-frame 包裹: didUpdateWidget 阶段 ListView 可能尚未 attach。
     if ((oldWidget.state.isLoadingHistory && !widget.state.isLoadingHistory) ||
         (oldCount == 0 && newCount > 0)) {
       _lastMsgCount = newCount;
-      WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToBottom());
+      if (oldCount == 0 || _isAtBottom) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToBottom());
+      } else {
+        _anchorAfterGrowth();
+      }
+      _continueIfNoScrollSpace();
       return;
     }
 
     _lastMsgCount = newCount;
+
+    // 逐页渐进渲染 (无缓存打开): 更早历史从顶部增长 —
+    // 贴底保持贴底 (看到的是最新消息), 翻阅中保持阅读位置。
+    if (widget.state.isLoadingHistory && newCount > oldCount) {
+      _anchorAfterGrowth();
+      _continueIfNoScrollSpace();
+      return;
+    }
 
     // AI 流式输出时跟随到底部:
     // normal list 下新内容追加到末尾, 若不主动跟随, 视图会停在原位。
@@ -294,6 +316,42 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
     if (widget.state.isResponding && _isAtBottom) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToBottom());
     }
+  }
+
+  /// 翻页死区兜底: 一页内容不足一屏时 maxScrollExtent==0, 永远产生不了
+  /// 滚动事件 → 渐进模式卡在第一页。布局后检查, 无滚动空间就主动续拉
+  /// (loadOlder 自带 hasMore/并发守卫, 拉完自然停止)。
+  void _continueIfNoScrollSpace() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      if (_scrollController.position.maxScrollExtent <= 0 &&
+          !widget.state.isLoadingHistory &&
+          widget.state.messages.isNotEmpty) {
+        unawaited(
+          ref.read(chatProvider(widget.chatRef).notifier).loadOlder(),
+        );
+      }
+    });
+  }
+
+  /// 列表内容增长后的视觉锚定:
+  /// didUpdateWidget 时刻 maxScrollExtent 仍是旧布局值 (新帧尚未 layout),
+  /// post-frame 再取新值, 差值即"上方增长的高度"。
+  /// 贴底 → 重新贴底; 翻阅中 → offset 补偿, 阅读位置纹丝不动。
+  void _anchorAfterGrowth() {
+    if (!_scrollController.hasClients) return;
+    final oldExtent = _scrollController.position.maxScrollExtent;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      final newExtent = _scrollController.position.maxScrollExtent;
+      if (_isAtBottom) {
+        _scrollController.jumpTo(newExtent);
+      } else if (newExtent > oldExtent) {
+        _scrollController.jumpTo(
+          _scrollController.offset + (newExtent - oldExtent),
+        );
+      }
+    });
   }
 
   void _sendMessage() {
@@ -322,10 +380,151 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
     _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
   }
 
+  /// 构建单个消息项 — 稳定项复用缓存 widget 实例。
+  ///
+  /// provider 每次通知都会重跑整个 build; 若消息未变 (签名一致) 直接返回
+  /// 上次的 widget 实例, Element 判定 identical 后会整棵跳过 rebuild
+  /// (省掉 Markdown 重解析 + data-URI 图片正则提取, 这是长会话的主要开销)。
+  /// 流式中的消息内容持续变化, 不走缓存。
+  Widget _buildMessageItem(
+    ChatState state,
+    int index,
+    ThemeData theme,
+    int lastUserIndex,
+  ) {
+    final msg = state.messages[index];
+    // 压缩标记: 居中药丸, 不走消息气泡
+    if (msg.role == 'marker') {
+      return _CompactMarkerPill(label: msg.content, running: msg.isStreaming);
+    }
+    // 日期分组: 第一条(视觉最顶)或日期变化时插入分隔线
+    final showDateSeparator =
+        index == 0 ||
+        !_isSameDay(state.messages[index - 1].createdAt, msg.createdAt);
+    final isLastUserMessage = msg.role == 'user' && index == lastUserIndex;
+    final planPermission = state.pendingPermissions
+        .where(
+          (p) => p.toolName == 'ExitPlanMode' || p.toolName == 'switch_mode',
+        )
+        .firstOrNull;
+
+    Widget build() => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (showDateSeparator) _DateSeparator(date: msg.createdAt),
+            _MessageBubble(
+              message: msg,
+              theme: theme,
+              isLastUserMessage: isLastUserMessage,
+              isResponding: state.isResponding,
+              planPermission: planPermission,
+              onRespondPermission:
+                  (
+                    permissionId,
+                    optionId,
+                    decision,
+                    options,
+                    traceId,
+                  ) {
+                    ref
+                        .read(chatProvider(widget.chatRef).notifier)
+                        .answerPermission(
+                          permissionId,
+                          optionId,
+                          decision,
+                          permOptions: options,
+                          permTraceId: traceId,
+                        );
+                  },
+              // ★ 编辑只给最后一条用户消息 (对齐网页端
+              //   actions.canEdit 的行为, 历史消息不可编辑)
+              onEdit: isLastUserMessage
+                  ? (text) => ref
+                      .read(chatProvider(widget.chatRef).notifier)
+                      .sendMessage(text)
+                  : null,
+              onRewind: () =>
+                  ref.read(chatProvider(widget.chatRef).notifier).rewindLastTurn(),
+            ),
+          ],
+        );
+
+    if (msg.isStreaming) return build();
+
+    // 签名只纳入该消息真正消费的字段:
+    // - isResponding 只有最后一条用户消息消费 (撤销按钮显示);
+    // - planPermission 只有含 plan 工具的消息渲染。
+    // 否则发送/完成/权限出现瞬间, 视口内所有消息签名同时失效, 整屏重建。
+    final hasPlanContent = msg.role == 'assistant' &&
+        (msg.activities.any(_isPlanTool) ||
+            msg.parts.any((p) => p is ToolPart && _isPlanTool(p.activity)));
+    final sig = _msgSig(
+      msg,
+      showDate: showDateSeparator,
+      isLastUser: isLastUserMessage,
+      isResponding: isLastUserMessage && state.isResponding,
+      permId: hasPlanContent ? planPermission?.id ?? '' : '',
+      vpW: MediaQuery.sizeOf(context).width,
+    );
+    if (_itemSigCache[msg.id] == sig && _itemWidgetCache.containsKey(msg.id)) {
+      return _itemWidgetCache[msg.id]!;
+    }
+    final w = build();
+    // 缓存膨胀 (rewind 删除/长会话) → 剔除已不在列表里的条目。
+    // 不整体 clear: 那会让视口内全部 item 同帧重建, 造成偶发卡顿尖峰。
+    if (_itemWidgetCache.length > state.messages.length + 80) {
+      final live = state.messages.map((m) => m.id).toSet();
+      _itemWidgetCache.removeWhere((k, _) => !live.contains(k));
+      _itemSigCache.removeWhere((k, _) => !live.contains(k));
+    }
+    _itemWidgetCache[msg.id] = w;
+    _itemSigCache[msg.id] = sig;
+    return w;
+  }
+
+  /// 消息项缓存的轻量签名: 覆盖所有影响渲染的字段。
+  /// 文本用 length 代替全文比较 — 只变内容不变长度的情况仅存在于流式
+  /// 追加过程中, 而流式消息不入缓存, 因此安全。
+  String _msgSig(
+    DisplayMessage m, {
+    required bool showDate,
+    required bool isLastUser,
+    required bool isResponding,
+    required String permId,
+    required double vpW,
+  }) {
+    final b = StringBuffer('${m.role}|${m.content.length}|'
+        '${m.thought?.length ?? -1}|${m.model ?? ''}|'
+        '${m.isStreaming ? 1 : 0}${m.interrupted ? 'i' : ''}|'
+        '${m.workedMs ?? -1}|${m.turnStartedAt?.millisecondsSinceEpoch ?? -1}|'
+        '${m.createdAt.millisecondsSinceEpoch}|'
+        '${m.fileChanges?.files ?? -1},${m.fileChanges?.additions ?? -1},'
+        '${m.fileChanges?.deletions ?? -1}|$showDate|$isLastUser|'
+        '$isResponding|$permId|${vpW.round()}');
+    for (final p in m.parts) {
+      switch (p) {
+        case TextPart(:final text):
+          b.write('|t${text.length}');
+        case ThoughtPart(:final text, :final durationMs):
+          b.write('|h${text.length}d$durationMs');
+        case ToolPart(:final activity):
+          b.write('|w${activity.status},${activity.result?.length ?? -1},'
+              '${activity.elapsedMs ?? -1},${activity.input?.length ?? -1}');
+        case StepPart(:final isStart):
+          b.write('|s$isStart');
+      }
+    }
+    return b.toString();
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final state = widget.state;
+
+    // 最后一条用户消息位置: build 里算一次。
+    // (原实现每条消息都向后扫描剩余列表判断, O(n²), 长会话明显卡顿)
+    final lastUserIndex = state.messages.lastIndexWhere((m) => m.role == 'user');
 
     // ★ 监听 pendingPermissions 变化
     // ExitPlanMode 权限不再弹底部弹窗 — 按钮直接内嵌在 plan 卡片底部
@@ -558,83 +757,15 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                               12,
                               AppSpacing.sm,
                             ),
+                            addAutomaticKeepAlives: false,
                             itemCount: state.messages.length,
-                            itemBuilder: (context, index) {
-                              final realIndex = index;
-                              final msg = state.messages[realIndex];
-                              // 压缩标记: 居中药丸, 不走消息气泡
-                              if (msg.role == 'marker') {
-                                return _CompactMarkerPill(
-                                  label: msg.content,
-                                  running: msg.isStreaming,
-                                );
-                              }
-                              // 日期分组: 第一条(视觉最顶)或日期变化时插入分隔线
-                              final showDateSeparator =
-                                  realIndex == 0 ||
-                                  !_isSameDay(
-                                    state.messages[realIndex - 1].createdAt,
-                                    msg.createdAt,
-                                  );
-                              // 判断是否为最后一条用户消息 (用于撤销功能)
-                              final isLastUserMessage =
-                                  msg.role == 'user' &&
-                                  !state.messages
-                                      .skip(realIndex + 1)
-                                      .any((m) => m.role == 'user');
-                              return Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  if (showDateSeparator)
-                                    _DateSeparator(date: msg.createdAt),
-                                  _MessageBubble(
-                                    message: msg,
-                                    theme: theme,
-                                    isLastUserMessage: isLastUserMessage,
-                                    isResponding: state.isResponding,
-                                    planPermission: state.pendingPermissions
-                                        .where(
-                                          (p) =>
-                                              p.toolName == 'ExitPlanMode' ||
-                                              p.toolName == 'switch_mode',
-                                        )
-                                        .firstOrNull,
-                                    onRespondPermission:
-                                        (
-                                          permissionId,
-                                          optionId,
-                                          decision,
-                                          options,
-                                          traceId,
-                                        ) {
-                                          ref
-                                              .read(
-                                                chatProvider(
-                                                  widget.chatRef,
-                                                ).notifier,
-                                              )
-                                              .answerPermission(
-                                                permissionId,
-                                                optionId,
-                                                decision,
-                                                permOptions: options,
-                                                permTraceId: traceId,
-                                              );
-                                        },
-                                    onEdit: (text) => ref
-                                        .read(
-                                          chatProvider(widget.chatRef).notifier,
-                                        )
-                                        .sendMessage(text),
-                                    onRewind: () => ref
-                                        .read(
-                                          chatProvider(widget.chatRef).notifier,
-                                        )
-                                        .rewindLastTurn(),
-                                  ),
-                                ],
-                              );
-                            },
+                            itemBuilder: (context, index) =>
+                                _buildMessageItem(
+                                  state,
+                                  index,
+                                  theme,
+                                  lastUserIndex,
+                                ),
                           ),
                           // 滚动到底部悬浮按钮: 不在底部时显示
                           if (!_isAtBottom)
@@ -4419,6 +4550,57 @@ class _MessageBubble extends StatefulWidget {
 }
 
 class _MessageBubbleState extends State<_MessageBubble> {
+  // ── Markdown 样式记忆化 ──
+  // flutter_markdown 以 styleSheet 引用相等 (无 == 重载) 判断是否重解析;
+  // 每次 build 新建实例会让流式消息里早已写完的正文段也每帧全量重解析。
+  ThemeData? _mdStyleTheme;
+  Color? _mdStyleInk;
+  Color? _mdStyleCodeBg;
+  MarkdownStyleSheet? _mdStyle;
+  Map<String, MarkdownElementBuilder>? _mdBuilders;
+  ThemeData? _mdBuildersTheme;
+
+  /// AI 正文样式 (同一 theme/ink/codeBg 下复用同一实例)
+  MarkdownStyleSheet _assistantStyle(
+    ThemeData theme,
+    Color ink,
+    Color codeBg,
+  ) {
+    if (_mdStyle == null ||
+        !identical(_mdStyleTheme, theme) ||
+        _mdStyleInk != ink ||
+        _mdStyleCodeBg != codeBg) {
+      _mdStyleTheme = theme;
+      _mdStyleInk = ink;
+      _mdStyleCodeBg = codeBg;
+      _mdStyle = chatMarkdownStyleSheet(theme, ink: ink, codeBg: codeBg);
+    }
+    return _mdStyle!;
+  }
+
+  /// 'pre' 构建器 (代码块), 按 theme 复用
+  Map<String, MarkdownElementBuilder> _preBuilders(ThemeData theme) {
+    if (_mdBuilders == null || !identical(_mdBuildersTheme, theme)) {
+      _mdBuildersTheme = theme;
+      _mdBuilders = {'pre': _CodeBlockBuilder(theme: theme)};
+    }
+    return _mdBuilders!;
+  }
+
+  /// 用户气泡样式 (颜色全部固定, 整个 State 生命周期只建一份)
+  late final MarkdownStyleSheet _userStyle = MarkdownStyleSheet(
+    p: const TextStyle(
+      color: Colors.white,
+      fontSize: AppTextSizes.bodyMd,
+      height: 1.5,
+    ),
+    code: TextStyle(
+      backgroundColor: Colors.black26,
+      fontSize: AppTextSizes.bodySm,
+      fontFamily: kMonoFont,
+    ),
+  );
+
   /// 从 markdown content 中提取 data URI 图片, 返回 (图片列表, 去除图片后的文本)
   (List<String> images, String text) _extractImages(String content) {
     final images = <String>[];
@@ -4511,22 +4693,10 @@ class _MessageBubbleState extends State<_MessageBubble> {
                           ),
                         ),
                       // 文本 (有图片或有文字时才显示)
-                      if (text.isNotEmpty)
-                        MarkdownBody(
-                          data: text,
-                          styleSheet: MarkdownStyleSheet(
-                            p: const TextStyle(
-                              color: Colors.white,
-                              fontSize: AppTextSizes.bodyMd,
-                              height: 1.5,
-                            ),
-                            code: TextStyle(
-                              backgroundColor: Colors.black26,
-                              fontSize: AppTextSizes.bodySm,
-                              fontFamily: kMonoFont,
-                            ),
-                          ),
-                        ),
+                      if (text.isNotEmpty) MarkdownBody(
+                        data: text,
+                        styleSheet: _userStyle,
+                      ),
                     ],
                   );
                 },
@@ -4617,11 +4787,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
   ) {
     final (images, cleanText) = _extractImages(data);
     final segments = _splitMarkdownByTables(cleanText);
-    final styleSheet = chatMarkdownStyleSheet(
-      theme,
-      ink: aiInk,
-      codeBg: aiCodeBg,
-    );
+    final styleSheet = _assistantStyle(theme, aiInk, aiCodeBg);
     final borderColor = theme.colorScheme.outlineVariant.withValues(alpha: 0.4);
 
     final widgets = <Widget>[];
@@ -4657,7 +4823,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
             data: seg.text,
             styleSheet: styleSheet,
             onTapLink: _onMarkdownLink,
-            builders: {'pre': _CodeBlockBuilder(theme: theme)},
+            builders: _preBuilders(theme),
           ),
         );
       }
@@ -4788,17 +4954,19 @@ class _MessageBubbleState extends State<_MessageBubble> {
         return out;
       }
 
-      // ★ 历史/尾段拆分 (对齐 ZCode 网页端): 最后一串正文之前的全部内容
-      //   (思考/工具/早期正文) 折叠进 "已工作 X" 状态行后面; 尾段正文始终可见。
-      //   运行中默认展开 (实时滚动), 完成后自动折叠 (自动隐藏)。
-      final hasText = message.parts.any((p) => p is TextPart);
-      var splitIdx = message.parts.length;
-      if (hasText) {
-        for (var i = message.parts.length - 1; i >= 0; i--) {
-          if (message.parts[i] is! TextPart) break;
+      // ★ 历史/尾段拆分 (对齐桌面端 f5e): 以「最后一个正文 part」为界 —
+      //   尾段 = 最后的正文 + 其后的工具调用 (保持可见);
+      //   之前的全部内容 (思考/工具/早期正文) 折叠进 "已工作 X" 状态行后面。
+      //   无正文 / 运行中 / 被打断 (completedInterrupted) → 整轮锁定展开
+      //   (桌面端 wG: streaming || settling || 无尾段, interrupted→无尾段)。
+      var splitIdx = -1;
+      for (var i = message.parts.length - 1; i >= 0; i--) {
+        if (message.parts[i] is TextPart) {
           splitIdx = i;
+          break;
         }
       }
+      final hasText = splitIdx >= 0;
       final historyParts =
           hasText ? message.parts.sublist(0, splitIdx) : message.parts;
       final tailParts = hasText
@@ -4810,8 +4978,12 @@ class _MessageBubbleState extends State<_MessageBubble> {
           _WorkHistory(
             message: message,
             theme: theme,
-            // 无正文的轮次折叠会藏掉全部内容, 保持展开 (ZCode 同款)
-            defaultOpen: message.isStreaming || !hasText,
+            // 无正文/运行中/被打断的轮次锁定展开 (ZCode 同款);
+            // 正常完成且带正文 → 过程折叠, 只露尾段 (最终回答)
+            defaultOpen:
+                message.isStreaming || message.interrupted || !hasText,
+            // 大轮次跳过折叠动画 (见 _WorkHistory.animate)
+            animate: historyParts.length <= 40,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: buildRange(historyParts),
@@ -5150,9 +5322,41 @@ bool _isFileActivity(ToolActivity a) {
       n.contains('remove');
 }
 
+/// 工具结果正则扫描记忆化: 流式期间 _ChangedFilesSummary 每 tick 重建,
+/// 完成态工具的 input/result 字符串实例来自缓存 row、稳定不变, 按身份校验复用。
+final Map<String, _FilePathMemo> _filePathMemo = {};
+final Map<String, (int, int)> _diffMemo = {};
+const int _toolMemoMax = 64;
+final RegExp _pathRe = RegExp(r'[/\w]+\.\w+');
+final RegExp _addCountRe = RegExp(r'\+(\d+)');
+final RegExp _delCountRe = RegExp(r'-(\d+)');
+final RegExp _mdLeadRe = RegExp(r'^[#*\-\d.\s]+');
+
+class _FilePathMemo {
+  final Object? input;
+  final Object? result;
+  final String? path;
+  const _FilePathMemo(this.input, this.result, this.path);
+}
+
 /// 从工具活动中提取变更的文件路径
 /// 优先从 input 中取 path/file_path, 回退到 result 中搜索路径模式
 String? _extractFilePath(ToolActivity a) {
+  final memo = _filePathMemo[a.toolCallId];
+  if (memo != null &&
+      identical(memo.input, a.input) &&
+      identical(memo.result, a.result)) {
+    return memo.path;
+  }
+  final path = _computeFilePath(a);
+  if (_filePathMemo.length >= _toolMemoMax) {
+    _filePathMemo.remove(_filePathMemo.keys.first);
+  }
+  _filePathMemo[a.toolCallId] = _FilePathMemo(a.input, a.result, path);
+  return path;
+}
+
+String? _computeFilePath(ToolActivity a) {
   final input = a.input;
   if (input != null) {
     for (final key in ['file_path', 'path', 'filename', 'file']) {
@@ -5162,8 +5366,21 @@ String? _extractFilePath(ToolActivity a) {
   }
   // 回退: 从 result 中提取文件路径 (形如 /path/to/file.ext)
   final result = a.result ?? '';
-  final match = RegExp(r'[/\w]+\.\w+').firstMatch(result);
-  return match?.group(0);
+  return _pathRe.firstMatch(result)?.group(0);
+}
+
+/// 从工具 result 刮取 (+N, -M) 增删行数 (按内容记忆化, String hashCode 有缓存)
+(int, int) _extractDiffCounts(String result) {
+  final hit = _diffMemo[result];
+  if (hit != null) return hit;
+  final add = int.tryParse(_addCountRe.firstMatch(result)?.group(1) ?? '') ?? 0;
+  final del = int.tryParse(_delCountRe.firstMatch(result)?.group(1) ?? '') ?? 0;
+  final out = (add, del);
+  if (_diffMemo.length >= _toolMemoMax) {
+    _diffMemo.remove(_diffMemo.keys.first);
+  }
+  _diffMemo[result] = out;
+  return out;
 }
 
 /// 计划卡片 — ExitPlanMode 工具产出的 plan markdown (网页端 g3e 同款)。
@@ -5201,6 +5418,37 @@ class _PlanCardState extends State<_PlanCard>
   /// 历史计划默认折叠; 待确认(plan permission pending)时默认展开
   bool get _defaultExpanded => widget.permission != null;
   late bool _expanded = _defaultExpanded;
+
+  // styleSheet 引用相等才不重解析 (见 _MessageBubbleState 同款注释)
+  ThemeData? _styleTheme;
+  MarkdownStyleSheet? _planStyle;
+  Map<String, MarkdownElementBuilder>? _planBuilders;
+
+  MarkdownStyleSheet _style(ThemeData theme) {
+    if (_planStyle == null || !identical(_styleTheme, theme)) {
+      _styleTheme = theme;
+      _planStyle = MarkdownStyleSheet.fromTheme(theme).copyWith(
+        p: theme.textTheme.bodySmall,
+        h1: theme.textTheme.titleSmall,
+        h2: theme.textTheme.titleSmall,
+        h3: theme.textTheme.titleSmall,
+        listBullet: theme.textTheme.bodySmall,
+        code: theme.textTheme.bodySmall?.copyWith(
+          fontFamily: 'monospace',
+          backgroundColor: theme.colorScheme.surfaceContainerLowest,
+        ),
+        codeblockDecoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerLowest,
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+        ),
+      );
+    }
+    return _planStyle!;
+  }
+
+  Map<String, MarkdownElementBuilder> _builders(ThemeData theme) {
+    return _planBuilders ??= {'pre': _CodeBlockBuilder(theme: theme)};
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -5297,23 +5545,8 @@ class _PlanCardState extends State<_PlanCard>
                     child: MarkdownBody(
                       data: planText,
                       selectable: true,
-                      styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
-                        p: theme.textTheme.bodySmall,
-                        h1: theme.textTheme.titleSmall,
-                        h2: theme.textTheme.titleSmall,
-                        h3: theme.textTheme.titleSmall,
-                        listBullet: theme.textTheme.bodySmall,
-                        code: theme.textTheme.bodySmall?.copyWith(
-                          fontFamily: 'monospace',
-                          backgroundColor:
-                              theme.colorScheme.surfaceContainerLowest,
-                        ),
-                        codeblockDecoration: BoxDecoration(
-                          color: theme.colorScheme.surfaceContainerLowest,
-                          borderRadius: BorderRadius.circular(AppRadius.sm),
-                        ),
-                      ),
-                      builders: {'pre': _CodeBlockBuilder(theme: theme)},
+                      styleSheet: _style(theme),
+                      builders: _builders(theme),
                     ),
                   )
                 // 收起时显示前几行预览 (取纯文本, 最多7行)
@@ -5329,7 +5562,7 @@ class _PlanCardState extends State<_PlanCard>
                           .where((l) => l.trim().isNotEmpty)
                           .take(7)
                           .join('\n')
-                          .replaceAll(RegExp(r'^[#*\-\d.\s]+'), ''),
+                          .replaceAll(_mdLeadRe, ''),
                       maxLines: 7,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.bodySmall?.copyWith(
@@ -5489,15 +5722,9 @@ class _ChangedFilesSummaryState extends State<_ChangedFilesSummary>
       totalRemoved = fc.deletions;
     } else {
       for (final a in fileActivities) {
-        final result = a.result ?? '';
-        final addMatch = RegExp(r'\+(\d+)').firstMatch(result);
-        final delMatch = RegExp(r'-(\d+)').firstMatch(result);
-        if (addMatch != null) {
-          totalAdded += int.tryParse(addMatch.group(1)!) ?? 0;
-        }
-        if (delMatch != null) {
-          totalRemoved += int.tryParse(delMatch.group(1)!) ?? 0;
-        }
+        final (add, del) = _extractDiffCounts(a.result ?? '');
+        totalAdded += add;
+        totalRemoved += del;
       }
     }
     final fileCount = fc != null && fc.files > 0 ? fc.files : files.length;
@@ -6439,12 +6666,16 @@ class _WorkHistory extends StatefulWidget {
   final ThemeData theme;
   final bool defaultOpen;
   final Widget child;
+  /// 内容很大时跳过展开动画 (动画期间列表项高度逐帧变化,
+  /// 大轮次会造成持续 relayout; 直接切换只花一帧)
+  final bool animate;
 
   const _WorkHistory({
     required this.message,
     required this.theme,
     required this.defaultOpen,
     required this.child,
+    this.animate = true,
   });
 
   @override
@@ -6480,11 +6711,13 @@ class _WorkHistoryState extends State<_WorkHistory> {
             expanded: tappable ? open : null,
             onToggle: tappable ? () => setState(() => _userOpen = !open) : null,
           ),
-          AnimatedSize(
-            duration: AppDur.base,
-            curve: AppEase.inOut,
-            child: open ? widget.child : const SizedBox.shrink(),
-          ),
+          widget.animate
+              ? AnimatedSize(
+                  duration: AppDur.base,
+                  curve: AppEase.inOut,
+                  child: open ? widget.child : const SizedBox.shrink(),
+                )
+              : (open ? widget.child : const SizedBox.shrink()),
         ],
       ),
     );
@@ -6553,32 +6786,39 @@ class _ThoughtBlockState extends State<_ThoughtBlock>
               ),
             ),
           ),
-          AnimatedSize(
-            duration: AppDur.base,
-            curve: AppEase.inOut,
-            child: _expanded
-                ? Container(
-                    margin: const EdgeInsets.only(top: AppSpacing.xs),
-                    padding: const EdgeInsets.only(left: AppSpacing.sm + 2),
-                    decoration: BoxDecoration(
-                      border: Border(
-                        left: BorderSide(
-                          width: 2,
-                          color: theme.colorScheme.outlineVariant
-                              .withValues(alpha: 0.5),
+          Builder(
+            builder: (context) {
+              final body = _expanded
+                  ? Container(
+                      margin: const EdgeInsets.only(top: AppSpacing.xs),
+                      padding: const EdgeInsets.only(left: AppSpacing.sm + 2),
+                      decoration: BoxDecoration(
+                        border: Border(
+                          left: BorderSide(
+                            width: 2,
+                            color: theme.colorScheme.outlineVariant
+                                .withValues(alpha: 0.5),
+                          ),
                         ),
                       ),
-                    ),
-                    child: Text(
-                      widget.thought,
-                      style: TextStyle(
-                        fontSize: AppTextSizes.label,
-                        color: theme.colorScheme.onSurfaceVariant,
-                        height: 1.5,
+                      child: Text(
+                        widget.thought,
+                        style: TextStyle(
+                          fontSize: AppTextSizes.label,
+                          color: theme.colorScheme.onSurfaceVariant,
+                          height: 1.5,
+                        ),
                       ),
-                    ),
-                  )
-                : const SizedBox.shrink(),
+                    )
+                  : const SizedBox.shrink();
+              // 超长思考文本跳过动画 (同 _WorkHistory.animate 理由)
+              if (widget.thought.length > 1200) return body;
+              return AnimatedSize(
+                duration: AppDur.base,
+                curve: AppEase.inOut,
+                child: body,
+              );
+            },
           ),
         ],
       ),
@@ -6591,18 +6831,39 @@ class _DataImage extends StatelessWidget {
   final String dataUri;
   const _DataImage({required this.dataUri});
 
+  /// 解码结果 LRU: MemoryImage 以 identical(bytes) 判等, 不缓存的话
+  /// 每次 build 的 base64Decode 都产生新 Uint8List → 图片缓存必 miss,
+  /// 重复解码还重复占用 image cache。
+  static final Map<String, Uint8List> _byteCache = {};
+  static const _byteCacheMax = 24;
+
   @override
   Widget build(BuildContext context) {
     try {
-      final commaIdx = dataUri.indexOf(',');
-      if (commaIdx < 0) return const SizedBox.shrink();
-      final b64 = dataUri.substring(commaIdx + 1);
-      final bytes = base64Decode(b64);
+      final bytes = _decode(dataUri);
       return Image.memory(bytes, fit: BoxFit.cover);
     } catch (e) {
       appLog.d('[Chat] data URI 图片解码失败: $e');
       return const SizedBox.shrink();
     }
+  }
+
+  static Uint8List _decode(String uri) {
+    final cached = _byteCache[uri];
+    if (cached != null) {
+      // 触碰 LRU 顺序
+      _byteCache.remove(uri);
+      _byteCache[uri] = cached;
+      return cached;
+    }
+    final commaIdx = uri.indexOf(',');
+    if (commaIdx < 0) throw const FormatException('no data');
+    final bytes = base64Decode(uri.substring(commaIdx + 1));
+    if (_byteCache.length >= _byteCacheMax) {
+      _byteCache.remove(_byteCache.keys.first);
+    }
+    _byteCache[uri] = bytes;
+    return bytes;
   }
 }
 

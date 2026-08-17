@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -326,6 +327,9 @@ class DisplayMessage {
   final String? thought;
   final String? model;
   final bool isStreaming;
+  /// 轮次被打断 (turnHeader.state == completedInterrupted)。
+  /// 对齐桌面端: 打断轮次无尾段正文 → 过程整轮展开不折叠。
+  final bool interrupted;
   final DateTime createdAt;
   final List<ToolActivity> activities; // AI 调用的工具 (按到达顺序)
   /// 按序片段 (匹配 web 客户端 parts[])。非空时 UI 据此交错渲染,
@@ -348,6 +352,7 @@ class DisplayMessage {
     this.thought,
     this.model,
     this.isStreaming = false,
+    this.interrupted = false,
     this.activities = const [],
     this.parts = const [],
     this.workedMs,
@@ -361,6 +366,7 @@ class DisplayMessage {
     String? thought,
     String? model,
     bool? isStreaming,
+    bool? interrupted,
     List<ToolActivity>? activities,
     List<MessagePart>? parts,
     int? workedMs,
@@ -374,6 +380,7 @@ class DisplayMessage {
       thought: thought ?? this.thought,
       model: model ?? this.model,
       isStreaming: isStreaming ?? this.isStreaming,
+      interrupted: interrupted ?? this.interrupted,
       activities: activities ?? this.activities,
       parts: parts ?? this.parts,
       workedMs: workedMs ?? this.workedMs,
@@ -509,24 +516,56 @@ class ChatNotifier extends StateNotifier<ChatState> {
   bool _initDone = false;
   bool _initRunning = false; // _init 进行中禁止 resubscribe (会取消 init 的帧监听)
 
-  /// V4 状态: 本地缓存的 rows (按 rowId 索引)
-  final Map<int, V4Row> _rows = {};
+  /// V4 状态: 本地缓存的 rows (按 rowId 索引)。
+  /// SplayTreeMap: 按 rowId 升序迭代, 重建时免去每帧 O(n log n) 排序。
+  final Map<int, V4Row> _rows = SplayTreeMap();
   String? _v4SubscriptionId;
   String? _v4LogEpoch;
   int _v4Seq = 0;
   int _v4Revision = 0;
+
+  // ── 增量重建: 已完成轮次缓存 + 脏水位 ──
+  // 旧轮次的 rows 不可变 (只会在尾部追加/就地更新), 全量重扫纯属浪费。
+  /// 轮次缓存: 消息 id → (DisplayMessage, 轮次最大 rowId)。
+  /// 只缓存完成态 (isStreaming=false) 的轮次。
+  final Map<String, (DisplayMessage, int)> _stableTurns = {};
+  /// 自上次重建以来被 delta 触达的最小 rowId (含其所属轮的轮首);
+  /// i64 max = 全部干净。低于水位的完成轮直接复用缓存实例。
+  int _dirtyFrom = 0x7FFFFFFFFFFFFFFF;
+  /// turnId → turnHeader rowId (脏水位定位到轮首, 保证含脏行的轮次必重扫)
+  final Map<String, int> _turnHeaderRowIds = {};
 
   // ── 行日志加载 (网页端模式: conversationRowsRangeV4) ──
   /// 流快照窗口的第一行 id (窗口之前还有更早历史)
   int? _rowsFirstRowId;
   /// 行日志总行数 (totalCount > 已有行数 = 有更早历史可翻)
   int _rowsTotalCount = 0;
+  /// 完成时刻元数据补读的防抖 (一轮只补读一次)
+  bool _metaRefreshQueued = false;
+  /// notifier 是否已销毁
+  bool _disposedNotifier = false;
   /// rowsRange 响应标记的 hasMore (更早方向)
   bool _hasMoreOlder = false;
   /// 翻页进行中标志
   bool _loadingOlder = false;
   /// 流首帧快照到达信号 (历史加载等它先渲染尾部窗口)
   Completer<void>? _streamSnapshotDone;
+
+  // ── 流式重建节流 ──
+  // delta 帧可高频到达 (文本流式追加), 每帧全量重建 rows→messages
+  // 会造成明显卡顿: 这里合并到 ≤8次/秒; 快照/翻页路径仍即时重建。
+  Timer? _rebuildDebounce;
+  bool _rebuildPending = false;
+  int _rebuildCoalesced = 0;
+  /// 本地缓存落盘防抖: jsonEncode 整个消息列表代价大, 不应跟随每次重建。
+  Timer? _cacheSaveDebounce;
+  bool _cacheDirty = false;
+  /// 加载期间已有屏上内容时静默翻页 (见 _loadHistory 头注释)
+  bool _silentPagination = false;
+  /// 已发出但 row 尚未到达的乐观用户消息文本。
+  /// _rebuildMessagesFromRows 从 rows 重建会丢掉乐观消息, 用它补回,
+  /// 避免"发送后消息闪没"; 对应 row 到达或任务结束时清除。
+  String? _pendingUserText;
 
   // ── 后台通知去重 ──
   /// 已通知过的权限请求 id (permissionId 会在多次 state patch 中重复出现)
@@ -835,6 +874,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }
 
   Future<void> _loadHistory() async {
+    // 屏上已有内容 (缓存全量 / 重连时的实时视图) → 加载期间保持静默:
+    // 快照/逐页都只合并不重建, 全部拉完后一次对齐。
+    // 否则快照会先把整屏缩成尾部窗口, 翻页再撑回来, 视图来回跳。
+    _silentPagination = state.messages.isNotEmpty;
     try {
       // 断连恢复中 (后台切回): 先等 RPC ready, 期间 UI 顶部显示同步条,
       // 而不是立即失败/静默无反馈
@@ -855,23 +898,38 @@ class ChatNotifier extends StateNotifier<ChatState> {
       try {
         var rowsLoaded = false;
         if (_rows.isEmpty) {
-          // 无流快照 (空闲会话常见): 直接读尾部
-          rowsLoaded = await _fetchRowsRange();
-        } else if (_rowsFirstRowId != null && _rowsFirstRowId! > 1) {
-          // 流快照是尾部窗口: 补读窗口之前的全部更早行 (一次拉满)
-          await _fetchRowsRange(beforeRowId: _rowsFirstRowId);
-          rowsLoaded = _rows.isNotEmpty;
-        } else if (_rows.isNotEmpty) {
-          // 流快照已含全部行
+          // 无流快照 (空闲会话常见): 直接读尾部。
+          // 已有屏上内容时静默合并, 避免把全量视图缩成尾部窗口。
+          rowsLoaded = await _fetchRowsRange(rebuild: !_silentPagination);
+        } else {
+          // 流快照已渲染尾部窗口
           rowsLoaded = true;
         }
         if (rowsLoaded) {
+          // 翻页拉齐全部更早历史 (网页端同款: 打开即全量)。
+          // 屏上无内容 → 逐页渐进渲染 (历史从顶部逐步长出);
+          // 屏上已有内容 (缓存/重连) → 静默拉完一次对齐, 全程不跳。
+          var pages = 0;
+          while (_hasMoreOlder &&
+              _rowsFirstRowId != null &&
+              _rowsFirstRowId! > 1 &&
+              pages < 200) {
+            final ok = await _fetchRowsRange(
+                beforeRowId: _rowsFirstRowId, rebuild: !_silentPagination);
+            if (!ok) break;
+            pages++;
+          }
+          _silentPagination = false;
+          _rebuildMessagesFromRows();
+          appLog.d('[Chat] 全量历史: ${_rows.length}/$_rowsTotalCount 行 '
+              '($pages 页追加)');
           _cacheCurrentMessages();
           state = state.copyWith(isLoadingHistory: false);
           return;
         }
       } catch (e) {
         appLog.w('[Chat] 行日志加载失败, 降级快照兜底: $e');
+        _silentPagination = false;
       }
 
       // ── 兜底: 任务门面快照 (legacy 会话无行日志 / 行日志为空) ──
@@ -892,6 +950,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
       if (rowsList != null && rowsList.isNotEmpty) {
         // V4 rows 格式
         _rows.clear();
+        _stableTurns.clear();
+        _turnHeaderRowIds.clear();
+        _dirtyFrom = 0;
         for (final r in rowsList.whereType<Map>()) {
           final row = V4Row.fromJson(Map<String, dynamic>.from(r));
           _rows[row.rowId] = row;
@@ -963,7 +1024,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// [beforeRowId] 为空 = 从尾部取; 否则取该 rowId 之前的更早行。
   /// 响应 {rows[], atSeq, atLogEpoch, hasMore} — atLogEpoch 与本地纪元
   /// 不一致时整批丢弃 (服务端 schema 注明的陈旧读防护)。
-  Future<bool> _fetchRowsRange({int? beforeRowId, int limit = 200}) async {
+  Future<bool> _fetchRowsRange(
+      {int? beforeRowId, int limit = 200, bool rebuild = true}) async {
     final resp = await _relay.conversationRowsRangeV4(
       workspacePath: _ref.workspacePath,
       workspaceIdentity: _ref.workspaceIdentity,
@@ -985,9 +1047,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
       final row = V4Row.fromJson(Map<String, dynamic>.from(r));
       if (!_rows.containsKey(row.rowId)) merged++;
       _rows[row.rowId] = row;
+      if (row is V4TurnHeaderRow) _turnHeaderRowIds[row.turnId] = row.rowId;
       _logMarkerRow(row, 'rowsRange');
       _logTurnHeaderRow(row, 'rowsRange');
     }
+    // 翻页合并的是更早的行, 直接压满水位走一次全量重建 (翻页本来也全量重建)
+    if (rowsJson.isNotEmpty) _dirtyFrom = 0;
     final first = rowsJson.whereType<Map>()
         .map((r) => (r['rowId'] as num?)?.toInt())
         .whereType<int>()
@@ -996,7 +1061,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       _rowsFirstRowId = first;
     }
     _hasMoreOlder = resp['hasMore'] == true;
-    _rebuildMessagesFromRows();
+    if (rebuild) _rebuildMessagesFromRows();
     appLog.d('[Chat] rowsRange: +$merged 行 (before=$beforeRowId '
         '共${_rows.length} hasMore=$_hasMoreOlder)');
     return rowsJson.isNotEmpty;
@@ -1249,8 +1314,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   /// V4 Frame 处理 ★★★
   void _onV4Frame(V4Frame frame) {
-    appLog.d('[Chat] V4 frame: topic=${frame.topic} fromSeq=${frame.fromSeq} toSeq=${frame.toSeq}');
-
     // topic = conversation/<sessionId>: 只处理本会话的帧,
     // 防止工作区级推送的其他会话快照/增量串台覆盖当前显示
     if (_taskId != null && frame.topic.isNotEmpty &&
@@ -1274,26 +1337,43 @@ class ChatNotifier extends StateNotifier<ChatState> {
       }
       // 清空并重建 rows
       _rows.clear();
+      _stableTurns.clear();
+      _turnHeaderRowIds.clear();
+      _dirtyFrom = 0;
       for (final r in snap.rows.window) {
         _rows[r.rowId] = r;
         _logMarkerRow(r, 'snapshot');
         _logTurnHeaderRow(r, 'snapshot');
       }
-      // 记录尾部窗口边界: 窗口之前可能还有更早历史 (rowsRange 翻页用)
-      _rowsFirstRowId = snap.rows.firstRowId;
+      // 记录尾部窗口边界: 窗口之前可能还有更早历史 (rowsRange 翻页用)。
+      // ⚠️ 不能用 snap.rows.firstRowId — 实测恒为 1 (整个日志的起始 id),
+      // 不是窗口首行; 用它会让翻页条件 (firstRowId>1) 永假, 旧历史加载不出。
+      // 窗口边界从实际行的最小 rowId 算。
+      _rowsFirstRowId = _rows.values
+          .map((r) => r.rowId)
+          .fold<int?>(null, (a, b) => a == null || b < a ? b : a);
       _rowsTotalCount = snap.rows.totalCount;
-      // ★ 先应用快照状态 (control.phase → isResponding), 再重建消息
+      // 窗口之前还有更早行 → 允许翻页 (全量加载循环的启动条件)
+      _hasMoreOlder = (_rowsFirstRowId ?? 1) > 1;
+      // ★ 先应用快照状态 (control.phase → isResponding), 再重建消息。
+      // 加载期间屏上已有内容 (缓存全量/重连视图) → 跳过中间重建,
+      // 否则这里会把整屏缩成尾部窗口, 随后翻页再撑回来, 视图来回跳。
       _applySnapshotState(snap);
-      _rebuildMessagesFromRows();
-      appLog.d('[Chat] V4 snapshot: ${_rows.length} rows '
-          '(first=${snap.rows.firstRowId ?? '-'} total=${snap.rows.totalCount})');
+      if (_silentPagination) {
+        appLog.d('[Chat] V4 snapshot: ${_rows.length} rows (静默合并, '
+            'first=${_rowsFirstRowId ?? '-'} total=${snap.rows.totalCount})');
+      } else {
+        _rebuildMessagesFromRows();
+        appLog.d('[Chat] V4 snapshot: ${_rows.length} rows '
+            '(first=${_rowsFirstRowId ?? '-'} total=${snap.rows.totalCount})');
+      }
     } else if (frame.payload is V4DeltasPayload) {
       final deltas = (frame.payload as V4DeltasPayload).deltas;
-      appLog.d('[Chat] V4 deltas: ${deltas.length} ops');
       for (final d in deltas) {
         _applyDelta(d);
       }
-      _rebuildMessagesFromRows();
+      // 高频流式增量 → 合并重建 (见 _scheduleRebuild)
+      _scheduleRebuild();
     }
   }
 
@@ -1311,20 +1391,26 @@ class ChatNotifier extends StateNotifier<ChatState> {
     switch (delta) {
       case V4RowAppended(:final row):
         _rows[row.rowId] = row;
+        _markDirtyRow(row);
         _trackRevision(row.revision);
         _logMarkerRow(row, 'delta');
         _logTurnHeaderRow(row, 'delta-append');
       case V4RowUpserted(:final row):
         _rows[row.rowId] = row;
+        _markDirtyRow(row);
         _trackRevision(row.revision);
         _logMarkerRow(row, 'delta');
         _logTurnHeaderRow(row, 'delta-upsert');
       case V4RowRemoved(:final fromRowId):
         _rows.remove(fromRowId);
+        // 删行影响该行起的整段 → 水位压到该行
+        if (fromRowId < _dirtyFrom) _dirtyFrom = fromRowId;
       case V4RowDeltaOp(:final rowId, :final path, :final append):
         final row = _rows[rowId];
         if (row == null) return;
-        _rows[rowId] = _applyRowDelta(row, path, append);
+        final updated = _applyRowDelta(row, path, append);
+        _rows[rowId] = updated;
+        _markDirtyRow(updated);
       case V4StateUpdated(:final patch, :final revision):
         _applyStatePatch(patch);
         // state 变化 (队列增删等) 同样推进 revision
@@ -1334,6 +1420,20 @@ class ChatNotifier extends StateNotifier<ChatState> {
       case _:
         appLog.w('[Chat] V4 delta: unhandled ${delta.runtimeType}');
     }
+  }
+
+  /// delta 触达某行 → 脏水位降到该行所属轮次的轮首 (turnHeader rowId)。
+  /// 低于水位的完成轮才会被复用, 因此含该行的轮次 (extent ≥ 轮首) 必被重扫。
+  /// 轮首未知时用行自身 rowId 兜底 (新轮的首个 delta 通常就是 header 本身)。
+  void _markDirtyRow(V4Row row) {
+    var from = row.rowId;
+    if (row is V4TurnHeaderRow) {
+      _turnHeaderRowIds[row.turnId] = row.rowId;
+    } else {
+      final headerId = _turnHeaderRowIds[row.turnId];
+      if (headerId != null && headerId < from) from = headerId;
+    }
+    if (from < _dirtyFrom) _dirtyFrom = from;
   }
 
   /// 本地 revision 只前进不后退 — CAS 命令 (队列管理等) 需要它保持最新,
@@ -1384,7 +1484,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
     final prevState = state;
     if (patch.containsKey('control')) {
       final ctrl = V4Control.fromJson(patch['control'] as Map<String, dynamic>? ?? {});
+      final wasResponding = state.isResponding;
       state = state.copyWith(isResponding: ctrl.isRunning);
+      // ★ 运行 → 完成: 补读尾部行, 取回 turnHeader 的 endedAt/activeMs
+      //   (否则完成轮次算不出 workedMs, 状态行只能显示"已处理")
+      if (wasResponding && !ctrl.isRunning && _taskId != null) {
+        unawaited(_refreshTurnMetadata());
+      }
     }
     if (patch.containsKey('config')) {
       final cfg = V4Config.fromJson(patch['config'] as Map<String, dynamic>? ?? {});
@@ -1468,10 +1574,43 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// 对齐 ZCode 客户端的分组方式: 一个 turn (turnHeader) = 一条 assistant
   /// 消息, 内部按真实发生顺序交错渲染 (思考 → 工具 → 正文 → 工具 → …),
   /// 轮次元数据 (workedMs/turnStartedAt/fileChanges) 附着在消息上。
+  /// 流式增量合并重建: delta 帧高频到达时只排一个 120ms 的尾随重建,
+  /// 把每帧一次的全量 rows→messages 重建 + UI 通知压到 ≤8次/秒。
+  void _scheduleRebuild() {
+    if (_rebuildPending) {
+      _rebuildCoalesced++;
+      return;
+    }
+    _rebuildPending = true;
+    _rebuildDebounce = Timer(const Duration(milliseconds: 120), () {
+      _rebuildPending = false;
+      if (_rebuildCoalesced >= 8) {
+        appLog.d('[Chat] 增量重建 (合并 $_rebuildCoalesced 帧)');
+      }
+      _rebuildCoalesced = 0;
+      if (_disposedNotifier) return;
+      _rebuildMessagesFromRows();
+    });
+  }
+
+  /// 缓存落盘防抖 (2s 尾随): 避免流式期间每次重建都 jsonEncode 全量消息。
+  void _scheduleCacheSave() {
+    _cacheDirty = true;
+    _cacheSaveDebounce?.cancel();
+    _cacheSaveDebounce = Timer(const Duration(seconds: 2), () {
+      _cacheDirty = false;
+      final taskId = _taskId;
+      if (_disposedNotifier || taskId == null || state.messages.isEmpty) return;
+      try {
+        MessageCache.saveMessages(taskId, state.messages);
+      } catch (_) {}
+    });
+  }
+
   void _rebuildMessagesFromRows() {
     final messages = <DisplayMessage>[];
-    final sortedRows = _rows.values.toList()
-      ..sort((a, b) => a.rowId.compareTo(b.rowId));
+    // SplayTreeMap 已按 rowId 升序, 免排序
+    final sortedRows = _rows.values.toList();
 
     // ── 当前轮次累积器 ──
     var turnId = '';
@@ -1482,24 +1621,62 @@ class ChatNotifier extends StateNotifier<ChatState> {
     var thoughtBuf = StringBuffer();
     var lastTextState = '';
     var anyToolRunning = false;
+    // 本轮累积的最大 rowId (缓存条目的 extent, 复用判据)
+    var turnMaxRowId = 0;
+    // 正在跳过被复用的旧轮内容行 (遇边界行复位)
+    var skipping = false;
+    // 本次扫描存活/新写的轮次缓存 id (用于剔除 rewind 遗留死条目)
+    final liveTurnIds = <String>{};
 
-    void flushTurn() {
+    /// [olderTurn] = 本轮后面还有更新的轮次 — 旧轮不可能仍在运行。
+    /// host 完成时不通过 delta 推 turnHeader 状态更新 (抓包实测 0 upsert),
+    /// 旧轮的 header 会永远停在 running; 若不压制, 上一轮会一直显示
+    /// "工作中/思考中", 与新轮同时出现两个流式指示。
+    void flushTurn({bool olderTurn = false}) {
       if (header == null && parts.isEmpty) return;
-      final isRunning = (header?.isRunning ?? false) ||
-          lastTextState == 'streaming' ||
-          anyToolRunning;
+      // 中断完成态是权威信号: 打断时行状态可能永远停在 streaming
+      // (服务端不下发终态), 不压制的话该轮永远显示"思考中"。
+      final interruptedTurn = header?.isInterrupted ?? false;
+      final isRunning = !olderTurn &&
+          !interruptedTurn &&
+          ((header?.isRunning ?? false) ||
+              lastTextState == 'streaming' ||
+              anyToolRunning);
       // 轮次为空且非运行中就不渲染 (ZCode 同样吞掉空轮次)
       if (parts.isEmpty && !isRunning) {
         header = null;
         return;
       }
-      messages.add(DisplayMessage(
-        id: 'turn_${turnId}_r${header?.rowId ?? 0}',
+      final id = 'turn_${turnId}_r${header?.rowId ?? 0}';
+      // ★ 完成轮缓存复用: extent < 脏水位 = 该轮自上次缓存后未被任何
+      //   delta 触达, 行内容与上次完全一致, 直接用上次的 DisplayMessage
+      //   (实例稳定也让 UI 侧 widget 缓存签名全部命中)。
+      //   只缓存完成态: running 轮每帧都在变, 且新轮到达时它的
+      //   olderTurn 语义会翻转, 必须重扫。
+      if (!isRunning) {
+        final cached = _stableTurns[id];
+        if (cached != null && cached.$2 < _dirtyFrom) {
+          messages.add(cached.$1);
+          liveTurnIds.add(id);
+          header = null;
+          parts = [];
+          activities = [];
+          contentBuf = StringBuffer();
+          thoughtBuf = StringBuffer();
+          lastTextState = '';
+          anyToolRunning = false;
+          turnMaxRowId = 0;
+          return;
+        }
+      }
+      final m = DisplayMessage(
+        id: id,
         role: 'assistant',
         content: contentBuf.toString(),
         thought: thoughtBuf.isEmpty ? null : thoughtBuf.toString(),
         model: null,
         isStreaming: isRunning,
+        interrupted: header?.isInterrupted ?? false,
         activities: activities,
         parts: parts,
         workedMs: header?.workedMs,
@@ -1510,7 +1687,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
         createdAt: header?.startedAt == null
             ? null
             : DateTime.fromMillisecondsSinceEpoch(header!.startedAt!),
-      ));
+      );
+      if (!isRunning) {
+        _stableTurns[id] = (m, turnMaxRowId);
+        liveTurnIds.add(id);
+      }
+      messages.add(m);
       header = null;
       parts = [];
       activities = [];
@@ -1518,13 +1700,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
       thoughtBuf = StringBuffer();
       lastTextState = '';
       anyToolRunning = false;
+      turnMaxRowId = 0;
     }
 
     /// turnHeader 缺失时 (老数据/异常) 也能累积内容行;
-    /// turnId 变化说明新轮次开始, 先冲刷上一轮
+    /// turnId 变化说明新轮次开始, 先冲刷上一轮 (旧轮强制完成态)
     void ensureTurn(String rowTurnId) {
       if (header == null && turnId != rowTurnId) {
-        flushTurn();
+        flushTurn(olderTurn: true);
         turnId = rowTurnId;
       }
     }
@@ -1532,10 +1715,34 @@ class ChatNotifier extends StateNotifier<ChatState> {
     for (final row in sortedRows) {
       switch (row) {
         case V4TurnHeaderRow():
-          flushTurn();
-          turnId = row.turnId;
-          header = row;
+          _turnHeaderRowIds[row.turnId] = row.rowId;
+          // ★ 增量快路径 (入口): 该轮未被触达且已有完成态缓存 →
+          //   直接复用实例, 本轮内容行全部跳过 (扫描的 O(n) 主项)。
+          final cacheId = 'turn_${row.turnId}_r${row.rowId}';
+          final cached = _stableTurns[cacheId];
+          if (cached != null && cached.$2 < _dirtyFrom) {
+            messages.add(cached.$1);
+            liveTurnIds.add(cacheId);
+            skipping = true;
+            turnId = row.turnId;
+            header = null;
+            parts = [];
+            activities = [];
+            contentBuf = StringBuffer();
+            thoughtBuf = StringBuffer();
+            lastTextState = '';
+            anyToolRunning = false;
+            turnMaxRowId = 0;
+          } else {
+            // 新轮次开始 → 被冲刷的旧轮强制完成态 (见 flushTurn 注释)
+            flushTurn(olderTurn: true);
+            skipping = false;
+            turnId = row.turnId;
+            header = row;
+            turnMaxRowId = row.rowId;
+          }
         case V4UserInputRow():
+          skipping = false;
           flushTurn();
           messages.add(DisplayMessage(
             id: 'row_${row.rowId}',
@@ -1543,6 +1750,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
             content: row.text,
           ));
         case V4AssistantTextRow():
+          if (skipping) {
+            // turnId 漂移 (无头行的异常路径) → 停止跳过, 恢复累积
+            if (row.turnId == turnId) continue;
+            skipping = false;
+          }
           if (row.text.isEmpty && row.state != 'streaming') continue;
           ensureTurn(row.turnId);
           if (row.text.isNotEmpty) {
@@ -1551,12 +1763,24 @@ class ChatNotifier extends StateNotifier<ChatState> {
             contentBuf.write(row.text);
           }
           lastTextState = row.state;
+          turnMaxRowId = row.rowId;
         case V4ReasoningRow():
+          if (skipping) {
+            // turnId 漂移 (无头行的异常路径) → 停止跳过, 恢复累积
+            if (row.turnId == turnId) continue;
+            skipping = false;
+          }
           if (row.text.isEmpty) continue;
           ensureTurn(row.turnId);
           parts.add(ThoughtPart(row.text, durationMs: row.durationMs));
           thoughtBuf.write(row.text);
+          turnMaxRowId = row.rowId;
         case V4ToolCallRow():
+          if (skipping) {
+            // turnId 漂移 (无头行的异常路径) → 停止跳过, 恢复累积
+            if (row.turnId == turnId) continue;
+            skipping = false;
+          }
           ensureTurn(row.turnId);
           final activity = ToolActivity(
             toolCallId: row.toolCallId,
@@ -1568,7 +1792,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
           parts.add(ToolPart(activity));
           activities.add(activity);
           if (row.isRunning) anyToolRunning = true;
+          turnMaxRowId = row.rowId;
         case V4SubagentRow():
+          if (skipping) {
+            // turnId 漂移 (无头行的异常路径) → 停止跳过, 恢复累积
+            if (row.turnId == turnId) continue;
+            skipping = false;
+          }
           ensureTurn(row.turnId);
           final activity = ToolActivity(
             toolCallId: 'subagent_${row.rowId}',
@@ -1579,9 +1809,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
           parts.add(ToolPart(activity));
           activities.add(activity);
           if (row.status == 'running') anyToolRunning = true;
+          turnMaxRowId = row.rowId;
         case V4TimelineMarkerRow():
           // 压缩标记: 渲染为时间线分割线 (running=压缩中, 其余=已完成)
           if (row.marker['type'] == 'compact') {
+            skipping = false;
             flushTurn();
             final status = row.marker['status'] as String? ?? '';
             final before = (row.marker['tokensBefore'] as num?)?.toInt();
@@ -1613,6 +1845,23 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
     flushTurn();
 
+    // 乐观用户消息: sendText 已发出但 row 未到 — 重建时补回,
+    // 否则乐观插入的用户消息会被 rows 重建覆盖掉 ("发送后闪没")。
+    if (_pendingUserText != null) {
+      final pending = _pendingUserText!;
+      final arrived =
+          messages.any((m) => m.role == 'user' && m.content == pending);
+      if (arrived || !state.isResponding) {
+        _pendingUserText = null;
+      } else {
+        messages.add(DisplayMessage(
+          id: 'pending_user',
+          role: 'user',
+          content: pending,
+        ));
+      }
+    }
+
     // ★ control.phase=running (isResponding) 是"任务仍在执行"的权威信号。
     //   步骤间隙 (上一个工具已完成、下一个行还没到达 / 权限等待 /
     //   turnHeader 缺失) 时, rows 里可能暂时没有任何 running 状态的行,
@@ -1629,14 +1878,16 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
 
     // AI 正在回复但还没有新文本行 → 显示 "思考中" 占位。
+    // ★ 检查"任意位置"是否有流式中的 assistant 消息 (而非仅最后一条):
+    //   排队消息出队后列表末尾是 user 行, 但前一个轮次仍在流式 —
+    //   若只看 last 会再叠一个占位, 出现两个"思考中"。
     // 压缩进行中除外 — 压缩标记药丸已在展示进度, 再叠"思考中"就重复了。
     if (state.isResponding) {
       final compactRunning =
           messages.any((m) => m.role == 'marker' && m.isStreaming);
-      final lastIsStreamingAi = messages.isNotEmpty &&
-          messages.last.role == 'assistant' &&
-          messages.last.isStreaming;
-      if (!lastIsStreamingAi && !compactRunning) {
+      final anyStreamingAi =
+          messages.any((m) => m.role == 'assistant' && m.isStreaming);
+      if (!anyStreamingAi && !compactRunning) {
         messages.add(DisplayMessage(
           id: 'thinking_placeholder',
           role: 'assistant',
@@ -1646,10 +1897,17 @@ class ChatNotifier extends StateNotifier<ChatState> {
       }
     }
 
+    // 剔除 rewind/删行遗留的死缓存条目 (正常路径条目数 == 轮次数, 不会触发)
+    if (_stableTurns.length > liveTurnIds.length + 8) {
+      _stableTurns.removeWhere((k, _) => !liveTurnIds.contains(k));
+    }
+    // 重建完成 → 水位复位 (此后新 delta 再降低它)
+    _dirtyFrom = 0x7FFFFFFFFFFFFFFF;
+
     state = state.copyWith(messages: messages);
-    // 缓存
+    // 缓存落盘走防抖 (2s 尾随), 不跟随每次重建
     if (_taskId != null && messages.isNotEmpty) {
-      try { MessageCache.saveMessages(_taskId!, messages); } catch (_) {}
+      _scheduleCacheSave();
     }
   }
 
@@ -1690,20 +1948,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
       return;
     }
 
-    // 1. 立即显示用户消息
-    final userMsg = DisplayMessage(
-      id: _newMsgId(),
-      role: 'user',
-      content: content,
-    );
-    // 发送消息时乐观加了占位 AI 气泡, 但 _rebuildMessagesFromRows 会覆盖。
-    // 改为: 不加乐观气泡, 只加用户消息 + isResponding
-    state = state.copyWith(
-      messages: [...state.messages, userMsg],
-      isResponding: true,
-      error: null,
-    );
-    // 立刻重建以显示 "思考中" 占位气泡
+    // 1. 立即显示用户消息 + "思考中"占位:
+    // _rebuildMessagesFromRows 从 rows 重建会覆盖乐观插入的消息,
+    // 因此用 _pendingUserText 让重建把未落行的用户消息补回来。
+    _pendingUserText = content;
+    state = state.copyWith(isResponding: true, error: null);
     _rebuildMessagesFromRows();
 
     try {
@@ -1763,11 +2012,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
       );
     } catch (e) {
       appLog.e('[Chat] 发送失败: $e');
+      _pendingUserText = null;
       state = state.copyWith(
-        messages: state.messages.where((m) => m.id != userMsg.id).toList(),
         isResponding: false,
         error: '发送失败: $e',
       );
+      _rebuildMessagesFromRows();
     } finally {
       _creating = false;
     }
@@ -1930,9 +2180,40 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   @override
   void dispose() {
+    _disposedNotifier = true;
+    // 挂起的合并重建取消; 脏缓存立即落盘 (离开会话时保住最后的消息)
+    _rebuildDebounce?.cancel();
+    final taskId = _taskId;
+    if (_cacheDirty && taskId != null && state.messages.isNotEmpty) {
+      try {
+        MessageCache.saveMessages(taskId, state.messages);
+      } catch (_) {}
+    }
+    _cacheSaveDebounce?.cancel();
     _frameSub?.cancel();
     _rpcReadySub?.cancel();
     super.dispose();
+  }
+
+  /// ★ 轮次完成时刻的元数据补读 (网页端同款行为)。
+  ///
+  /// 抓包实测 (web_turnheader_probe): 完成轮次的 turnHeader 权威时长
+  /// (endedAt/activeMs) 在行日志里, 订阅流的尾部快照只有运行中轮次的
+  /// header (无 endedAt)。网页端在完成后会补调 conversationRowsRangeV4
+  /// 取回 — app 不补读的话, 完成的轮次算不出 workedMs → 显示"已处理"。
+  Future<void> _refreshTurnMetadata() async {
+    if (_metaRefreshQueued || _disposedNotifier) return;
+    _metaRefreshQueued = true;
+    try {
+      // 小延迟: 等 host 把完成时刻的行日志落盘
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      if (_disposedNotifier || _taskId == null) return;
+      await _fetchRowsRange(limit: 60);
+    } catch (e) {
+      appLog.w('[Chat] 完成元数据补读失败: $e');
+    } finally {
+      _metaRefreshQueued = false;
+    }
   }
 }
 
