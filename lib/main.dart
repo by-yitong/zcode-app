@@ -1,23 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/logging/app_logger.dart';
 import 'core/notifications/notification_service.dart';
-import 'core/storage/message_cache.dart';
 import 'providers/app_providers.dart';
 import 'shared/theme/app_router.dart';
 import 'shared/theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // 初始化本地消息缓存 (离线可见优化)。
-  final sw = Stopwatch()..start();
-  await Hive.initFlutter();
-  await MessageCache.init();
-  appLog.i('[App] 本地缓存初始化完成 (${sw.elapsedMilliseconds}ms)');
 
   // 启动时从 SharedPreferences 恢复主题选择, 避免首帧闪烁。
   final prefs = await SharedPreferences.getInstance();

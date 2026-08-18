@@ -1547,7 +1547,19 @@ class RelayClient {
       }
     ]);
 
-    if (resp.body is Map) return resp.body as Map<String, dynamic>;
+    if (resp.body is Map) {
+      final body = resp.body as Map<String, dynamic>;
+      // ★ 服务端命令裁决: rejected 必须抛错 — 否则调用方静默失败
+      //   (曾导致 rewind/editUserQuery 无效果但 UI 无任何提示)
+      if (body['status'] == 'rejected') {
+        final msg = body['message'] is List
+            ? (body['message'] as List).map((e) => '$e').join('; ')
+            : '${body['message'] ?? ''}';
+        throw StateError(
+            '命令被拒绝 [${body['reasonCode']}]: $msg');
+      }
+      return body;
+    }
     return {'raw': resp.body};
   }
 

@@ -771,9 +771,11 @@ class V4ToolOutput {
 
 class V4SubagentRow extends V4Row {
   final String subagentType;
-  final String status;
+  final String status; // running | success | failed | cancelled (wire 四态)
   final String summaryText;
   final String? childSessionId;
+  final String? parentToolCallId; // 关联触发它的 Agent/Task 工具调用
+  final bool backgrounded;
 
   V4SubagentRow({
     required super.rowId,
@@ -783,7 +785,11 @@ class V4SubagentRow extends V4Row {
     this.status = 'running',
     this.summaryText = '',
     this.childSessionId,
+    this.parentToolCallId,
+    this.backgrounded = false,
   });
+
+  bool get isRunning => status == 'running';
 
   factory V4SubagentRow.fromJson(Map<String, dynamic> j) => V4SubagentRow(
         rowId: (j['rowId'] as num?)?.toInt() ?? 0,
@@ -793,6 +799,24 @@ class V4SubagentRow extends V4Row {
         status: j['status'] as String? ?? 'running',
         summaryText: j['summaryText'] as String? ?? '',
         childSessionId: j['childSessionId'] as String?,
+        parentToolCallId: j['parentToolCallId'] as String?,
+        backgrounded: j['backgrounded'] == true,
+      );
+
+  V4SubagentRow copyWith({
+    String? status,
+    String? summaryText,
+  }) =>
+      V4SubagentRow(
+        rowId: rowId,
+        turnId: turnId,
+        revision: revision,
+        subagentType: subagentType,
+        status: status ?? this.status,
+        summaryText: summaryText ?? this.summaryText,
+        childSessionId: childSessionId,
+        parentToolCallId: parentToolCallId,
+        backgrounded: backgrounded,
       );
 
   @override

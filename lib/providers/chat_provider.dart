@@ -11,9 +11,35 @@ import '../core/relay/relay_client.dart';
 import '../core/relay/relay_events.dart';
 import '../core/relay/relay_protocol.dart';
 import '../core/relay/rpc_codec.dart';
-import '../core/storage/message_cache.dart';
 import '../data/models/workspace.dart';
 import 'app_providers.dart';
+
+// ── 进程内消息缓存 ──
+// 会话 notifier 是 autoDispose: 列表↔聊天页往返即销毁重建 + 重新订阅拉取。
+// 内存缓存让往返秒开; 不落盘 — 无 jsonEncode/旧格式兼容/Hive 依赖, 进程
+// 重启自然清空 (代价: 冷启动首屏多等一拍网络, 可接受)。LRU 上限防内存膨胀。
+const int _kMemCacheMaxTasks = 12;
+final LinkedHashMap<String, List<DisplayMessage>> _memMsgCache =
+    LinkedHashMap();
+
+/// 只缓存稳定 (非流式) 消息: 流式消息每帧在变, 存了立刻过期。
+/// DisplayMessage 不可变, 直接持 List 引用即快照, 零拷贝零序列化。
+void _memCacheSave(String taskId, List<DisplayMessage> messages) {
+  final stable = messages.where((m) => !m.isStreaming).toList(growable: false);
+  if (stable.isEmpty) return;
+  _memMsgCache.remove(taskId);
+  _memMsgCache[taskId] = stable;
+  while (_memMsgCache.length > _kMemCacheMaxTasks) {
+    _memMsgCache.remove(_memMsgCache.keys.first);
+  }
+}
+
+List<DisplayMessage> _memCacheLoad(String taskId) {
+  final m = _memMsgCache.remove(taskId);
+  if (m == null) return const [];
+  _memMsgCache[taskId] = m; // touch (LRU)
+  return m;
+}
 
 // ================================================================
 // 对话状态管理 (实测 2026-06-15)
@@ -148,6 +174,10 @@ class PermissionOption {
     this.decision = 'allow',
     this.fullResponse = const {},
   });
+
+  /// 规范化 kind — wire 上存在驼峰 (allowOnce) 与下划线 (allow_once) 两种拼写,
+  /// 统一成小写无下划线 (allowonce) 供 UI 映射中文标签
+  String get normKind => kind.replaceAll('_', '').toLowerCase();
 
   factory PermissionOption.fromJson(Map<String, dynamic> json) {
     final response = json['response'] as Map<String, dynamic>?;
@@ -310,6 +340,48 @@ class ToolPart extends MessagePart {
 class StepPart extends MessagePart {
   final bool isStart; // true=step-start, false=step-finish
   const StepPart(this.isStart);
+}
+
+/// 子代理片段 (V4 `subagent` 行) — 独立的 AgentCard 渲染, 不混入工具合并卡。
+///
+/// wire 上子代理的内部活动在 [childSessionId] 指向的独立子会话里,
+/// 主行流不包含 → [children] 懒加载 (展开时拉子会话行投影, 递归限深 3 层)。
+class SubagentPart extends MessagePart {
+  final String subagentType; // "Explore" / "Plan" / ...
+  final String status; // running | success | failed | cancelled (wire 四态)
+  final String summaryText; // 流式追加的摘要
+  final String? childSessionId; // 嵌套内容的懒加载句柄
+  final String? parentToolCallId; // 关联触发它的 Agent/Task 工具调用
+  final String rowIdKey; // 去重/更新键 (subagent_<rowId>)
+  final List<MessagePart> children; // 懒加载填充; 子会话内 subagent 行递归嵌套
+
+  const SubagentPart({
+    required this.subagentType,
+    required this.status,
+    required this.summaryText,
+    required this.rowIdKey,
+    this.childSessionId,
+    this.parentToolCallId,
+    this.children = const [],
+  });
+
+  bool get isRunning => status == 'running';
+
+  SubagentPart copyWith({
+    String? status,
+    String? summaryText,
+    String? childSessionId,
+    List<MessagePart>? children,
+  }) =>
+      SubagentPart(
+        subagentType: subagentType,
+        status: status ?? this.status,
+        summaryText: summaryText ?? this.summaryText,
+        childSessionId: childSessionId ?? this.childSessionId,
+        parentToolCallId: parentToolCallId,
+        rowIdKey: rowIdKey,
+        children: children ?? this.children,
+      );
 }
 
 /// 显示用消息
@@ -557,15 +629,17 @@ class ChatNotifier extends StateNotifier<ChatState> {
   Timer? _rebuildDebounce;
   bool _rebuildPending = false;
   int _rebuildCoalesced = 0;
-  /// 本地缓存落盘防抖: jsonEncode 整个消息列表代价大, 不应跟随每次重建。
-  Timer? _cacheSaveDebounce;
-  bool _cacheDirty = false;
   /// 加载期间已有屏上内容时静默翻页 (见 _loadHistory 头注释)
   bool _silentPagination = false;
+  /// isResponding 落 false 的延迟确认 (control patch 闪断防抖, 见 _applyStatePatch)
+  Timer? _respondingFallTimer;
   /// 已发出但 row 尚未到达的乐观用户消息文本。
   /// _rebuildMessagesFromRows 从 rows 重建会丢掉乐观消息, 用它补回,
-  /// 避免"发送后消息闪没"; 对应 row 到达或任务结束时清除。
+  /// 避免"发送后消息闪没"; 对应 row 到达时清除 (不再依赖 isResponding —
+  /// 闪断会把乐观消息和"思考中"占位一起删掉, 列表高度骤变导致视口跳动)。
   String? _pendingUserText;
+  /// _pendingUserText 的设置时间: 任务已确认结束但 row 始终未到 (协议异常) 的兜底清除
+  DateTime? _pendingUserTextAt;
 
   // ── 后台通知去重 ──
   /// 已通知过的权限请求 id (permissionId 会在多次 state patch 中重复出现)
@@ -614,8 +688,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
     // 监听 RPC ready 变化: bridge degraded → reopen 后重新订阅。
     // 加标志位避免初始化期间触发 (会死循环)。
+    // ★ 不看 isResponding: 断连时 turn 进行中 → 重连后没有非 running 的
+    //   control patch 到达 (它只在收到 patch 时清), isResponding 会卡在
+    //   true → 曾经的 !isResponding 守卫导致重连后永远不再订阅,
+    //   会话内容从此不刷新。
     _rpcReadySub = _relay.onRpcReadyChange.listen((ready) {
-      if (ready && _taskId != null && !state.isResponding && _initDone && !_initRunning) {
+      if (ready && _taskId != null && _initDone && !_initRunning) {
         appLog.i('[Chat] RPC ready (重连后), 重新订阅 V4 事件流...');
         _frameSub?.cancel();
         _frameSub = null;
@@ -646,9 +724,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
               sessionId: _taskId,
               baseRevision: _v4Revision,
               baseLogEpoch: _v4LogEpoch,
-        payload: {
-          'switchCollaborationMode': {'mode': mode},
-        },
+        // wire zod: payload 平铺 {mode} — 外层再包命令名会报 proto.invalidPayload
+        payload: {'mode': mode},
       );
     } catch (e) {
       appLog.w('[Chat] 模式切换失败 ($mode): $e');
@@ -673,12 +750,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
               sessionId: _taskId,
               baseRevision: _v4Revision,
               baseLogEpoch: _v4LogEpoch,
+        // wire zod: payload 平铺 (外层包命令名会被拒)
         payload: {
-          'switchModelConfig': {
-            'provider': parts.length > 1 ? parts[0] : '',
-            'model': parts.length > 1 ? parts[1] : modelId,
-            'thought': level,
-          },
+          'provider': parts.length > 1 ? parts[0] : '',
+          'model': parts.length > 1 ? parts[1] : modelId,
+          'thought': level,
         },
       );
     } catch (e) {
@@ -693,6 +769,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
       state = state.copyWith(error: '新会话无需压缩');
       return;
     }
+    _respondingFallTimer?.cancel();
+    _respondingFallTimer = null;
     state = state.copyWith(isResponding: true, error: null);
     try {
       await _relay.sendConversationCommandV4(
@@ -784,12 +862,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
               sessionId: _taskId,
               baseRevision: _v4Revision,
               baseLogEpoch: _v4LogEpoch,
+        // wire zod: payload 平铺 (外层包命令名会被拒)
         payload: {
-          'switchModelConfig': {
-            'provider': parts.length > 1 ? parts[0] : '',
-            'model': parts.length > 1 ? parts[1] : modelId,
-            'thought': state.thoughtLevel,
-          },
+          'provider': parts.length > 1 ? parts[0] : '',
+          'model': parts.length > 1 ? parts[1] : modelId,
+          'thought': state.thoughtLevel,
         },
       );
     } catch (e) {
@@ -802,7 +879,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     state = state.copyWith(isLoadingHistory: true);
     if (_taskId != null) {
       try {
-        final cached = MessageCache.loadMessages(_taskId!);
+        final cached = _memCacheLoad(_taskId!);
         if (cached.isNotEmpty && state.messages.isEmpty) {
           state = state.copyWith(messages: cached);
         }
@@ -873,11 +950,25 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
-  Future<void> _loadHistory() async {
+  Future<void> _loadHistory({bool forceReload = false}) async {
     // 屏上已有内容 (缓存全量 / 重连时的实时视图) → 加载期间保持静默:
     // 快照/逐页都只合并不重建, 全部拉完后一次对齐。
     // 否则快照会先把整屏缩成尾部窗口, 翻页再撑回来, 视图来回跳。
-    _silentPagination = state.messages.isNotEmpty;
+    if (forceReload) {
+      // ★ 编辑/回退后的权威刷新: 行日志 append-only + rowsRange 只合并不
+      //   删除, 本地旧行 (被 rewind 的轮次) 只能靠清空重建才会消失 —
+      //   与重启 App 走流快照替换 (rows.clear) 的行为对齐。
+      _rows.clear();
+      _stableTurns.clear();
+      _turnHeaderRowIds.clear();
+      _rowsFirstRowId = null;
+      _hasMoreOlder = true;
+      _dirtyFrom = 0x7FFFFFFFFFFFFFFF;
+      _streamSnapshotDone = null;
+      _silentPagination = false; // 直接重建: 尾部窗口到达即旧轮消失
+    } else {
+      _silentPagination = state.messages.isNotEmpty;
+    }
     try {
       // 断连恢复中 (后台切回): 先等 RPC ready, 期间 UI 顶部显示同步条,
       // 而不是立即失败/静默无反馈
@@ -995,7 +1086,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
           thoughtLevel: meta?['thoughtLevel'] as String? ?? 'max',
         );
         appLog.d('[Chat] _loadHistory: ${messages.length} messages (v3 format)');
-        try { MessageCache.saveMessages(_taskId!, messages); } catch (_) {}
+        if (_taskId != null) _memCacheSave(_taskId!, messages);
       } else {
         // 不可解析的快照形状: 打日志定位, 不清空已有内容
         appLog.w(
@@ -1091,9 +1182,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   void _cacheCurrentMessages() {
     if (_taskId == null) return;
-    try {
-      MessageCache.saveMessages(_taskId!, state.messages);
-    } catch (_) {}
+    _memCacheSave(_taskId!, state.messages);
   }
 
   /// 拉取任务快照, 对「模型供应商未就绪」自动退避重试。
@@ -1214,6 +1303,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
       },
     )).toList();
 
+    // 快照是权威全量状态, 直接采用 (取消可能挂起的 control 闪断防抖确认)
+    _respondingFallTimer?.cancel();
+    _respondingFallTimer = null;
     state = state.copyWith(
       isLoadingHistory: false,
       mode: config.mode,
@@ -1471,8 +1563,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
           return row.copyWith(output: out);
         }
       case V4SubagentRow():
-        // summaryText path
-        break;
+        // wire: delta(path='summaryText', op=append) — 摘要流式追加
+        if (path == 'summaryText') {
+          return row.copyWith(summaryText: row.summaryText + append);
+        }
       default:
         break;
     }
@@ -1485,11 +1579,25 @@ class ChatNotifier extends StateNotifier<ChatState> {
     if (patch.containsKey('control')) {
       final ctrl = V4Control.fromJson(patch['control'] as Map<String, dynamic>? ?? {});
       final wasResponding = state.isResponding;
-      state = state.copyWith(isResponding: ctrl.isRunning);
-      // ★ 运行 → 完成: 补读尾部行, 取回 turnHeader 的 endedAt/activeMs
-      //   (否则完成轮次算不出 workedMs, 状态行只能显示"已处理")
-      if (wasResponding && !ctrl.isRunning && _taskId != null) {
-        unawaited(_refreshTurnMetadata());
+      if (ctrl.isRunning) {
+        // running 到达即生效; 取消可能挂起的"完成确认"
+        _respondingFallTimer?.cancel();
+        _respondingFallTimer = null;
+        if (!wasResponding) state = state.copyWith(isResponding: true);
+      } else if (wasResponding) {
+        // ★ 闪断防抖: turn 间隙/权限等待/排队切换时, host 会短暂下发
+        //   非 running 的 control patch。立即落 false 会把乐观用户消息和
+        //   "思考中"占位删掉再建回 → 列表尾部高度骤变, 视口来回跳。
+        //   延迟确认; 期间回到 running 则当无事发生。
+        _respondingFallTimer?.cancel();
+        _respondingFallTimer = Timer(const Duration(milliseconds: 500), () {
+          _respondingFallTimer = null;
+          if (!state.isResponding || _disposedNotifier) return;
+          state = state.copyWith(isResponding: false);
+          // ★ 运行 → 完成: 补读尾部行, 取回 turnHeader 的 endedAt/activeMs
+          //   (否则完成轮次算不出 workedMs, 状态行只能显示"已处理")
+          if (_taskId != null) unawaited(_refreshTurnMetadata());
+        });
       }
     }
     if (patch.containsKey('config')) {
@@ -1593,20 +1701,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     });
   }
 
-  /// 缓存落盘防抖 (2s 尾随): 避免流式期间每次重建都 jsonEncode 全量消息。
-  void _scheduleCacheSave() {
-    _cacheDirty = true;
-    _cacheSaveDebounce?.cancel();
-    _cacheSaveDebounce = Timer(const Duration(seconds: 2), () {
-      _cacheDirty = false;
-      final taskId = _taskId;
-      if (_disposedNotifier || taskId == null || state.messages.isEmpty) return;
-      try {
-        MessageCache.saveMessages(taskId, state.messages);
-      } catch (_) {}
-    });
-  }
-
   void _rebuildMessagesFromRows() {
     final messages = <DisplayMessage>[];
     // SplayTreeMap 已按 rowId 升序, 免排序
@@ -1642,8 +1736,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
           ((header?.isRunning ?? false) ||
               lastTextState == 'streaming' ||
               anyToolRunning);
-      // 轮次为空且非运行中就不渲染 (ZCode 同样吞掉空轮次)
-      if (parts.isEmpty && !isRunning) {
+      // 轮次无正文就不渲染 (ZCode 同样吞掉空轮次) — 运行中的空壳同样吞:
+      // "仅 turnHeader" 的空壳消息是思考中错位的来源, 运行态指示
+      // 统一由紧贴 user 的占位与真实内容轮承担。
+      // (thought 非空的"思考中"轮不是空壳, 正常产出)
+      final hasBody = parts.isNotEmpty ||
+          thoughtBuf.isNotEmpty ||
+          contentBuf.isNotEmpty;
+      if (!hasBody) {
         header = null;
         return;
       }
@@ -1669,6 +1769,22 @@ class ChatNotifier extends StateNotifier<ChatState> {
           return;
         }
       }
+      // ★ workedMs 兜底: 完成轮的 endedAt/activeMs 只在行日志里 (host
+      //   完成时不推 delta 更新), 补读失败/漏读的轮次会永远缺时长。
+      //   用本轮思考+工具耗时之和估算 — 对齐服务端 activeMs 的"活跃
+      //   时长"语义 (agent 轮必有工具/思考; 纯文本轮无信号保持原样)
+      int? worked = header?.workedMs;
+      if (worked == null && !isRunning) {
+        var est = 0;
+        for (final p in parts) {
+          if (p is ThoughtPart) {
+            est += p.durationMs ?? 0;
+          } else if (p is ToolPart) {
+            est += p.activity.elapsedMs ?? 0;
+          }
+        }
+        if (est > 0) worked = est;
+      }
       final m = DisplayMessage(
         id: id,
         role: 'assistant',
@@ -1679,7 +1795,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         interrupted: header?.isInterrupted ?? false,
         activities: activities,
         parts: parts,
-        workedMs: header?.workedMs,
+        workedMs: worked,
         turnStartedAt: header?.startedAt == null
             ? null
             : DateTime.fromMillisecondsSinceEpoch(header!.startedAt!),
@@ -1743,7 +1859,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
           }
         case V4UserInputRow():
           skipping = false;
-          flushTurn();
+          // ★ user 行属于当前累积轮 (turnHeader 先行到达) → 不打断轮:
+          //   保留 header 与已累积内容, user 独立成消息先入列,
+          //   该轮最终 flush 的完整消息自然位于 user 之后 (顺序正确),
+          //   且保住真实 header (rowId/startedAt/workedMs)。
+          if (row.turnId != turnId || header == null) flushTurn();
           messages.add(DisplayMessage(
             id: 'row_${row.rowId}',
             role: 'user',
@@ -1800,13 +1920,22 @@ class ChatNotifier extends StateNotifier<ChatState> {
             skipping = false;
           }
           ensureTurn(row.turnId);
+          // 子代理 → SubagentPart (AgentCard 渲染, 保留 wire 四态/嵌套句柄)
+          parts.add(SubagentPart(
+            subagentType: row.subagentType,
+            status: row.status,
+            summaryText: row.summaryText,
+            childSessionId: row.childSessionId,
+            parentToolCallId: row.parentToolCallId,
+            rowIdKey: 'subagent_${row.rowId}',
+          ));
+          // 无 parts 的回退路径 (v3 快照) 仍以合成 ToolActivity 兼容
           final activity = ToolActivity(
             toolCallId: 'subagent_${row.rowId}',
             toolName: 'subagent (${row.subagentType})',
             status: row.status == 'running' ? 'running' : 'done',
             result: row.summaryText.isNotEmpty ? row.summaryText : null,
           );
-          parts.add(ToolPart(activity));
           activities.add(activity);
           if (row.status == 'running') anyToolRunning = true;
           turnMaxRowId = row.rowId;
@@ -1847,12 +1976,19 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
     // 乐观用户消息: sendText 已发出但 row 未到 — 重建时补回,
     // 否则乐观插入的用户消息会被 rows 重建覆盖掉 ("发送后闪没")。
+    // 清除条件只认 "row 已到达"; isResponding 闪断不清 (见字段注释),
+    // 仅在任务确认结束超过 10s 仍未落行 (协议异常) 时兜底清除。
     if (_pendingUserText != null) {
       final pending = _pendingUserText!;
       final arrived =
           messages.any((m) => m.role == 'user' && m.content == pending);
-      if (arrived || !state.isResponding) {
+      final stale = !state.isResponding &&
+          _pendingUserTextAt != null &&
+          DateTime.now().difference(_pendingUserTextAt!) >
+              const Duration(seconds: 10);
+      if (arrived || stale) {
         _pendingUserText = null;
+        _pendingUserTextAt = null;
       } else {
         messages.add(DisplayMessage(
           id: 'pending_user',
@@ -1862,27 +1998,23 @@ class ChatNotifier extends StateNotifier<ChatState> {
       }
     }
 
-    // ★ control.phase=running (isResponding) 是"任务仍在执行"的权威信号。
-    //   步骤间隙 (上一个工具已完成、下一个行还没到达 / 权限等待 /
-    //   turnHeader 缺失) 时, rows 里可能暂时没有任何 running 状态的行,
-    //   会被误判为"已完成"而把过程收起 — 这里兜底: 会话运行中, 最后一轮
-    //   (尚无权威完成时长 workedMs) 保持"工作中"态。
-    //   已带 workedMs 的完成轮次不受影响 (排队间隙不会误开)。
-    if (state.isResponding && messages.isNotEmpty) {
-      final last = messages.last;
-      if (last.role == 'assistant' &&
-          !last.isStreaming &&
-          last.workedMs == null) {
-        messages[messages.length - 1] = last.copyWith(isStreaming: true);
-      }
-    }
+    // ★ "工作中"状态的权威绑定 = turnHeader.state (running → isStreaming,
+    //   见 flushTurn), 与轮次数据绑定而非列表位置。
+    //   曾有的"messages.last 强制置 streaming"位置推断兜底已删除 — 它在
+    //   乐观消息缺位的时序窗口 (user row 未到) 会把上一条已完成的 AI 回复
+    //   错误置为"思考中"。步骤间隙的闪收由"未完成轮不进 stableTurn 缓存 +
+    //   host 不推完成 upsert (最后轮 header 停留 running)"天然覆盖。
 
     // AI 正在回复但还没有新文本行 → 显示 "思考中" 占位。
+    // ★ 位置约束: 仅当列表尾部是 user 消息 (新问题已显示、AI 轮未开) 时
+    //   添加 — 占位必然出现在新问题之后。尾部是旧 assistant 的时序间隙
+    //   (user row 未到) 不加: 避免错位到上一条已完成的回复底部;
+    //   turnHeader(running) 到达后自然出现带 streaming 态的新轮消息。
     // ★ 检查"任意位置"是否有流式中的 assistant 消息 (而非仅最后一条):
     //   排队消息出队后列表末尾是 user 行, 但前一个轮次仍在流式 —
     //   若只看 last 会再叠一个占位, 出现两个"思考中"。
     // 压缩进行中除外 — 压缩标记药丸已在展示进度, 再叠"思考中"就重复了。
-    if (state.isResponding) {
+    if (state.isResponding && messages.isNotEmpty && messages.last.role == 'user') {
       final compactRunning =
           messages.any((m) => m.role == 'marker' && m.isStreaming);
       final anyStreamingAi =
@@ -1904,10 +2036,25 @@ class ChatNotifier extends StateNotifier<ChatState> {
     // 重建完成 → 水位复位 (此后新 delta 再降低它)
     _dirtyFrom = 0x7FFFFFFFFFFFFFFF;
 
+    // ★ 诊断: 思考中错位排查 — 运行中打印尾部消息与 streaming 归属
+    if (state.isResponding) {
+      final tail = messages.length <= 3
+          ? messages.map((m) => '${m.role}:${m.id}${m.isStreaming ? "*" : ""}')
+          : messages
+              .sublist(messages.length - 3)
+              .map((m) => '${m.role}:${m.id}${m.isStreaming ? "*" : ""}');
+      final streaming = messages
+          .where((m) => m.isStreaming)
+          .map((m) => m.id)
+          .toList();
+      appLog.d('[Chat] rebuild诊断: n=${messages.length} '
+          'tail=[${tail.join(' | ')}] streaming=$streaming');
+    }
+
     state = state.copyWith(messages: messages);
-    // 缓存落盘走防抖 (2s 尾随), 不跟随每次重建
+    // 内存缓存 O(1) 引用快照, 直接写 (无需防抖)
     if (_taskId != null && messages.isNotEmpty) {
-      _scheduleCacheSave();
+      _memCacheSave(_taskId!, messages);
     }
   }
 
@@ -1952,6 +2099,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
     // _rebuildMessagesFromRows 从 rows 重建会覆盖乐观插入的消息,
     // 因此用 _pendingUserText 让重建把未落行的用户消息补回来。
     _pendingUserText = content;
+    _pendingUserTextAt = DateTime.now();
+    _respondingFallTimer?.cancel();
+    _respondingFallTimer = null;
     state = state.copyWith(isResponding: true, error: null);
     _rebuildMessagesFromRows();
 
@@ -2013,6 +2163,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
     } catch (e) {
       appLog.e('[Chat] 发送失败: $e');
       _pendingUserText = null;
+      _pendingUserTextAt = null;
+      _respondingFallTimer?.cancel();
+      _respondingFallTimer = null;
       state = state.copyWith(
         isResponding: false,
         error: '发送失败: $e',
@@ -2034,6 +2187,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
     final q = state.pendingQuestion;
     if (q == null || _taskId == null) return;
     final answer = selectedLabels.join(', ');
+    _respondingFallTimer?.cancel();
+    _respondingFallTimer = null;
     state = state.copyWith(pendingQuestion: null, isResponding: true);
     try {
       await _relay.sendConversationCommandV4(
@@ -2063,6 +2218,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
       }
     }
 
+    _respondingFallTimer?.cancel();
+    _respondingFallTimer = null;
     state = state.copyWith(
       pendingPermissions: state.pendingPermissions.where((x) => x.id != permissionId).toList(),
       isResponding: true,
@@ -2076,13 +2233,16 @@ class ChatNotifier extends StateNotifier<ChatState> {
               sessionId: _taskId,
               baseRevision: _v4Revision,
               baseLogEpoch: _v4LogEpoch,
+        // wire zod: payload 平铺 {interactionId, answer} — 外层再包命令名
+        // 会报 proto.invalidPayload (同 switchCollaborationMode 的坑)。
+        // answer 合并 option 的完整 response (含 reason/permissionUpdates,
+        // 网页端同款 — allowAlways 的会话级放行依赖 permissionUpdates)。
         payload: {
-          'resolveInteraction': {
-            'interactionId': permissionId,
-            'answer': {
-              'optionId': optionId,
-              'action': decision == 'allow' ? 'accept' : (decision == 'deny' ? 'decline' : 'accept'),
-            },
+          'interactionId': permissionId,
+          'answer': {
+            'optionId': optionId,
+            'action': decision == 'deny' ? 'decline' : 'accept',
+            ...fullResponse,
           },
         },
       );
@@ -2095,6 +2255,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// 回答 plan 提议 — V4 也走 resolveInteraction
   Future<void> answerPlan(bool approved) async {
     if (state.pendingPlan == null || _taskId == null) return;
+    _respondingFallTimer?.cancel();
+    _respondingFallTimer = null;
     state = state.copyWith(pendingPlan: _clearPendingPlan, isResponding: true);
     try {
       await _relay.sendConversationCommandV4(
@@ -2128,9 +2290,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
-  /// 回退最后一轮对话
-  Future<void> rewindLastTurn() async {
-    if (_taskId == null) return;
+  /// 回退最后一轮对话 (成功返回 true)
+  Future<bool> rewindLastTurn() async {
+    if (_taskId == null) return false;
+    _respondingFallTimer?.cancel();
+    _respondingFallTimer = null;
     state = state.copyWith(isResponding: true, error: null);
     try {
       await _relay.sendConversationCommandV4(
@@ -2142,10 +2306,52 @@ class ChatNotifier extends StateNotifier<ChatState> {
               baseLogEpoch: _v4LogEpoch,
         payload: {'target': 'lastTurn'},
       );
-      await _loadHistory();
+      await _loadHistory(forceReload: true);
+      return true;
     } catch (e) {
       appLog.w('[Chat] 回退失败: $e');
       state = state.copyWith(isResponding: false, error: '回退失败: $e');
+      return false;
+    }
+  }
+
+  /// 编辑最后一条用户消息 (对齐网页端行为):
+  /// wire 专用命令 editUserQuery (target=lastTurn, newText) — 服务端
+  /// 原地改写该轮用户消息行并重新执行, 旧消息直接变成新消息、AI 重新回复。
+  /// (不用 applyFileRewind+sendText 组合 — 那是回退文件变更, 不删对话轮次)
+  Future<void> editLastUserMessage(String text) async {
+    if (_taskId == null || text.trim().isEmpty) return;
+    _respondingFallTimer?.cancel();
+    _respondingFallTimer = null;
+    state = state.copyWith(isResponding: true, error: null);
+    try {
+      // ★ wire zod 逐字段指路: target = {entityId: string, rowId: number}。
+      //   userInput 行的 entityId == 该轮 turnId (rowsRange 实测);
+      //   SplayTreeMap 按 rowId 升序, 最后一条 userInput 即值序列末个
+      final lastUserRow = _rows.values.whereType<V4UserInputRow>().lastOrNull;
+      await _relay.sendConversationCommandV4(
+        workspacePath: _ref.workspacePath,
+        workspaceIdentity: _ref.workspaceIdentity,
+        commandType: 'editUserQuery',
+        sessionId: _taskId,
+        baseRevision: _v4Revision,
+        baseLogEpoch: _v4LogEpoch,
+        payload: {
+          'target': {
+            'entityId': lastUserRow?.turnId ?? '',
+            'rowId': lastUserRow?.rowId ?? 0,
+          },
+          'newText': text,
+        },
+      );
+      // ★ 行日志是 append-only: rewind 后旧行仍在 (turnHeader 仅被标
+      //   completedInterrupted), 订阅流只推 upsert 不推删除 — 本地
+      //   _rows 会残留旧轮。网页端行为 = 编辑成功后重拉快照 (服务端
+      //   已剔除旧轮的当前视图), 这里对齐: 清空重建 (forceReload)。
+      await _loadHistory(forceReload: true);
+    } catch (e) {
+      appLog.w('[Chat] 编辑消息失败: $e');
+      state = state.copyWith(isResponding: false, error: '编辑失败: $e');
     }
   }
 
@@ -2171,8 +2377,20 @@ class ChatNotifier extends StateNotifier<ChatState> {
         workspaceIdentity: _ref.workspaceIdentity,
         sessionId: _taskId!,
       );
-      _frameSub = stream.listen(_onV4Frame);
-      appLog.i('[Chat] V4 resubscribe ✓');
+      // 与 _init 同款: 流快照 completer 重置 (新订阅可能推新快照)
+      _streamSnapshotDone = Completer<void>();
+      _frameSub = stream.listen((f) {
+        _onV4Frame(f);
+        if (f.payload is V4SnapshotPayload) {
+          final c = _streamSnapshotDone;
+          if (c != null && !c.isCompleted) c.complete();
+        }
+      });
+      // ★ 补拉断连期间错过的行: 行日志 append-only, 尾部读按 rowId 幂等
+      //   合并 (没错过就 merged=0); turn 若已服务端完成, 补回的行含
+      //   非 running control → fall timer 自然清掉卡住的 isResponding
+      await _fetchRowsRange();
+      appLog.i('[Chat] V4 resubscribe ✓ (尾部补拉完成)');
     } catch (e) {
       appLog.e('[Chat] V4 resubscribe FAILED: $e');
     }
@@ -2181,22 +2399,68 @@ class ChatNotifier extends StateNotifier<ChatState> {
   @override
   void dispose() {
     _disposedNotifier = true;
-    // 挂起的合并重建取消; 脏缓存立即落盘 (离开会话时保住最后的消息)
+    // 挂起的合并重建取消 (内存缓存已在每次重建即时写入, 无需落盘兜底)
     _rebuildDebounce?.cancel();
-    final taskId = _taskId;
-    if (_cacheDirty && taskId != null && state.messages.isNotEmpty) {
-      try {
-        MessageCache.saveMessages(taskId, state.messages);
-      } catch (_) {}
-    }
-    _cacheSaveDebounce?.cancel();
+    _respondingFallTimer?.cancel();
     _frameSub?.cancel();
     _rpcReadySub?.cancel();
     super.dispose();
   }
 
+  /// 子会话行 → 子代理 children 投影 (AgentCard 嵌套数据源)。
+  /// 内存缓存 (子会话不可变历史); 递归限深 3 层 (子会话内再有 subagent 行
+  /// 只保留摘要卡, 不再下钻)。失败向上抛, 由 AgentCard 降级为仅摘要。
+  static const int _subagentDepthMax = 3;
+  final Map<String, List<MessagePart>> _subagentChildrenCache = {};
+
+  Future<List<MessagePart>> loadSubagentChildren(
+    String childSessionId, {
+    int depth = 1,
+  }) async {
+    final cached = _subagentChildrenCache[childSessionId];
+    if (cached != null) return cached;
+    final resp = await _relay.conversationRowsRangeV4(
+      workspacePath: _ref.workspacePath,
+      workspaceIdentity: _ref.workspaceIdentity,
+      sessionId: childSessionId,
+      limit: 200,
+    );
+    final rowsJson = (resp['rows'] as List?) ?? [];
+    final parts = <MessagePart>[];
+    for (final r in rowsJson.whereType<Map>()) {
+      final row = V4Row.fromJson(Map<String, dynamic>.from(r));
+      switch (row) {
+        case V4AssistantTextRow() when row.text.isNotEmpty:
+          parts.add(TextPart(row.text));
+        case V4ReasoningRow() when row.text.isNotEmpty:
+          parts.add(ThoughtPart(row.text));
+        case V4ToolCallRow():
+          parts.add(ToolPart(ToolActivity(
+            toolCallId: row.toolCallId,
+            toolName: row.toolName,
+            status: row.status,
+            input: row.input ?? _tryParseInputText(row.inputText),
+            result: row.output?.text,
+          )));
+        case V4SubagentRow():
+          // 深度内保留嵌套句柄 (其 children 由嵌套 AgentCard 再懒加载)
+          parts.add(SubagentPart(
+            subagentType: row.subagentType,
+            status: row.status,
+            summaryText: row.summaryText,
+            childSessionId: depth < _subagentDepthMax ? row.childSessionId : null,
+            parentToolCallId: row.parentToolCallId,
+            rowIdKey: 'subagent_${row.rowId}',
+          ));
+        default:
+          break;
+      }
+    }
+    _subagentChildrenCache[childSessionId] = parts;
+    return parts;
+  }
+
   /// ★ 轮次完成时刻的元数据补读 (网页端同款行为)。
-  ///
   /// 抓包实测 (web_turnheader_probe): 完成轮次的 turnHeader 权威时长
   /// (endedAt/activeMs) 在行日志里, 订阅流的尾部快照只有运行中轮次的
   /// header (无 endedAt)。网页端在完成后会补调 conversationRowsRangeV4

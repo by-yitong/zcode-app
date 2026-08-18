@@ -1,9 +1,5 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hive/hive.dart';
 import 'package:zcode_app/core/relay/relay_events.dart';
-import 'package:zcode_app/core/storage/message_cache.dart';
 import 'package:zcode_app/providers/chat_provider.dart';
 
 /// turnHeader 工作时长/文件变更元数据测试 (对齐 ZCode 桌面端 3.7.7 逆向结论)。
@@ -98,59 +94,4 @@ void main() {
     });
   });
 
-  group('MessageCache 新字段往返', () {
-    test('workedMs/turnStartedAt/fileChanges/parts 序列化无损', () async {
-      final tmp = await Directory.systemTemp.createTemp('hive_test_');
-      Hive.init(tmp.path);
-      await MessageCache.init();
-
-      final msg = DisplayMessage(
-        id: 'turn_t9_r1',
-        role: 'assistant',
-        content: '正文',
-        thought: '思考',
-        isStreaming: false,
-        workedMs: 204000,
-        turnStartedAt: DateTime.fromMillisecondsSinceEpoch(1786800000000),
-        fileChanges: V4TurnFileChanges(
-          additions: 10,
-          deletions: 2,
-          files: 1,
-        ),
-        activities: const [
-          ToolActivity(
-            toolCallId: 'tc1',
-            toolName: 'Bash',
-            status: 'success',
-          ),
-        ],
-        parts: const [
-          ThoughtPart('想一想', durationMs: 3000),
-          ToolPart(ToolActivity(
-            toolCallId: 'tc1',
-            toolName: 'Bash',
-            status: 'success',
-          )),
-          TextPart('结论'),
-        ],
-      );
-
-      await MessageCache.saveMessages('task-x', [msg]);
-      final back = MessageCache.loadMessages('task-x').first;
-
-      expect(back.workedMs, 204000);
-      expect(back.turnStartedAt?.millisecondsSinceEpoch, 1786800000000);
-      expect(back.fileChanges?.files, 1);
-      expect(back.fileChanges?.additions, 10);
-      expect(back.parts, hasLength(3));
-      expect(back.parts[0], isA<ThoughtPart>());
-      expect((back.parts[0] as ThoughtPart).durationMs, 3000);
-      expect(back.parts[1], isA<ToolPart>());
-      expect(back.parts[2], isA<TextPart>());
-      expect((back.parts[2] as TextPart).text, '结论');
-      expect(back.activities, hasLength(1));
-
-      await MessageCache.clearTask('task-x');
-    });
-  });
 }
