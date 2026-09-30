@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../theme/app_design_tokens.dart';
 
@@ -31,41 +32,44 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
     // 深色: 实色深底 + blur (不用半透明 surface, 那会偏白)
     // 浅色: 半透明白
     final bg = isDark
-        ? const Color(0xF008090A)  // 深底 #08090A @94% alpha (留 6% 透出模糊)
+        ? const Color(0xF008090A) // 深底 #08090A @94% alpha (留 6% 透出模糊)
         : Colors.white.withValues(alpha: 0.72);
     final borderColor = isDark
-        ? const Color(0x14FFFFFF)  // 半透明白边框
+        ? const Color(0x14FFFFFF) // 半透明白边框
         : Colors.black.withValues(alpha: 0.08);
     final inkColor = isDark ? const Color(0xFFF7F8F8) : Colors.black;
 
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: Container(
-          decoration: BoxDecoration(
-            color: bg,
-            border: Border(
-              bottom: BorderSide(color: borderColor),
+    // GlassAppBar 不是真正的 AppBar, 不会自动更新系统状态栏样式;
+    // 用 AnnotatedRegion 跟随主题切换状态栏图标亮度 (亮色下深色图标)。
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
+      child: ClipRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: Container(
+            decoration: BoxDecoration(
+              color: bg,
+              border: Border(bottom: BorderSide(color: borderColor)),
             ),
-          ),
-          child: SafeArea(
-            bottom: false,
-            child: SizedBox(
-              height: 56,
-              child: NavigationToolbar(
-                leading: leading,
-                middle: DefaultTextStyle.merge(
-                  style: TextStyle(
-                    fontSize: AppTextSizes.titleSm,
-                    fontWeight: FontWeight.w600,
-                    color: inkColor,
+            child: SafeArea(
+              bottom: false,
+              child: SizedBox(
+                height: 56,
+                child: NavigationToolbar(
+                  leading: leading,
+                  middle: DefaultTextStyle.merge(
+                    style: TextStyle(
+                      fontSize: AppTextSizes.titleSm,
+                      fontWeight: FontWeight.w600,
+                      color: inkColor,
+                    ),
+                    child: title,
                   ),
-                  child: title,
+                  trailing: actions != null
+                      ? Row(mainAxisSize: MainAxisSize.min, children: actions!)
+                      : null,
+                  centerMiddle: centerTitle,
                 ),
-                trailing: actions != null
-                    ? Row(mainAxisSize: MainAxisSize.min, children: actions!)
-                    : null,
-                centerMiddle: centerTitle,
               ),
             ),
           ),
@@ -95,9 +99,7 @@ class GlassBottomBar extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             color: bg,
-            border: Border(
-              top: BorderSide(color: borderColor),
-            ),
+            border: Border(top: BorderSide(color: borderColor)),
           ),
           child: SafeArea(top: false, child: child),
         ),

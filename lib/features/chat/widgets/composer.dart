@@ -564,6 +564,7 @@ class ComposerSendButton extends StatelessWidget {
     final color = isStop
         ? AppColors.danger
         : (enabled ? theme.colorScheme.primary : theme.colorScheme.outline);
+    final filled = isStop || enabled;
     return Container(
       margin: const EdgeInsets.only(bottom: 4),
       child: InkWell(
@@ -573,12 +574,17 @@ class ComposerSendButton extends StatelessWidget {
           width: 36,
           height: 36,
           decoration: BoxDecoration(
-            color: (isStop || enabled)
+            color: filled
                 ? color
                 : theme.colorScheme.surfaceContainerHighest,
             shape: BoxShape.circle,
           ),
-          child: Icon(icon, size: 20, color: Colors.white),
+          // 图标色跟随主题: 禁用态在浅色背景上用深色, 白色箭头不可见
+          child: Icon(
+            icon,
+            size: 20,
+            color: filled ? Colors.white : theme.colorScheme.onSurfaceVariant,
+          ),
         ),
       ),
     );
