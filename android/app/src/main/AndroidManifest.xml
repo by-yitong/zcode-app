@@ -9,6 +9,9 @@
          消息中继类用 remoteMessaging 无此限制) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING"/>
+    <!-- 悬浮窗进度监视器 (flutter_overlay_window): 显示在其他应用上层 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
     <application
         android:label="ZCode"
         android:name="${applicationName}"
@@ -46,6 +49,17 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- 悬浮窗服务 (flutter_overlay_window 插件): Android 14+ 要求 specialUse
+             前台服务类型并说明用途 -->
+        <service
+            android:name="flutter.overlay.window.flutter_overlay_window.OverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="悬浮窗进度监视器: 在其他应用上方显示 AI 会话输出"/>
+        </service>
 
         <!-- 应用内更新: 通过 FileProvider 暴露下载的 APK 给系统安装器 -->
         <provider

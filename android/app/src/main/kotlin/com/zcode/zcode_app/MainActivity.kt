@@ -10,6 +10,7 @@ import java.io.File
 
 class MainActivity : FlutterActivity() {
     private val channelName = "app/updater"
+    private val pipChannelName = "app/pip"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -36,6 +37,30 @@ class MainActivity : FlutterActivity() {
                             result.success(true)
                         } catch (e: Exception) {
                             result.error("install_failed", e.message, null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        // 悬浮窗进度监视器: 悬浮窗独立引擎里轻点会话页 → 主 App 回前台
+        // (悬浮窗引擎无法启动 Activity, 必须经主引擎转调)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, pipChannelName)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "bringToForeground" -> {
+                        try {
+                            val launch = packageManager
+                                .getLaunchIntentForPackage(packageName)
+                                ?.apply {
+                                    addFlags(
+                                        Intent.FLAG_ACTIVITY_NEW_TASK or
+                                            Intent.FLAG_ACTIVITY_SINGLE_TOP
+                                    )
+                                }
+                            if (launch != null) startActivity(launch)
+                            result.success(launch != null)
+                        } catch (e: Exception) {
+                            result.error("foreground_failed", e.message, null)
                         }
                     }
                     else -> result.notImplemented()
