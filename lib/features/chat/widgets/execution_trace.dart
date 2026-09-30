@@ -1,10 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
 import '../../../providers/chat_provider.dart';
 import '../../../shared/theme/app_design_tokens.dart';
-import '../../../shared/theme/chat_markdown_style.dart';
 import 'chat_helpers.dart';
 import 'thought_block.dart';
 import 'tool_activity.dart';
@@ -16,7 +16,8 @@ import 'tool_activity.dart';
 /// 消息未变时整个 MessageBubble 走签名缓存整棵跳过, 投影天然不重跑。
 ///
 /// 视觉: 无边框轻量 Activity List (深色开发者工具风), 点击节点弹
-/// DraggableScrollableSheet 查看详情; 子代理节点点击展开 children。
+/// DraggableScrollableSheet 查看详情; 子代理节点同样弹底部弹窗
+/// (子会话运行消息懒加载内嵌, 不再内联展开)。
 
 enum ExecutionStatus { pending, running, success, error, cancelled }
 
@@ -58,6 +59,14 @@ ExecutionStatus _toolStatus(String s) => switch (s) {
       'started' ||
       'progress' => ExecutionStatus.running,
       _ => ExecutionStatus.success,
+    };
+
+/// 子代理行 wire 状态 → 弹窗头部状态 (wire 四态: running/success/failed/cancelled)
+ExecutionStatus _mapSubagentStatus(String s) => switch (s) {
+      'running' => ExecutionStatus.running,
+      'failed' => ExecutionStatus.error,
+      'cancelled' => ExecutionStatus.cancelled,
+      _ => ExecutionStatus.success, // success / 未知
     };
 
 /// 执行类 part → node (TextPart 不进 trace, 由调用方渲染正文)
@@ -296,12 +305,17 @@ class ExecutionNodeList extends StatelessWidget {
   final Future<List<MessagePart>> Function(String childSessionId)?
       onLoadChildren;
 
+  /// 实时刷新器 (null = 无实时能力, 弹窗退化为打开时快照)
+  final Future<({List<MessagePart> parts, String? status})> Function(
+      String childSessionId)? onLiveRefresh;
+
   const ExecutionNodeList({
     super.key,
     required this.nodes,
     required this.theme,
     required this.inkColor,
     this.onLoadChildren,
+    this.onLiveRefresh,
   });
 
   @override
@@ -316,6 +330,7 @@ class ExecutionNodeList extends StatelessWidget {
             theme: theme,
             inkColor: inkColor,
             onLoadChildren: onLoadChildren,
+            onLiveRefresh: onLiveRefresh,
           ),
       ],
     );
@@ -331,12 +346,17 @@ class ExecutionNodeWidget extends StatefulWidget {
       onLoadChildren;
   final int depth;
 
+  /// 实时刷新器 (null = 无实时能力, 弹窗退化为打开时快照)
+  final Future<({List<MessagePart> parts, String? status})> Function(
+      String childSessionId)? onLiveRefresh;
+
   const ExecutionNodeWidget({
     super.key,
     required this.node,
     required this.theme,
     required this.inkColor,
     this.onLoadChildren,
+    this.onLiveRefresh,
     this.depth = 0,
   });
 
@@ -346,37 +366,18 @@ class ExecutionNodeWidget extends StatefulWidget {
 
 class _ExecutionNodeWidgetState extends State<ExecutionNodeWidget> {
   bool _childrenExpanded = false;
-  List<ExecutionNode>? _children;
-  bool _loading = false;
-  String? _error;
-
-  Future<void> _ensureChildren() async {
-    final loader = widget.onLoadChildren;
-    final sid = widget.node.subagent?.childSessionId;
-    if (loader == null || sid == null || _children != null || _loading) {
-      return;
-    }
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final parts = await loader(sid);
-      if (!mounted) return;
-      setState(() => _children = buildExecutionNodes(parts));
-    } catch (_) {
-      if (mounted) setState(() => _error = '子任务详情加载失败');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
 
   void _onTap() {
     final n = widget.node;
     if (n.kind == ExecutionNodeKind.subagent) {
-      // 子代理: 点击 = 展开/收起 children (完整 input/output 走详情入口)
-      setState(() => _childrenExpanded = !_childrenExpanded);
-      if (_childrenExpanded) _ensureChildren();
+      // 子代理: 点击 = 底部弹窗查看子会话运行消息 (不再内联展开撑高消息流)
+      showExecutionDetail(
+        context,
+        n,
+        widget.theme,
+        onLoadChildren: widget.onLoadChildren,
+        onLiveRefresh: widget.onLiveRefresh,
+      );
       return;
     }
     if (n.kind == ExecutionNodeKind.explore && n.children.isNotEmpty) {
@@ -397,14 +398,13 @@ class _ExecutionNodeWidgetState extends State<ExecutionNodeWidget> {
       ExecutionStatus.cancelled => theme.colorScheme.onSurfaceVariant,
       _ => theme.colorScheme.onSurfaceVariant,
     };
-    final hasChildrenHandle =
-        n.kind == ExecutionNodeKind.subagent &&
+    // 子代理: 有下钻句柄 → 右箭头示意"打开详情弹窗"
+    final opensDetail = n.kind == ExecutionNodeKind.subagent &&
         n.subagent?.childSessionId != null &&
         widget.onLoadChildren != null;
     // 探索组: 子工具行已内联, 直接可展开
     final expandableExplore =
         n.kind == ExecutionNodeKind.explore && n.children.isNotEmpty;
-    final expandable = hasChildrenHandle || expandableExplore;
 
     // 新节点出现: 轻微淡入 (一次性, 不抢戏)
     return TweenAnimationBuilder<double>(
@@ -476,7 +476,7 @@ class _ExecutionNodeWidgetState extends State<ExecutionNodeWidget> {
                     ),
                     const SizedBox(width: 6),
                     _buildStatus(statusColor),
-                    if (expandable) ...[
+                    if (expandableExplore) ...[
                       const SizedBox(width: 2),
                       Icon(
                         _childrenExpanded
@@ -485,56 +485,38 @@ class _ExecutionNodeWidgetState extends State<ExecutionNodeWidget> {
                         size: 16,
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
+                    ] else if (opensDetail) ...[
+                      const SizedBox(width: 2),
+                      Icon(
+                        Icons.keyboard_arrow_right,
+                        size: 16,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
                     ],
                   ],
                 ),
               ),
             ),
-            // 子代理 children / 探索组子工具行 (递归, 轻微缩进)
-            if (expandable && _childrenExpanded)
+            // 探索组子工具行 (递归, 轻微缩进)
+            if (expandableExplore && _childrenExpanded)
               AnimatedSize(
                 duration: const Duration(milliseconds: 200),
                 curve: Curves.easeInOut,
-              child: Padding(
-                padding: const EdgeInsets.only(
-                  top: AppSpacing.xs,
-                  left: AppSpacing.md,
-                ),
-                  child: _loading
-                      ? Row(
-                          children: [
-                            const SizedBox(
-                              width: 12,
-                              height: 12,
-                              child: CircularProgressIndicator(strokeWidth: 1.5),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              '加载子任务…',
-                              style: TextStyle(
-                                fontSize: AppTextSizes.label,
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        )
-                      : _error != null
-                          ? Text(
-                              _error!,
-                              style: TextStyle(
-                                fontSize: AppTextSizes.label,
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            )
-                          : ExecutionNodeList(
-                              nodes: _children ?? n.children,
-                              theme: theme,
-                              inkColor: widget.inkColor,
-                              onLoadChildren: widget.onLoadChildren,
-                            ),
+                child: Padding(
+                  padding: const EdgeInsets.only(
+                    top: AppSpacing.xs,
+                    left: AppSpacing.md,
+                  ),
+                  child: ExecutionNodeList(
+                    nodes: n.children,
+                    theme: theme,
+                    inkColor: widget.inkColor,
+                    onLoadChildren: widget.onLoadChildren,
+                    onLiveRefresh: widget.onLiveRefresh,
+                  ),
                 ),
               ),
-          ],
+            ],
         ),
       ),
     );
@@ -563,12 +545,24 @@ IconData _iconFor(ExecutionNodeKind k) => switch (k) {
     };
 
 /// ── 详情 Bottom Sheet (DraggableScrollableSheet) ──
-void showExecutionDetail(BuildContext context, ExecutionNode node, ThemeData theme) {
+void showExecutionDetail(
+  BuildContext context,
+  ExecutionNode node,
+  ThemeData theme, {
+  Future<List<MessagePart>> Function(String childSessionId)? onLoadChildren,
+  Future<({List<MessagePart> parts, String? status})> Function(
+      String childSessionId)? onLiveRefresh,
+}) {
   showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (ctx) => _ExecutionDetailSheet(node: node, theme: theme),
+    builder: (ctx) => _ExecutionDetailSheet(
+      node: node,
+      theme: theme,
+      onLoadChildren: onLoadChildren,
+      onLiveRefresh: onLiveRefresh,
+    ),
   );
 }
 
@@ -576,7 +570,20 @@ class _ExecutionDetailSheet extends StatefulWidget {
   final ExecutionNode node;
   final ThemeData theme;
 
-  const _ExecutionDetailSheet({required this.node, required this.theme});
+  /// 子代理 children 懒加载器 (null = 无下钻能力)
+  final Future<List<MessagePart>> Function(String childSessionId)?
+      onLoadChildren;
+
+  /// 实时刷新器 (null = 无实时能力, 弹窗退化为打开时快照)
+  final Future<({List<MessagePart> parts, String? status})> Function(
+      String childSessionId)? onLiveRefresh;
+
+  const _ExecutionDetailSheet({
+    required this.node,
+    required this.theme,
+    this.onLoadChildren,
+    this.onLiveRefresh,
+  });
 
   @override
   State<_ExecutionDetailSheet> createState() => _ExecutionDetailSheetState();
@@ -585,6 +592,73 @@ class _ExecutionDetailSheet extends StatefulWidget {
 class _ExecutionDetailSheetState extends State<_ExecutionDetailSheet> {
   final DraggableScrollableController _sheetController =
       DraggableScrollableController();
+
+  // 子代理: 弹窗打开即拉子会话运行消息 (一次性快照, 失败降级为仅摘要)
+  List<ExecutionNode>? _childNodes;
+  bool _loadingChildren = false;
+  String? _childrenError;
+
+  // 弹窗打开期间: 子代理还在运行 → 每 2s 轮询强刷内容 + 实时状态
+  Timer? _liveTimer;
+  String? _liveStatus;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.node.kind == ExecutionNodeKind.subagent) _ensureChildren();
+    if (widget.node.kind == ExecutionNodeKind.subagent &&
+        widget.node.status == ExecutionStatus.running &&
+        widget.onLiveRefresh != null &&
+        widget.node.subagent?.childSessionId != null) {
+      _liveTimer = Timer.periodic(
+        const Duration(seconds: 2),
+        (_) => _pollLive(),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _liveTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _pollLive() async {
+    final refresh = widget.onLiveRefresh;
+    final sid = widget.node.subagent?.childSessionId;
+    if (refresh == null || sid == null || sid.isEmpty) return;
+    try {
+      final r = await refresh(sid);
+      if (!mounted) return;
+      setState(() {
+        _childNodes = buildExecutionNodes(r.parts);
+        _loadingChildren = false;
+        _liveStatus = r.status;
+      });
+      final running = r.status == null
+          ? hasRunningActivity(r.parts) // 嵌套子代理: 用内容判断
+          : r.status == 'running'; // 顶层: 用权威行状态
+      if (!running) _liveTimer?.cancel();
+    } catch (_) {
+      // 单次轮询失败不中断轮询 (下个 tick 重试), 不弹错
+    }
+  }
+
+  Future<void> _ensureChildren() async {
+    final loader = widget.onLoadChildren;
+    final sid = widget.node.subagent?.childSessionId;
+    if (loader == null || sid == null || _childNodes != null) return;
+    setState(() => _loadingChildren = true);
+    try {
+      final parts = await loader(sid);
+      if (!mounted) return;
+      setState(() => _childNodes = buildExecutionNodes(parts));
+    } catch (_) {
+      if (mounted) setState(() => _childrenError = '子任务详情加载失败');
+    } finally {
+      if (mounted) setState(() => _loadingChildren = false);
+    }
+  }
 
   static const double _minSize = 0.3;
   static const double _maxSize = 0.92;
@@ -676,6 +750,11 @@ class _ExecutionDetailSheetState extends State<_ExecutionDetailSheet> {
 
   Widget _buildContent(BuildContext context, ThemeData theme) {
     final n = widget.node;
+    // 子代理: 轮询期间用实时行状态, 不再用打开那一刻的快照
+    final status = widget.node.kind == ExecutionNodeKind.subagent &&
+            _liveStatus != null
+        ? _mapSubagentStatus(_liveStatus!)
+        : n.status;
     final typeLabel = switch (n.kind) {
       ExecutionNodeKind.thinking => '思考过程',
       ExecutionNodeKind.tool => 'Tool Call',
@@ -707,17 +786,17 @@ class _ExecutionDetailSheetState extends State<_ExecutionDetailSheet> {
         Row(
           children: [
             Icon(
-              n.status == ExecutionStatus.error
+              status == ExecutionStatus.error
                   ? Icons.error_outline
                   : Icons.check_circle_outline,
               size: 14,
-              color: n.status == ExecutionStatus.error
+              color: status == ExecutionStatus.error
                   ? AppColors.danger
                   : AppColors.success,
             ),
             const SizedBox(width: 5),
             Text(
-              switch (n.status) {
+              switch (status) {
                 ExecutionStatus.running => '执行中',
                 ExecutionStatus.error => '执行失败',
                 ExecutionStatus.cancelled => '已取消',
@@ -751,6 +830,56 @@ class _ExecutionDetailSheetState extends State<_ExecutionDetailSheet> {
           _kv(theme, '类型', n.subagent?.subagentType ?? ''),
           if (n.subtitle != null && n.subtitle!.isNotEmpty)
             _kv(theme, '摘要', n.subtitle!),
+          // 子会话运行消息 (懒加载快照; 嵌套子代理再点继续弹窗下钻)
+          if (widget.onLoadChildren != null &&
+              n.subagent?.childSessionId != null) ...[
+            const SizedBox(height: AppSpacing.md),
+            _sectionLabel(theme, '运行消息'),
+            if (_loadingChildren)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                child: Row(
+                  children: [
+                    const SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(strokeWidth: 1.5),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '加载子任务详情…',
+                      style: TextStyle(
+                        fontSize: AppTextSizes.label,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else if (_childrenError != null)
+              Text(
+                _childrenError!,
+                style: TextStyle(
+                  fontSize: AppTextSizes.label,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              )
+            else if (_childNodes != null && _childNodes!.isNotEmpty)
+              ExecutionNodeList(
+                nodes: _childNodes!,
+                theme: theme,
+                inkColor: theme.colorScheme.onSurface,
+                onLoadChildren: widget.onLoadChildren,
+              )
+            else if (_childNodes != null)
+              Text(
+                '子会话无可展示的过程行',
+                style: TextStyle(
+                  fontSize: AppTextSizes.label,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+          ],
         ],
         // Arguments
         if (n.activity?.input != null && n.activity!.input!.isNotEmpty) ...[

@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
 
 import '../../../core/relay/relay_events.dart';
 import '../../../providers/chat_provider.dart';
 import '../../../shared/theme/app_design_tokens.dart';
-import '../../../shared/theme/chat_markdown_style.dart';
+import '../../../shared/widgets/ai_markdown.dart';
 import 'chat_helpers.dart';
-import 'code_block.dart';
 
 class PlanCard extends StatefulWidget {
   final ToolActivity activity;
@@ -41,37 +39,6 @@ class PlanCardState extends State<PlanCard>
   /// 历史计划默认折叠; 待确认(plan permission pending)时默认展开
   bool get _defaultExpanded => widget.permission != null;
   late bool _expanded = _defaultExpanded;
-
-  // styleSheet 引用相等才不重解析 (见 _MessageBubbleState 同款注释)
-  ThemeData? _styleTheme;
-  MarkdownStyleSheet? _planStyle;
-  Map<String, MarkdownElementBuilder>? _planBuilders;
-
-  MarkdownStyleSheet _style(ThemeData theme) {
-    if (_planStyle == null || !identical(_styleTheme, theme)) {
-      _styleTheme = theme;
-      _planStyle = MarkdownStyleSheet.fromTheme(theme).copyWith(
-        p: theme.textTheme.bodySmall,
-        h1: theme.textTheme.titleSmall,
-        h2: theme.textTheme.titleSmall,
-        h3: theme.textTheme.titleSmall,
-        listBullet: theme.textTheme.bodySmall,
-        code: theme.textTheme.bodySmall?.copyWith(
-          fontFamily: 'monospace',
-          backgroundColor: theme.colorScheme.surfaceContainerLowest,
-        ),
-        codeblockDecoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerLowest,
-          borderRadius: BorderRadius.circular(AppRadius.sm),
-        ),
-      );
-    }
-    return _planStyle!;
-  }
-
-  Map<String, MarkdownElementBuilder> _builders(ThemeData theme) {
-    return _planBuilders ??= {'pre': CodeBlockBuilder(theme: theme)};
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -165,11 +132,14 @@ class PlanCardState extends State<PlanCard>
                       right: AppSpacing.sm + 2,
                       bottom: isPending ? 0 : AppSpacing.sm + 2,
                     ),
-                    child: MarkdownBody(
+                    child: AiMarkdown(
                       data: planText,
-                      selectable: true,
-                      styleSheet: _style(theme),
-                      builders: _builders(theme),
+                      ink: theme.colorScheme.onSurface,
+                      codeBg: theme.colorScheme.surfaceContainerLowest,
+                      minimal: true,
+                      bodyStyle: theme.textTheme.bodySmall,
+                      // 旧 fromTheme 把 h1-h3 降为 titleSmall; 这里整体覆盖
+                      headingBase: theme.textTheme.titleSmall,
                     ),
                   )
                 // 收起时显示前几行预览 (取纯文本, 最多7行)

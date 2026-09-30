@@ -1,81 +1,24 @@
+import 'dart:async';
+
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../../core/logging/app_logger.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:gpt_markdown/gpt_markdown.dart';
 
 import '../../../core/relay/relay_events.dart';
 import '../../../providers/chat_provider.dart';
 import '../../../shared/theme/app_design_tokens.dart';
-import '../../../shared/theme/chat_markdown_style.dart';
+import '../../../shared/widgets/ai_markdown.dart';
 import 'agent_card.dart';
 import 'chat_helpers.dart';
 import 'execution_trace.dart';
-import 'code_block.dart';
 import 'plan_card.dart';
 import 'thought_block.dart';
 import 'tool_activity.dart';
 import 'work_history.dart';
-
-class MarkdownSegment {
-  final String text;
-  final bool isTable;
-  const MarkdownSegment(this.text, this.isTable);
-}
-
-/// 将 markdown 文本按 GFM 表格块拆分。
-/// 表格块: 连续以 `|` 开头的行, 且第二行是分隔符 (|---|---|)
-/// 其余为普通文本段。
-List<MarkdownSegment> splitMarkdownByTables(String text) {
-  final lines = text.split('\n');
-  final segments = <MarkdownSegment>[];
-  final buf = StringBuffer();
-  int i = 0;
-
-  while (i < lines.length) {
-    final line = lines[i];
-    final trimmed = line.trimLeft();
-
-    // 检测表格起始: 当前行以 | 开头, 且下一行是分隔符
-    if (trimmed.startsWith('|') &&
-        i + 1 < lines.length &&
-        isTableSeparator(lines[i + 1])) {
-      // flush 文本缓冲
-      if (buf.isNotEmpty) {
-        segments.add(MarkdownSegment(buf.toString(), false));
-        buf.clear();
-      }
-      // 收集所有表格行
-      final tableLines = <String>[];
-      while (i < lines.length && lines[i].trimLeft().startsWith('|')) {
-        tableLines.add(lines[i]);
-        i++;
-      }
-      segments.add(MarkdownSegment(tableLines.join('\n'), true));
-    } else {
-      buf.writeln(line);
-      i++;
-    }
-  }
-  if (buf.isNotEmpty) {
-    segments.add(MarkdownSegment(buf.toString(), false));
-  }
-  return segments;
-}
-
-/// 判断是否是 GFM 表格分隔行: |---|:---:|---|
-bool isTableSeparator(String line) {
-  final t = line.trim();
-  if (!t.contains('-') || !t.contains('|')) return false;
-  final cleaned = t
-      .replaceAll('|', '')
-      .replaceAll('-', '')
-      .replaceAll(':', '')
-      .replaceAll(' ', '');
-  return cleaned.isEmpty;
-}
 
 /// 消息气泡 (用户/AI/错误)
 class MessageBubble extends StatefulWidget {
@@ -111,6 +54,13 @@ class MessageBubble extends StatefulWidget {
   final Future<List<MessagePart>> Function(String childSessionId)?
       subagentLoader;
 
+  /// ★ 子代理详情弹窗实时刷新器 (chat_screen 注入)
+  final Future<({List<MessagePart> parts, String? status})> Function(
+      String childSessionId)? subagentLiveRefresh;
+
+  /// ★ 附件图片读回器 (V4 ref → bytes; null = 不读回只显示占位)
+  final Future<Uint8List?> Function(String attachmentRef)? attachmentLoader;
+
   const MessageBubble({
     required this.message,
     required this.theme,
@@ -121,6 +71,8 @@ class MessageBubble extends StatefulWidget {
     this.planPermission,
     this.onRespondPermission,
     this.subagentLoader,
+    this.subagentLiveRefresh,
+    this.attachmentLoader,
   });
 
   @override
@@ -128,53 +80,6 @@ class MessageBubble extends StatefulWidget {
 }
 
 class MessageBubbleState extends State<MessageBubble> {
-  // ── Markdown 样式记忆化 ──
-  // flutter_markdown 以 styleSheet 引用相等 (无 == 重载) 判断是否重解析;
-  // 每次 build 新建实例会让流式消息里早已写完的正文段也每帧全量重解析。
-  ThemeData? _mdStyleTheme;
-  Color? _mdStyleInk;
-  Color? _mdStyleCodeBg;
-  MarkdownStyleSheet? _mdStyle;
-  Map<String, MarkdownElementBuilder>? _mdBuilders;
-  ThemeData? _mdBuildersTheme;
-
-  /// AI 正文样式 (同一 theme/ink/codeBg 下复用同一实例)
-  MarkdownStyleSheet _assistantStyle(ThemeData theme, Color ink, Color codeBg) {
-    if (_mdStyle == null ||
-        !identical(_mdStyleTheme, theme) ||
-        _mdStyleInk != ink ||
-        _mdStyleCodeBg != codeBg) {
-      _mdStyleTheme = theme;
-      _mdStyleInk = ink;
-      _mdStyleCodeBg = codeBg;
-      _mdStyle = chatMarkdownStyleSheet(theme, ink: ink, codeBg: codeBg);
-    }
-    return _mdStyle!;
-  }
-
-  /// 'pre' 构建器 (代码块), 按 theme 复用
-  Map<String, MarkdownElementBuilder> _preBuilders(ThemeData theme) {
-    if (_mdBuilders == null || !identical(_mdBuildersTheme, theme)) {
-      _mdBuildersTheme = theme;
-      _mdBuilders = {'pre': CodeBlockBuilder(theme: theme)};
-    }
-    return _mdBuilders!;
-  }
-
-  /// 用户气泡样式 (颜色全部固定, 整个 State 生命周期只建一份)
-  late final MarkdownStyleSheet _userStyle = MarkdownStyleSheet(
-    p: const TextStyle(
-      color: Colors.white,
-      fontSize: AppTextSizes.bodyMd,
-      height: 1.5,
-    ),
-    code: TextStyle(
-      backgroundColor: Colors.black26,
-      fontSize: AppTextSizes.bodySm,
-      fontFamily: kMonoFont,
-    ),
-  );
-
   /// 从 markdown content 中提取 data URI 图片, 返回 (图片列表, 去除图片后的文本)
   (List<String> images, String text) _extractImages(String content) {
     final images = <String>[];
@@ -254,7 +159,31 @@ class MessageBubbleState extends State<MessageBubble> {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // 图片
+                      // V4 附件缩略图网格 (≤3 张一行; 点击不放大, 本期无查看器)
+                      if (message.attachments.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+                          child: Wrap(
+                            spacing: AppSpacing.xs,
+                            runSpacing: AppSpacing.xs,
+                            children: [
+                              for (final a in message.attachments)
+                                ClipRRect(
+                                  borderRadius:
+                                      BorderRadius.circular(AppRadius.sm),
+                                  child: SizedBox(
+                                    width: 88,
+                                    height: 88,
+                                    child: _AttachmentThumb(
+                                      attachment: a,
+                                      loader: widget.attachmentLoader,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      // 旧路径: markdown data-URI 图片 (历史消息兼容, 保持不动)
                       for (final dataUri in images)
                         ClipRRect(
                           borderRadius: BorderRadius.circular(AppRadius.sm),
@@ -268,7 +197,25 @@ class MessageBubbleState extends State<MessageBubble> {
                         ),
                       // 文本 (有图片或有文字时才显示)
                       if (text.isNotEmpty)
-                        MarkdownBody(data: text, styleSheet: _userStyle),
+                        AiMarkdown(
+                          data: text,
+                          ink: Colors.white,
+                          codeBg: Colors.black26,
+                          minimal: true,
+                          bodyStyle: const TextStyle(
+                            color: Colors.white,
+                            fontSize: AppTextSizes.bodyMd,
+                            height: 1.5,
+                          ),
+                          inlineCode: const InlineCodeStyle(
+                            fontFamily: kMonoFont,
+                            color: Colors.white,
+                            backgroundColor: Colors.black26,
+                            borderColor: Colors.transparent,
+                            fontSizeFactor:
+                                AppTextSizes.bodySm / AppTextSizes.bodyMd,
+                          ),
+                        ),
                     ],
                   );
                 },
@@ -338,19 +285,18 @@ class MessageBubbleState extends State<MessageBubble> {
     );
   }
 
-  /// markdown 链接点击 → 外部浏览器打开
-  Future<void> _onMarkdownLink(String text, String? href, String? title) async {
-    if (href == null) return;
+  /// markdown 链接点击 → 外部浏览器打开 (gpt_markdown 签名: url + title)
+  Future<void> _onMarkdownLink(String url, String title) async {
     try {
-      await launchUrl(Uri.parse(href), mode: LaunchMode.externalApplication);
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
     } catch (_) {
       // 无可处理的应用时静默忽略
     }
   }
 
-  /// AI 气泡的 Markdown 正文块 (统一样式见 chatMarkdownStyleSheet, 两种渲染路径共用)。
-  /// 提取并独立渲染 data URI 图片 (MarkdownBody 无法渲染 data: URI)。
-  /// ★ 表格 (GFM table) 单独拆出, 用横向滚动渲染, 不受气泡宽度限制。
+  /// AI 气泡的 Markdown 正文块 (统一样式见 AiMarkdown)。
+  /// 提取并独立渲染 data URI 图片 (gpt_markdown 对 data: URI 的支持未验证,
+  /// 保持既有提取流程)。整段文本一次渲染, 表格横向滚动由包内建视口承担。
   Widget _buildMarkdown(
     String data,
     ThemeData theme,
@@ -358,51 +304,9 @@ class MessageBubbleState extends State<MessageBubble> {
     Color aiCodeBg,
   ) {
     final (images, cleanText) = _extractImages(data);
-    final segments = splitMarkdownByTables(cleanText);
-    final styleSheet = _assistantStyle(theme, aiInk, aiCodeBg);
-    final borderColor = theme.colorScheme.outlineVariant.withValues(alpha: 0.4);
 
-    final widgets = <Widget>[];
-
-    for (final seg in segments) {
-      if (seg.isTable) {
-        // ★ 表格: 横向滚动 + 圆角 + 边框, 不压缩列宽
-        widgets.add(
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(AppRadius.sm),
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(AppRadius.sm),
-                  border: Border.all(color: borderColor),
-                ),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: MarkdownBody(
-                    data: seg.text,
-                    styleSheet: styleSheet,
-                    onTapLink: _onMarkdownLink,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      } else if (seg.text.trim().isNotEmpty) {
-        widgets.add(
-          MarkdownBody(
-            data: seg.text,
-            styleSheet: styleSheet,
-            onTapLink: _onMarkdownLink,
-            builders: _preBuilders(theme),
-          ),
-        );
-      }
-    }
-
-    // 前置图片
     final allChildren = <Widget>[];
+    // 前置图片
     for (final dataUri in images) {
       allChildren.add(
         Padding(
@@ -417,9 +321,20 @@ class MessageBubbleState extends State<MessageBubble> {
         ),
       );
     }
-    allChildren.addAll(widgets);
+    if (cleanText.trim().isNotEmpty) {
+      allChildren.add(
+        AiMarkdown(
+          data: cleanText,
+          ink: aiInk,
+          codeBg: aiCodeBg,
+          isStreaming: widget.isResponding,
+          onLinkTap: _onMarkdownLink,
+        ),
+      );
+    }
 
     if (allChildren.length == 1) return allChildren.first;
+    if (allChildren.isEmpty) return const SizedBox.shrink();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -455,6 +370,9 @@ class MessageBubbleState extends State<MessageBubble> {
       // 执行类 part (思考/工具/MCP/子代理) 连续累积, 遇到正文/计划卡时
       // flush 成一段 Execution Trace (无边框 Activity List, 点击弹详情)。
       final pendingParts = <MessagePart>[];
+      // 连续 TextPart 合并后整体渲染 — 流式增量会把同一段正文切成多个
+      // part, 表格被拦腰切断后 (单段无表头+分隔行组合) 无法识别为表格段
+      final textBuf = StringBuffer();
       List<Widget> buildRange(List<MessagePart> range) {
         final out = <Widget>[];
         void flushTrace() {
@@ -470,18 +388,25 @@ class MessageBubbleState extends State<MessageBubble> {
                 theme: theme,
                 inkColor: aiInk,
                 onLoadChildren: widget.subagentLoader,
+                onLiveRefresh: widget.subagentLiveRefresh,
               ),
             ),
           );
         }
 
+        void flushText() {
+          if (textBuf.isEmpty) return;
+          flushTrace();
+          out.add(_buildMarkdown(textBuf.toString(), theme, aiInk, aiCodeBg));
+          textBuf.clear();
+        }
+
         for (final part in range) {
           switch (part) {
             case TextPart(:final text):
-              flushTrace();
-              out.add(_buildMarkdown(text, theme, aiInk, aiCodeBg));
+              textBuf.write(text);
             case StepPart():
-              flushTrace();
+              flushText();
               // 只在 step-finish 后插入分隔线 (表示一个步骤完成)
               if (!part.isStart && out.isNotEmpty) {
                 out.add(
@@ -499,9 +424,11 @@ class MessageBubbleState extends State<MessageBubble> {
                 );
               }
             case SubagentPart():
+              flushText();
               pendingParts.add(part);
             case ToolPart(:final activity):
               if (isPlanTool(activity)) {
+                flushText();
                 flushTrace();
                 out.add(
                   Padding(
@@ -516,12 +443,15 @@ class MessageBubbleState extends State<MessageBubble> {
                   ),
                 );
               } else {
+                flushText();
                 pendingParts.add(part);
               }
             case ThoughtPart():
+              flushText();
               pendingParts.add(part);
           }
         }
+        flushText();
         flushTrace();
         return out;
       }
@@ -869,5 +799,62 @@ class MessageBubbleState extends State<MessageBubble> {
   }
 }
 
-/// 赞/踩按钮 (小尺寸, inline)
-/// 判断工具活动是否是计划工具 (ExitPlanMode / switch_mode)
+/// 附件缩略图 (用户消息): localBytes 优先 (发送中乐观回显, 零开销),
+/// 否则按 ref 经 attachmentLoader 读回 (读回结果缓存在 provider 侧,
+/// 32MB 上限; 加载中显示占位)。
+class _AttachmentThumb extends StatefulWidget {
+  final UserAttachment attachment;
+  final Future<Uint8List?> Function(String attachmentRef)? loader;
+
+  const _AttachmentThumb({required this.attachment, this.loader});
+
+  @override
+  State<_AttachmentThumb> createState() => _AttachmentThumbState();
+}
+
+class _AttachmentThumbState extends State<_AttachmentThumb> {
+  Uint8List? _bytes;
+
+  @override
+  void initState() {
+    super.initState();
+    _bytes = widget.attachment.localBytes;
+    if (_bytes == null) unawaited(_load());
+  }
+
+  @override
+  void didUpdateWidget(covariant _AttachmentThumb old) {
+    super.didUpdateWidget(old);
+    // 乐观消息 → row 落地: localBytes 在则继续用, 避免 ref 读回前的空窗
+    if (widget.attachment.localBytes != null &&
+        widget.attachment.localBytes != _bytes) {
+      _bytes = widget.attachment.localBytes;
+    }
+  }
+
+  Future<void> _load() async {
+    final ref = widget.attachment.ref;
+    if (ref.isEmpty || widget.loader == null) return;
+    final bytes = await widget.loader!(ref);
+    if (mounted && bytes != null) setState(() => _bytes = bytes);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = _bytes;
+    if (bytes != null) {
+      return Image.memory(bytes, fit: BoxFit.cover, gaplessPlayback: true);
+    }
+    // 加载中/读回失败占位 (纯图片消息时撑起 88px 方块)
+    final theme = Theme.of(context);
+    return Container(
+      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+      alignment: Alignment.center,
+      child: const Icon(
+        Icons.image_outlined,
+        size: 20,
+        color: Colors.white70,
+      ),
+    );
+  }
+}

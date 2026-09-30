@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:gpt_markdown/gpt_markdown.dart';
 
 import '../../../providers/chat_provider.dart';
 import '../../../shared/theme/app_design_tokens.dart';
-import '../../../shared/theme/chat_markdown_style.dart';
+import '../../../shared/widgets/ai_markdown.dart';
 
 class ApprovalCard extends StatelessWidget {
   final PendingPermission perm;
@@ -386,24 +386,26 @@ class PlanApprovalCard extends StatelessWidget {
               borderRadius: BorderRadius.circular(AppRadius.sm),
             ),
             child: SingleChildScrollView(
-              child: MarkdownBody(
+              child: AiMarkdown(
                 data: display,
-                styleSheet: MarkdownStyleSheet(
-                  p: TextStyle(
-                    fontSize: AppTextSizes.bodySm,
-                    height: 1.5,
-                    color: theme.colorScheme.onSurface,
-                  ),
-                  h2: TextStyle(
-                    fontSize: AppTextSizes.body,
-                    fontWeight: FontWeight.w600,
-                    color: theme.colorScheme.onSurface,
-                  ),
-                  code: TextStyle(
-                    backgroundColor: theme.colorScheme.surfaceContainerHigh,
-                    fontSize: AppTextSizes.label,
-                    fontFamily: kMonoFont,
-                  ),
+                ink: theme.colorScheme.onSurface,
+                codeBg: theme.colorScheme.surfaceContainerHigh,
+                minimal: true,
+                bodyStyle: TextStyle(
+                  fontSize: AppTextSizes.bodySm,
+                  height: 1.5,
+                  color: theme.colorScheme.onSurface,
+                ),
+                headingBase: TextStyle(
+                  fontSize: AppTextSizes.body,
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurface,
+                ),
+                inlineCode: InlineCodeStyle(
+                  fontFamily: kMonoFont,
+                  backgroundColor: theme.colorScheme.surfaceContainerHigh,
+                  borderColor: Colors.transparent,
+                  fontSizeFactor: AppTextSizes.label / AppTextSizes.bodySm,
                 ),
               ),
             ),
@@ -443,116 +445,59 @@ class PlanApprovalCard extends StatelessWidget {
   }
 }
 
-/// AskUserQuestion 交互式问题卡片
-///
-/// AI 调 AskUserQuestion 工具时, 此卡片渲染问题 + 选项,
-/// 用户点选后通过 onAnswer 回调提交。
-class QuestionCard extends StatefulWidget {
-  final AskUserQuestion question;
-  final void Function(List<String> selected) onAnswer;
+/// AI 提问提示条 — AskUserQuestion 挂起时常驻输入栏上方, 点击弹出答题底部弹窗
+class QuestionPendingBar extends StatelessWidget {
+  final VoidCallback onTap;
 
-  const QuestionCard({required this.question, required this.onAnswer});
-
-  @override
-  State<QuestionCard> createState() => QuestionCardState();
-}
-
-class QuestionCardState extends State<QuestionCard> {
-  String? _singleSelect;
-  final Set<String> _multiSelect = {};
+  const QuestionPendingBar({required this.onTap});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final q = widget.question;
-
-    return Container(
-      margin: const EdgeInsets.fromLTRB(
-        AppSpacing.md,
-        AppSpacing.sm,
-        AppSpacing.md,
-        AppSpacing.sm,
-      ),
-      padding: const EdgeInsets.all(AppSpacing.lg),
-      decoration: BoxDecoration(
-        color: AppColors.accentContainer,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(color: AppColors.accent.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // 标题行
-          Row(
+    return Material(
+      color: AppColors.accentContainer,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.sm + 2,
+          ),
+          child: Row(
             children: [
-              Icon(Icons.help_outline, size: 18, color: AppColors.accent),
+              const Icon(
+                Icons.help_outline,
+                size: 18,
+                color: AppColors.accent,
+              ),
               const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  'AI 有个问题等你回答',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: theme.colorScheme.onSurface,
+                  ),
+                ),
+              ),
               Text(
-                q.header.isNotEmpty ? q.header : 'AI 有个问题',
-                style: theme.textTheme.titleSmall?.copyWith(
+                '回答',
+                style: theme.textTheme.labelMedium?.copyWith(
                   color: AppColors.accent,
                   fontWeight: FontWeight.w600,
                 ),
               ),
+              const SizedBox(width: 2),
+              const Icon(
+                Icons.keyboard_double_arrow_down_rounded,
+                size: 16,
+                color: AppColors.accent,
+              ),
             ],
           ),
-          const SizedBox(height: AppSpacing.sm + 2),
-          // 问题文本
-          Text(
-            q.question,
-            style: theme.textTheme.bodyMedium?.copyWith(height: 1.5),
-          ),
-          const SizedBox(height: AppSpacing.md),
-          // 选项列表
-          ...q.options.map((opt) {
-            final isSelected = q.multiSelect
-                ? _multiSelect.contains(opt.label)
-                : _singleSelect == opt.label;
-            return QuestionOption(
-              label: opt.label,
-              description: opt.description,
-              selected: isSelected,
-              onTap: () {
-                setState(() {
-                  if (q.multiSelect) {
-                    if (_multiSelect.contains(opt.label)) {
-                      _multiSelect.remove(opt.label);
-                    } else {
-                      _multiSelect.add(opt.label);
-                    }
-                  } else {
-                    _singleSelect = opt.label;
-                  }
-                });
-              },
-            );
-          }),
-          // 提交按钮
-          const SizedBox(height: AppSpacing.md),
-          FilledButton.icon(
-            onPressed: _canSubmit()
-                ? () {
-                    final selected = q.multiSelect
-                        ? _multiSelect.toList()
-                        : [_singleSelect!];
-                    widget.onAnswer(selected);
-                  }
-                : null,
-            icon: const Icon(Icons.check, size: 18),
-            label: Text(q.multiSelect ? '提交选择' : '确认'),
-            style: FilledButton.styleFrom(
-              minimumSize: const Size.fromHeight(44),
-            ),
-          ),
-        ],
+        ),
       ),
     );
-  }
-
-  bool _canSubmit() {
-    if (widget.question.multiSelect) return _multiSelect.isNotEmpty;
-    return _singleSelect != null;
   }
 }
 

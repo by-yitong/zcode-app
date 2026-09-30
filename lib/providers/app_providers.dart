@@ -620,19 +620,37 @@ class ModelListNotifier extends StateNotifier<AsyncValue<ModelListState>> {
       final ids = <String>{};
       final names = <String, String>{};
 
-      // getAll 是主数据源 (网页端 useModelProviders 也是先 getAllCached 再 getAll)
-      // getDisplayOrder 只返回 {providerIds: [...]} 排序信息, 不含模型
+      // ★ 新通道优先: model-selection.getView (host ≥ 3.14.4;
+      //   旧 model-provider 通道在 3.14.4 已移除, 调用 1s 超时)
+      var selectionViewOk = false;
       try {
-        final resp = await _client!.getModelProviders();
-        _collectFromProviders(resp, ids, names);
+        final resp = await _client.getModelSelectionView();
+        final providers = resp['providers'];
+        if (providers is List) {
+          _collectFromSelectionView(providers, ids, names);
+          selectionViewOk = true;
+          appLog.d('[Model] model-selection.getView 加载: ${ids.length} 个模型');
+        }
       } catch (e) {
-        // getAll 失败 → 试 getAllCached
-        appLog.w('[Model] getModelProviders 失败, 重试: $e');
+        appLog.w('[Model] model-selection.getView 失败, 回退 model-provider: $e');
+      }
+
+      // 旧通道兜底 (host ≤ 3.12.x)
+      if (!selectionViewOk) {
+        // getAll 是主数据源 (网页端 useModelProviders 也是先 getAllCached 再 getAll)
+        // getDisplayOrder 只返回 {providerIds: [...]} 排序信息, 不含模型
         try {
           final resp = await _client!.getModelProviders();
           _collectFromProviders(resp, ids, names);
         } catch (e) {
-          appLog.e('[Model] 模型列表两次加载均失败', e);
+          // getAll 失败 → 试 getAllCached
+          appLog.w('[Model] getModelProviders 失败, 重试: $e');
+          try {
+            final resp = await _client!.getModelProviders();
+            _collectFromProviders(resp, ids, names);
+          } catch (e) {
+            appLog.e('[Model] 模型列表两次加载均失败', e);
+          }
         }
       }
 
@@ -670,6 +688,31 @@ class ModelListNotifier extends StateNotifier<AsyncValue<ModelListState>> {
   }
 
   Future<void> refresh() => _maybeLoad();
+
+  /// 从 model-selection.getView 的 providers 数组解析 (host ≥ 3.14.4):
+  /// [{providerId, providerName?, models:[{modelId, config:{visibility?}}]}]
+  /// 模型 ID 组装为 "<providerId>/<modelId>" (setModel/switchModelConfig 按此拆分);
+  /// visibility=hidden 的模型不展示 (对齐网页端)。
+  void _collectFromSelectionView(
+      List providers, Set<String> out, Map<String, String> names) {
+    for (final p in providers) {
+      if (p is! Map) continue;
+      final pid = p['providerId'] as String? ?? '';
+      if (pid.isEmpty) continue;
+      final pname = p['providerName'] as String?;
+      if (pname != null && pname.isNotEmpty) names[pid] = pname;
+      final models = p['models'];
+      if (models is! List) continue;
+      for (final m in models) {
+        if (m is! Map) continue;
+        final mid = m['modelId'] as String? ?? '';
+        if (mid.isEmpty) continue;
+        final cfg = m['config'];
+        if (cfg is Map && cfg['visibility'] == 'hidden') continue;
+        out.add('$pid/$mid');
+      }
+    }
+  }
 
   /// 从 model-provider 响应解析模型 ID + provider 名。
   /// 兼容: ① [{id, name, models:[{id}]}]  ② [{id:"p/m"}]  ③ ["p/m"]

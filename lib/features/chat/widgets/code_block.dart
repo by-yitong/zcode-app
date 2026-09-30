@@ -1,37 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
-import 'package:markdown/markdown.dart' as md;
 
 import '../../../shared/theme/app_design_tokens.dart';
-import '../../../shared/theme/chat_markdown_style.dart';
 import '../../../shared/widgets/code_highlight.dart';
 
-class CodeBlockBuilder extends MarkdownElementBuilder {
-  final ThemeData theme;
-  CodeBlockBuilder({required this.theme});
-
-  @override
-  Widget? visitElementAfterWithContext(
-    BuildContext context,
-    md.Element element,
-    TextStyle? preferredStyle,
-    TextStyle? parentStyle,
-  ) {
-    String code = '';
-    String? language;
-    final codeNode = element.children?.first;
-    if (codeNode is md.Element && codeNode.tag == 'code') {
-      code = codeNode.textContent;
-      final cls = codeNode.attributes['class'] ?? '';
-      final match = RegExp(r'language-(\w+)').firstMatch(cls);
-      language = match?.group(1);
-    }
-    return CodeBlock(code: code, language: language, theme: theme);
-  }
-}
-
 /// 代码块 widget: 顶栏(语言+复制+行数) + 语法高亮 + 折叠展开
+///
+/// 由 AiMarkdown 的 codeBuilder 调用:
+/// `(ctx, name, code, closed) => CodeBlock(code: code, language: name, ...)`。
 class CodeBlock extends StatefulWidget {
   final String code;
   final String? language;

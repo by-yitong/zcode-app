@@ -7,11 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 import '../../agent/screens/cap_pages.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:markdown/markdown.dart' as md;
 
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -26,7 +24,6 @@ import '../../../providers/app_providers.dart';
 import '../../../providers/chat_provider.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/theme/app_router.dart';
-import '../../../shared/theme/chat_markdown_style.dart';
 import '../../../shared/widgets/code_highlight.dart';
 import '../../../shared/widgets/glass_bars.dart';
 import '../../../shared/widgets/update_dialog.dart';
@@ -42,6 +39,10 @@ import '../widgets/plan_list.dart';
 import '../widgets/tool_activity.dart';
 import '../widgets/work_history.dart';
 import '../widgets/composer.dart';
+import '../widgets/drawer_swipe.dart';
+import '../widgets/question_sheet.dart';
+import '../widgets/execution_trace.dart';
+import '../widgets/running_works.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/history_drawer.dart';
 
@@ -144,8 +145,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       },
       child: Scaffold(
         key: _scaffoldKey,
-        // 右滑任意位置可拉开抽屉 (默认仅屏幕左缘 20px)
-        drawerEdgeDragWidth: MediaQuery.sizeOf(context).width,
+        // 抽屉拉取: 左缘 100dp 原生跟手拖拽; 全屏右滑由 body 外层的
+        // DrawerSwipeGate 观察式补足 (不入竞技场, 表格/代码块横向滚动
+        // 不受影响, 见其注释)。不能改回全屏宽 — 会抢内容的横向手势。
+        drawerEdgeDragWidth: 100,
         drawer: HistoryDrawer(
           workspacePath: widget.workspaceKey,
           currentTaskId: widget.taskId,
@@ -173,16 +176,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           onOpenSearch: _openSearchFromDrawer,
           onNewSkill: _startSkillCreation,
         ),
-        body: _ChatScaffold(
-          key: _chatScaffoldKey,
-          title: title,
-          workspacePath: widget.workspaceKey,
-          chatRef: chatRef,
-          state: chatState,
-          onMenuTap: () {
-            FocusManager.instance.primaryFocus?.unfocus();
-            _scaffoldKey.currentState?.openDrawer();
-          },
+        body: DrawerSwipeGate(
+          onOpen: () => _scaffoldKey.currentState?.openDrawer(),
+          child: _ChatScaffold(
+            key: _chatScaffoldKey,
+            title: title,
+            workspacePath: widget.workspaceKey,
+            chatRef: chatRef,
+            state: chatState,
+            onMenuTap: () {
+              FocusManager.instance.primaryFocus?.unfocus();
+              _scaffoldKey.currentState?.openDrawer();
+            },
+          ),
         ),
       ),
     );
@@ -214,12 +220,24 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
   final _scrollController = ScrollController();
   final _inputFocusNode = FocusNode();
 
+  // ── 待发送附件 (V4 分片上传, 对齐网页端图片发送) ──
+  // 选图后挂 composer 附件条, 发送时逐张上传后随 sendText 引用发出,
+  // 不再 base64 嵌入文本。chips 是纯 UI 状态; 上传成功 ref 回填到
+  // PendingAttachment.uploadedRef, 失败重试复用不重复上传。
+  final List<PendingAttachment> _pendingAttachments = [];
+  bool _isUploadingAttachments = false;
+
   /// 用户是否在底部附近 (= 自动跟随中; 控制"回到底部"悬浮按钮显隐,
   /// 也是流式增长补偿的下限 — 贴底区间交给 reverse 列表天然跟随)。
   bool _isAtBottom = true;
 
   /// 上一次构建时挂起的权限数 (新增权限 → 自动滚底露出内联审批卡)
   int _lastPendingPermCount = 0;
+
+  /// AI 提问答题弹窗是否打开 (防重复弹出)
+  bool _questionSheetOpen = false;
+  /// 上一帧是否有挂起的 AI 提问 (null→非空跳变 → 自动弹答题弹窗)
+  bool _hadPendingQuestion = false;
 
   // ── center 锚定双 sliver 列表 ──
   // 消息列表拆成两块: live 块 (center 之前, 最新消息+审批卡, 持续增长) 和
@@ -358,6 +376,33 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
     }
   }
 
+  /// 打开 AI 提问答题弹窗 (已打开或无挂起问题时直接返回)。
+  /// 关闭后仅复位标志, 不自动重弹 (由状态跳变或用户点提示条重新触发)。
+  void _openQuestionSheet(ThemeData theme) {
+    if (!mounted || _questionSheetOpen) return;
+    final q = widget.state.pendingQuestion;
+    if (q == null) return;
+    _questionSheetOpen = true;
+    showQuestionSheet(
+      context,
+      question: q,
+      theme: theme,
+      onAnswer: ({
+        decline = false,
+        selectedValues = const {},
+        customAnswers = const {},
+      }) {
+        ref.read(chatProvider(widget.chatRef).notifier).answerQuestion(
+              decline: decline,
+              selectedValues: selectedValues,
+              customAnswers: customAnswers,
+            );
+      },
+    ).whenComplete(() {
+      _questionSheetOpen = false;
+    });
+  }
+
   /// 翻页死区兜底: 一页内容不足一屏时 maxScrollExtent==0, 永远产生不了
   /// 滚动事件 → 渐进模式卡在第一页。布局后检查, 无滚动空间就主动续拉
   /// (loadOlder 自带 hasMore/并发守卫, 拉完自然停止)。
@@ -373,14 +418,68 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
   }
 
   void _sendMessage() {
+    if (_isUploadingAttachments) return; // 上传中禁发 (composer 已禁用)
     final text = _messageController.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty && _pendingAttachments.isEmpty) return;
     // 任务运行中不禁发 — followupMode=queue, 服务端会排队 (队列条可管理)
 
     // 不 await, 让 UI 立即响应; 错误由 chatProvider 状态反映
-    ref.read(chatProvider(widget.chatRef).notifier).sendMessage(text);
-    _messageController.clear();
+    if (_pendingAttachments.isEmpty) {
+      // 无附件: 走原路径, payload 与现状完全一致
+      ref.read(chatProvider(widget.chatRef).notifier).sendMessage(text);
+      _messageController.clear();
+      _scrollToBottom();
+      return;
+    }
+    // 带附件: composer 立即清空并禁用, chips 进度态; 上传中乐观回显
+    // (文本立即显示, 图片位置显示本地缩略图) 由 provider 侧处理
+    final attachments = List<PendingAttachment>.of(_pendingAttachments);
+    setState(() {
+      _isUploadingAttachments = true;
+      _messageController.clear();
+    });
     _scrollToBottom();
+    unawaited(_sendWithAttachments(text, attachments));
+  }
+
+  /// 逐张上传后一条 sendText 发出; 失败 → SnackBar + chips 保留
+  /// (已上传 ref 回填复用), 用户可重试或移除, 不降级 base64
+  Future<void> _sendWithAttachments(
+      String text, List<PendingAttachment> attachments) async {
+    var sent = false;
+    var refs = const <String?>[];
+    try {
+      (sent, refs) = await ref
+          .read(chatProvider(widget.chatRef).notifier)
+          .sendMessageWithAttachments(text, attachments);
+    } catch (e) {
+      // notifier 已销毁等极端场景 (上传中途离开会话页): 静默, 不再回填
+      appLog.w('[Chat] 附件发送流程异常: $e');
+    }
+    if (!mounted) return;
+    setState(() {
+      _isUploadingAttachments = false;
+      if (sent) {
+        _pendingAttachments.clear();
+      } else {
+        // 回填已成功上传的 ref (失败重试免重复上传)
+        for (var i = 0; i < attachments.length && i < refs.length; i++) {
+          final ref = refs[i];
+          if (ref == null || ref.isEmpty) continue;
+          _pendingAttachments[i] =
+              _pendingAttachments[i].copyWith(uploadedRef: ref);
+        }
+      }
+    });
+    if (!sent) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('图片上传失败'),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   /// 底部 = minScrollExtent (center 锚定下为负值, 随 live 块增长而变)
@@ -447,6 +546,14 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
           subagentLoader: (childSessionId) => ref
               .read(chatProvider(widget.chatRef).notifier)
               .loadSubagentChildren(childSessionId),
+          // 子代理详情弹窗实时刷新 (强刷 children + 权威行状态)
+          subagentLiveRefresh: (childSessionId) => ref
+              .read(chatProvider(widget.chatRef).notifier)
+              .refreshSubagentDetail(childSessionId),
+          // 附件图片读回 (V4 ref → bytes, provider 侧 32MB 缓存)
+          attachmentLoader: (attachmentRef) => ref
+              .read(chatProvider(widget.chatRef).notifier)
+              .loadAttachmentBytes(attachmentRef),
           onRespondPermission:
               (permissionId, optionId, decision, options, traceId) {
                 ref
@@ -527,6 +634,11 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
       '${m.fileChanges?.deletions ?? -1}|$showDate|$isLastUser|'
       '$isResponding|$permId|${vpW.round()}',
     );
+    // 附件 (ref 变化 = 读回数据源变化; localBytes 有无决定乐观/读回渲染)
+    for (final a in m.attachments) {
+      b.write('|img${a.ref.length}:${a.localBytes != null ? 1 : 0}'
+          ':${a.bytes}:${a.fileName.length}');
+    }
     for (final p in m.parts) {
       switch (p) {
         case TextPart(:final text):
@@ -577,6 +689,14 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
         _scrollToBottom();
       }
       _lastPendingPermCount = n;
+      // AI 提问: null→非空自动弹答题弹窗; 变 null 且弹窗开着 → 关闭
+      final hasQ = state.pendingQuestion != null;
+      if (hasQ && !_hadPendingQuestion) {
+        _openQuestionSheet(Theme.of(context));
+      } else if (!hasQ && _questionSheetOpen) {
+        Navigator.of(context).maybePop();
+      }
+      _hadPendingQuestion = hasQ;
     });
 
     return Scaffold(
@@ -746,16 +866,6 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
               },
             ),
           // 工具执行前确认 → 列表尾部内联审批卡 (聊天上下文全程可见, 不再模态遮挡)
-          // AskUserQuestion 交互式问题卡片 (AI 提问时显示)
-          if (state.pendingQuestion != null)
-            QuestionCard(
-              question: state.pendingQuestion!,
-              onAnswer: (selected) {
-                ref
-                    .read(chatProvider(widget.chatRef).notifier)
-                    .answerQuestion(selected);
-              },
-            ),
           Expanded(
             child: Stack(
               children: [
@@ -924,6 +1034,61 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
               count: nonPlanPerms.length,
               onTap: _scrollToBottom,
             ),
+          // AI 提问提示条: 挂起时常驻输入栏上方, 点击弹出答题弹窗
+          if (state.pendingQuestion != null)
+            QuestionPendingBar(
+              onTap: () => _openQuestionSheet(theme),
+            ),
+          // 后台运行指示条: 运行中子智能体 / 后台终端 >0 时常驻输入栏上方,
+          // 点击弹清单面板 (子智能体进详情, 后台终端可取消)
+          Builder(builder: (context) {
+            final runningSubs = runningSubagentsIn(state.messages);
+            final bashWorks = state.backgroundWorks
+                .where((w) => w.kind == 'bash' && w.status == 'running')
+                .toList();
+            if (runningSubs.isEmpty && bashWorks.isEmpty) {
+              return const SizedBox.shrink();
+            }
+            // 胶囊自带入场动画, 常驻与消失由这里直接增删 (短内容, 无需 AnimatedSize)
+            return Padding(
+              padding: const EdgeInsets.only(
+                bottom: AppSpacing.sm - 2,
+                left: AppSpacing.md,
+                right: AppSpacing.md,
+              ),
+              child: RunningWorkBar(
+                subagentCount: runningSubs.length,
+                bashCount: bashWorks.length,
+                onTap: () => showRunningWorksSheet(
+                context,
+                theme: theme,
+                subagents: runningSubs,
+                bashWorks: bashWorks,
+                onOpenSubagent: (part) {
+                  if (!mounted) return;
+                  // 先关清单弹窗, 再从该 SubagentPart 构建详情弹窗
+                  Navigator.of(context).pop();
+                  final nodes = buildExecutionNodes([part]);
+                  if (nodes.isEmpty) return;
+                  showExecutionDetail(
+                    context,
+                    nodes.first,
+                    theme,
+                    onLoadChildren: (childSessionId) => ref
+                        .read(chatProvider(widget.chatRef).notifier)
+                        .loadSubagentChildren(childSessionId),
+                    onLiveRefresh: (childSessionId) => ref
+                        .read(chatProvider(widget.chatRef).notifier)
+                        .refreshSubagentDetail(childSessionId),
+                  );
+                },
+                onCancelBash: (work) => ref
+                    .read(chatProvider(widget.chatRef).notifier)
+                    .cancelBackgroundWork(work.workId),
+              ),
+              ),
+            );
+          }),
           _buildInputArea(theme),
         ],
       ),
@@ -1089,6 +1254,8 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // 待发送附件条 (选图后累积, 发送时 V4 分片上传)
+              if (_pendingAttachments.isNotEmpty) _buildAttachmentStrip(),
               // 排队消息 (任务运行中发送 → 服务端排队): 立即/编辑/删除
               if (widget.state.queuedMessages.isNotEmpty)
                 Padding(
@@ -1143,11 +1310,12 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  // 输入框 (无边框, 透明, 自适应高度)
+                  // 输入框 (无边框, 透明, 自适应高度); 附件上传中禁用 composer
                   Expanded(
                     child: TextField(
                       controller: _messageController,
                       focusNode: _inputFocusNode,
+                      enabled: !_isUploadingAttachments,
                       minLines: 1,
                       maxLines: 6,
                       style: theme.textTheme.bodyLarge?.copyWith(height: 1.4),
@@ -1177,9 +1345,14 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                     valueListenable: _messageController,
                     builder: (context, value, _) {
                       final hasText = value.text.trim().isNotEmpty;
-                      // 有文字 = 发送 (任务运行中发送会进入服务端队列);
-                      // 无文字且任务运行中 = 暂停
-                      final showStop = widget.state.isResponding && !hasText;
+                      final canSend = (hasText || _pendingAttachments.isNotEmpty) &&
+                          !_isUploadingAttachments;
+                      // 有文字或挂了附件 = 发送 (任务运行中发送会进入服务端队列);
+                      // 无内容且任务运行中 = 暂停
+                      final showStop = widget.state.isResponding &&
+                          !hasText &&
+                          _pendingAttachments.isEmpty &&
+                          !_isUploadingAttachments;
                       return showStop
                           ? ComposerSendButton(
                               icon: Icons.stop_rounded,
@@ -1189,8 +1362,8 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                             )
                           : ComposerSendButton(
                               icon: Icons.arrow_upward_rounded,
-                              onPressed: hasText ? _sendMessage : null,
-                              enabled: hasText,
+                              onPressed: canSend ? _sendMessage : null,
+                              enabled: canSend,
                             );
                     },
                   ),
@@ -1576,7 +1749,9 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
     return [...slashCommands, ...server];
   }
 
-  /// 插入图片 — 从手机选图, 压缩后 base64 嵌入消息
+  /// 选图 → 压缩 (1920px/75%) → 挂 composer 待发送附件条。
+  /// 不再 base64 嵌入文本: 发送时走 V4 分片上传 (对齐网页端),
+  /// sendText 只带 ref 引用。
   Future<void> _insertImage() async {
     final picker = ImagePicker();
     final xfile = await picker.pickImage(
@@ -1588,7 +1763,7 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
     if (xfile == null) return;
 
     final bytes = await xfile.readAsBytes();
-    // 检查大小 (> 2MB 压缩后仍太大 → 警告)
+    // 检查大小 (> 2MB 压缩后仍太大 → 拒绝, 避免分片上传拖慢发送)
     if (bytes.length > 2 * 1024 * 1024) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1601,7 +1776,6 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
       return;
     }
 
-    final base64Data = base64Encode(bytes);
     final ext = xfile.name.split('.').last.toLowerCase();
     final mime = switch (ext) {
       'png' => 'image/png',
@@ -1609,9 +1783,39 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
       'webp' => 'image/webp',
       _ => 'image/jpeg',
     };
-    // 嵌入 markdown 图片语法
-    final imageMarkdown = '![${xfile.name}](data:$mime;base64,$base64Data)';
-    _insertAtCursor('$imageMarkdown\n\n');
+    setState(() {
+      _pendingAttachments.add(PendingAttachment(
+        fileName: xfile.name,
+        mime: mime,
+        bytes: bytes,
+      ));
+    });
+  }
+
+  /// composer 上方附件条: 横向缩略图 chip (缩略图 + 文件名 + × 移除),
+  /// 可连续选多张累积; 上传中整条转进度态且禁移除
+  Widget _buildAttachmentStrip() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+      child: SizedBox(
+        height: 56,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: _pendingAttachments.length,
+          separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.xs),
+          itemBuilder: (context, i) {
+            final a = _pendingAttachments[i];
+            return _AttachmentChip(
+              attachment: a,
+              uploading: _isUploadingAttachments,
+              onRemove: _isUploadingAttachments
+                  ? null
+                  : () => setState(() => _pendingAttachments.removeAt(i)),
+            );
+          },
+        ),
+      ),
+    );
   }
 
   /// 插入文件 — 从手机选文件, 读取文本内容嵌入消息
@@ -1935,6 +2139,148 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
         );
       },
     );
+  }
+}
+
+/// 附件条缩略图 chip (56px 高, 圆角): 缩略图 + 文件名省略号 + 右上角 × 移除;
+/// 上传中转进度态 (半透明 + 转圈), 禁移除
+class _AttachmentChip extends StatelessWidget {
+  final PendingAttachment attachment;
+  final bool uploading;
+  final VoidCallback? onRemove;
+
+  const _AttachmentChip({
+    required this.attachment,
+    required this.uploading,
+    this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          width: 168,
+          height: 56,
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            border: Border.all(
+              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
+            ),
+          ),
+          child: Row(
+            children: [
+              // 缩略图 (选图时内存里已有 bytes)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(AppRadius.xs),
+                child: SizedBox(
+                  width: 48,
+                  height: 48,
+                  child: Image.memory(
+                    attachment.bytes,
+                    fit: BoxFit.cover,
+                    gaplessPlayback: true,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Opacity(
+                  opacity: uploading ? 0.55 : 1,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        attachment.fileName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: AppTextSizes.label,
+                          color: theme.colorScheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          if (uploading)
+                            const SizedBox(
+                              width: 10,
+                              height: 10,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 1.6,
+                              ),
+                            )
+                          else
+                            Icon(
+                              attachment.uploadedRef != null
+                                  ? Icons.check_circle_outline
+                                  : Icons.image_outlined,
+                              size: 11,
+                              color: attachment.uploadedRef != null
+                                  ? AppColors.accent
+                                  : theme.colorScheme.onSurfaceVariant,
+                            ),
+                          const SizedBox(width: 4),
+                          Text(
+                            uploading
+                                ? '上传中'
+                                : (attachment.uploadedRef != null
+                                    ? '已就绪'
+                                    : _fmtBytes(attachment.bytes.length)),
+                            style: TextStyle(
+                              fontSize: AppTextSizes.caption,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // 右上角 × 移除
+        if (onRemove != null)
+          Positioned(
+            top: -6,
+            right: -6,
+            child: GestureDetector(
+              onTap: onRemove,
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                width: 20,
+                height: 20,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerLow,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: theme.colorScheme.outlineVariant,
+                    width: 0.8,
+                  ),
+                ),
+                child: Icon(
+                  Icons.close,
+                  size: 13,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  static String _fmtBytes(int n) {
+    if (n < 1024) return '$n B';
+    if (n < 1024 * 1024) return '${(n / 1024).toStringAsFixed(0)} KB';
+    return '${(n / 1024 / 1024).toStringAsFixed(1)} MB';
   }
 }
 

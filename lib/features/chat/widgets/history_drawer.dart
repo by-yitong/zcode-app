@@ -9,7 +9,6 @@ import '../../../data/models/workspace.dart';
 import '../../../providers/app_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/theme/app_router.dart';
-import '../../../shared/theme/chat_markdown_style.dart';
 import '../../../shared/widgets/app_empty_state.dart';
 import '../../../shared/widgets/app_section_header.dart';
 import '../../agent/screens/cap_pages.dart';
@@ -62,6 +61,13 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
   /// 默认工作区 = 网页端的"不在项目中工作" (路径以 .zcode/workspace/default 结尾)
   static bool _isDefaultWorkspace(Workspace w) =>
       w.workspacePath.endsWith('.zcode/workspace/default');
+
+  /// 该项目下是否存在"正在运行且未归档"的任务 (项目切换弹窗运行中标记用)
+  static bool _hasRunningTask(List<Task> tasks, String workspaceKey) =>
+      tasks.any((t) =>
+          t.workspaceKey == workspaceKey &&
+          t.status == TaskStatus.running &&
+          !t.archived);
 
   /// 长按会话弹出操作菜单 (归档 / 删除)
   ///
@@ -270,30 +276,6 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 图标块
-              Container(
-                width: 28,
-                height: 28,
-                margin: const EdgeInsets.only(top: 1),
-                decoration: BoxDecoration(
-                  color: isActive
-                      ? AppColors.accent
-                      : theme.colorScheme.surfaceContainerHigh,
-                  borderRadius: BorderRadius.circular(AppRadius.sm),
-                ),
-                child: Icon(
-                  isRunning
-                      ? Icons.autorenew_rounded
-                      : Icons.chat_bubble_outline_rounded,
-                  size: 14,
-                  color: isActive
-                      ? Colors.white
-                      : (isRunning
-                            ? AppColors.warning
-                            : theme.colorScheme.onSurfaceVariant),
-                ),
-              ),
-              const SizedBox(width: AppSpacing.sm),
               // 标题 + 元信息
               Expanded(
                 child: Column(
@@ -657,6 +639,9 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
   /// 项目切换弹窗 (从抽屉底部向上延伸): 项目列表 + "不在项目中工作"
   void _openProjectSwitcher(BuildContext context, List<Workspace> workspaces) {
     final theme = Theme.of(context);
+    // 打开时读一次任务快照, 用于标记"有任务正在运行"的项目
+    // (弹窗展示期间不实时刷新, 不加定时器)
+    final tasks = ref.read(allTasksProvider);
     // 默认工作区固定最上, 其余按名称排序
     final sorted = [...workspaces]
       ..sort((a, b) {
@@ -705,14 +690,26 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                         ? theme.colorScheme.primary
                         : theme.colorScheme.onSurfaceVariant,
                   ),
-                  title: Text(
-                    _isDefaultWorkspace(w) ? '不在项目中工作' : w.name,
-                    style: TextStyle(
-                      fontSize: AppTextSizes.bodyMd,
-                      fontWeight: w.workspaceKey == widget.workspacePath
-                          ? FontWeight.w600
-                          : FontWeight.w400,
-                    ),
+                  title: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          _isDefaultWorkspace(w) ? '不在项目中工作' : w.name,
+                          style: TextStyle(
+                            fontSize: AppTextSizes.bodyMd,
+                            fontWeight: w.workspaceKey == widget.workspacePath
+                                ? FontWeight.w600
+                                : FontWeight.w400,
+                          ),
+                        ),
+                      ),
+                      // 有运行中任务的项目: 名字后加橙色脉动点
+                      if (_hasRunningTask(tasks, w.workspaceKey)) ...[
+                        const SizedBox(width: AppSpacing.xs),
+                        const RunningDot(size: 6),
+                      ],
+                    ],
                   ),
                   subtitle: Text(
                     w.workspacePath,

@@ -8,7 +8,6 @@ import '../../../data/models/workspace.dart';
 import '../../../providers/app_providers.dart';
 import '../../../providers/chat_provider.dart';
 import '../../../shared/theme/app_design_tokens.dart';
-import '../../../shared/theme/chat_markdown_style.dart';
 import 'usage_detail_sheet.dart';
 
 class PlusMenuItem extends StatelessWidget {

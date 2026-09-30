@@ -573,6 +573,31 @@ class V4TurnHeaderRow extends V4Row {
       };
 }
 
+/// userInput 行附件元数据 (V4 图片发送协议; wire 字段 ref/fileName/mime/bytes,
+/// previewRef 忽略不用)
+class V4AttachmentMeta {
+  final String ref;
+  final String fileName;
+  final String mime;
+  /// 字节数 (wire 为整型长度, 非内容)
+  final int bytes;
+
+  const V4AttachmentMeta({
+    required this.ref,
+    required this.fileName,
+    required this.mime,
+    required this.bytes,
+  });
+
+  factory V4AttachmentMeta.fromJson(Map<String, dynamic> j) =>
+      V4AttachmentMeta(
+        ref: j['ref'] as String? ?? '',
+        fileName: j['fileName'] as String? ?? '',
+        mime: j['mime'] as String? ?? '',
+        bytes: (j['bytes'] as num?)?.toInt() ?? 0,
+      );
+}
+
 class V4UserInputRow extends V4Row {
   final String text;
   /// ★ 引导输入: AI 工作中途的插话 (inputRouting.mode=guide)。
@@ -580,6 +605,8 @@ class V4UserInputRow extends V4Row {
   final bool guided;
   /// 行实体 ID (用于匹配 workSegments[].triggerEntityId)
   final String? entityId;
+  /// 随行附件 (图片走 V4 分片上传后以 ref 引用; 文本可空)
+  final List<V4AttachmentMeta> attachments;
 
   V4UserInputRow({
     required super.rowId,
@@ -588,6 +615,7 @@ class V4UserInputRow extends V4Row {
     this.text = '',
     this.guided = false,
     this.entityId,
+    this.attachments = const [],
   });
 
   factory V4UserInputRow.fromJson(Map<String, dynamic> j) => V4UserInputRow(
@@ -597,6 +625,11 @@ class V4UserInputRow extends V4Row {
         text: j['text'] as String? ?? '',
         guided: j['guided'] as bool? ?? false,
         entityId: j['entityId'] as String?,
+        attachments: (j['attachments'] as List<dynamic>? ?? [])
+            .whereType<Map>()
+            .map((e) =>
+                V4AttachmentMeta.fromJson(Map<String, dynamic>.from(e)))
+            .toList(),
       );
 
   @override
@@ -1126,6 +1159,8 @@ class V4BackgroundWork {
   final String title;
   final String status; // running|resultPending|failed|cancelled
   final DateTime startedAt;
+  /// 子会话 id (kind=='subagent' 时有值, 用于关联子会话)
+  final String? childSessionId;
 
   V4BackgroundWork({
     required this.workId,
@@ -1133,6 +1168,7 @@ class V4BackgroundWork {
     this.title = '',
     this.status = 'running',
     required this.startedAt,
+    this.childSessionId,
   });
 
   factory V4BackgroundWork.fromJson(Map<String, dynamic> j) =>
@@ -1141,6 +1177,7 @@ class V4BackgroundWork {
         kind: j['kind'] as String? ?? 'bash',
         title: j['title'] as String? ?? '',
         status: j['status'] as String? ?? 'running',
+        childSessionId: j['childSessionId'] as String?,
         startedAt: j['startedAt'] != null
             ? DateTime.fromMillisecondsSinceEpoch(j['startedAt'] as int)
             : DateTime.now(),

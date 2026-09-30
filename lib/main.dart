@@ -11,6 +11,7 @@ import 'shared/theme/app_theme.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+
   // 启动时从 SharedPreferences 恢复主题选择, 避免首帧闪烁。
   final prefs = await SharedPreferences.getInstance();
   final initialThemeMode =

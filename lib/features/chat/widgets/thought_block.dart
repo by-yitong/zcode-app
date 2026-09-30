@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 
 import '../../../core/logging/app_logger.dart';
 import '../../../shared/theme/app_design_tokens.dart';
-import '../../../shared/theme/chat_markdown_style.dart';
 
 
 String formatWorkDuration(int ms) {

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -39,6 +40,37 @@ List<DisplayMessage> _memCacheLoad(String taskId) {
   if (m == null) return const [];
   _memMsgCache[taskId] = m; // touch (LRU)
   return m;
+}
+
+// ── 附件读回缓存 (ref → bytes) ──
+// 历史消息图片渲染用: attachmentReadV4 循环读回后写入, 简单 Map + 总量上限,
+// 超限丢最早条目 (插入序即近似 LRU: 命中不重排, 够用且省锁)。
+const int _kAttachmentCacheMaxBytes = 32 << 20; // 32MB
+final Map<String, Uint8List> _attachmentCache = {};
+int _attachmentCacheBytes = 0;
+
+Uint8List? _attachmentCacheGet(String ref) {
+  final b = _attachmentCache[ref];
+  if (b != null) _memTouchAttachment(ref, b);
+  return b;
+}
+
+void _memTouchAttachment(String ref, Uint8List bytes) {
+  _attachmentCache.remove(ref);
+  _attachmentCache[ref] = bytes;
+}
+
+void _attachmentCachePut(String ref, Uint8List bytes) {
+  if (bytes.length > _kAttachmentCacheMaxBytes) return;
+  final old = _attachmentCache.remove(ref);
+  _attachmentCacheBytes -= old?.length ?? 0;
+  _attachmentCache[ref] = bytes;
+  _attachmentCacheBytes += bytes.length;
+  while (_attachmentCacheBytes > _kAttachmentCacheMaxBytes &&
+      _attachmentCache.length > 1) {
+    final first = _attachmentCache.keys.first;
+    _attachmentCacheBytes -= _attachmentCache.remove(first)!.length;
+  }
 }
 
 // ================================================================
@@ -248,59 +280,72 @@ class PendingPermission {
 }
 
 /// AskUserQuestion 工具的问题选项
+///
+/// [value] 是提交协议用的标识 (answer content 取它), [label] 仅展示。
 class QuestionOption {
+  final String value;
   final String label;
   final String description;
 
-  const QuestionOption({required this.label, this.description = ''});
+  const QuestionOption({this.value = '', required this.label, this.description = ''});
 }
 
-/// AskUserQuestion — AI 向用户提问的结构化数据
-///
-/// 捕获自真实 session 快照 (sample_init_events.json L3885):
-/// tool: "AskUserQuestion", state.input.questions[] 每个:
-/// {question, header, multiSelect, options[{label, description}]}
-class AskUserQuestion {
-  final String callId;
+/// AskUserQuestion 的单题
+class QuestionItem {
   final String question;
   final String header;
   final bool multiSelect;
   final List<QuestionOption> options;
 
-  const AskUserQuestion({
-    required this.callId,
+  const QuestionItem({
     required this.question,
     this.header = '',
     this.multiSelect = false,
     this.options = const [],
   });
+}
 
-  /// 从 tool.updated 事件的 payload 解析
-  factory AskUserQuestion.fromPayload(
-      String callId, Map<String, dynamic> payload) {
-    // payload 可能是 {input:{questions:[...]}} 或直接含 questions
-    final input = payload['input'] as Map<String, dynamic>? ?? payload;
-    final questions = input['questions'] as List<dynamic>? ?? [];
-    if (questions.isEmpty) {
-      return AskUserQuestion(callId: callId, question: '');
-    }
-    final q = questions.first as Map<String, dynamic>;
-    final opts = (q['options'] as List<dynamic>? ?? [])
-        .map((e) => QuestionOption(
-              label: (e as Map<String, dynamic>)['label'] as String? ?? '',
-              description:
-                  (e)['description'] as String? ?? '',
-            ))
-        .where((o) => o.label.isNotEmpty)
-        .toList();
-    return AskUserQuestion(
-      callId: callId,
-      question: q['question'] as String? ?? '',
-      header: q['header'] as String? ?? '',
-      multiSelect: q['multiSelect'] as bool? ?? false,
-      options: opts,
-    );
+/// AskUserQuestion — AI 向用户提问的结构化数据 (一次交互的全部题)
+///
+/// wire (V4 pendingInteractions kind=userInput): questions[] 每个:
+/// {question, header, multiSelect, options[{value, label, description}]}
+class AskUserQuestion {
+  /// = interactionId (resolveInteraction 用)
+  final String callId;
+  final List<QuestionItem> questions;
+
+  const AskUserQuestion({required this.callId, this.questions = const []});
+}
+
+/// 构造 resolveInteraction answer.content (网页端 Vat() 同构)。
+///
+/// [selectedValues]/[customAnswers] 按题下标传值; 某题两者皆空则整题跳过。
+/// 规则:
+/// - 每题 vals = [...选中选项的 value, ...(自定义文本 trim 非空 ? [文本] : [])]
+/// - answers[question 原文] = vals.join(', ') (仅有值的题)
+/// - answer_i = multiSelect ? vals (数组) : vals.first
+/// - 仅当 questions.length == 1 且 answer_0 存在时, 再加 answer = answer_0
+Map<String, dynamic> buildQuestionAnswerContent(
+  List<QuestionItem> questions,
+  Map<int, List<String>> selectedValues,
+  Map<int, String> customAnswers,
+) {
+  final answers = <String, String>{};
+  final content = <String, dynamic>{};
+  for (var i = 0; i < questions.length; i++) {
+    final q = questions[i];
+    final selected = selectedValues[i] ?? const <String>[];
+    final custom = (customAnswers[i] ?? '').trim();
+    final vals = [...selected, if (custom.isNotEmpty) custom];
+    if (vals.isEmpty) continue; // 整题跳过
+    answers[q.question] = vals.join(', ');
+    content['answer_$i'] = q.multiSelect ? vals : vals.first;
   }
+  content['answers'] = answers;
+  if (questions.length == 1 && content.containsKey('answer_0')) {
+    content['answer'] = content['answer_0'];
+  }
+  return content;
 }
 
 /// 消息内容的按序片段 — 匹配 web 客户端 parts[] 的逐项渲染。
@@ -319,6 +364,18 @@ sealed class MessagePart {
 class TextPart extends MessagePart {
   final String text;
   const TextPart(this.text);
+}
+
+/// 追加正文 part — wire 的 assistantText 行是流式增量 (一行一块),
+/// 连续追加必须合并进同一个 TextPart: 否则表格等块级结构被拦腰切断,
+/// 渲染层按段独立识别时 (单段无表头+分隔行组合) 无法成立。
+void appendTextPart(List<MessagePart> parts, String text) {
+  if (parts.isNotEmpty && parts.last is TextPart) {
+    final prev = parts.removeLast() as TextPart;
+    parts.add(TextPart(prev.text + text));
+  } else {
+    parts.add(TextPart(text));
+  }
 }
 
 /// 思考过程片段 (web part type: "reasoning" / "thought")
@@ -384,12 +441,81 @@ class SubagentPart extends MessagePart {
       );
 }
 
+/// 子会话 parts 里是否仍有运行中的活动 (工具 running / 嵌套子代理 running)。
+/// 弹窗轮询的停止条件: 刷新后无运行活动即认为已结束。
+bool hasRunningActivity(List<MessagePart> parts) => parts.any((p) {
+      if (p is ToolPart) return p.activity.isRunning;
+      if (p is SubagentPart) return p.isRunning;
+      return false;
+    });
+
+/// 消息里仍在运行的子代理 (输入框顶部"后台运行"指示条用)。
+/// 只认 parts 里的 SubagentPart.running — 与网页端一致,
+/// 快照 backgroundWorks 的 kind=='subagent' 条目不用于计数。
+List<SubagentPart> runningSubagentsIn(List<DisplayMessage> messages) => [
+      for (final m in messages)
+        for (final p in m.parts)
+          if (p is SubagentPart && p.isRunning) p
+    ];
+
 /// 显示用消息
 /// 服务端排队中的消息 (任务运行中发送, state.queue.items)
 class QueuedMessage {
   final String id; // queueItemId
   final String text;
   const QueuedMessage({required this.id, required this.text});
+}
+
+/// 用户消息附件 (wire: userInput 行 attachments[] 元素, V4 分片上传产物)。
+/// [bytes] 是整型字节数 (wire 字段), 不是内容; previewRef 忽略不用。
+/// [localBytes] 仅乐观回显时存在 (发送前本地已有字节, 不上 wire);
+/// row 落地后走 ref + attachmentReadV4 读回渲染。
+class UserAttachment {
+  final String ref;
+  final String fileName;
+  final String mime;
+  final int bytes;
+  final Uint8List? localBytes;
+
+  const UserAttachment({
+    required this.ref,
+    required this.fileName,
+    required this.mime,
+    required this.bytes,
+    this.localBytes,
+  });
+
+  factory UserAttachment.wire(V4AttachmentMeta m, {Uint8List? localBytes}) =>
+      UserAttachment(
+        ref: m.ref,
+        fileName: m.fileName,
+        mime: m.mime,
+        bytes: m.bytes,
+        localBytes: localBytes,
+      );
+}
+
+/// 待发送附件 (composer 选图产物; 上传由 [ChatNotifier] 分片执行)。
+/// [uploadedRef] 非空 = 已上传成功 (失败重试时直接复用, 不重复上传)。
+class PendingAttachment {
+  final String fileName;
+  final String mime;
+  final Uint8List bytes;
+  final String? uploadedRef;
+
+  const PendingAttachment({
+    required this.fileName,
+    required this.mime,
+    required this.bytes,
+    this.uploadedRef,
+  });
+
+  PendingAttachment copyWith({String? uploadedRef}) => PendingAttachment(
+        fileName: fileName,
+        mime: mime,
+        bytes: bytes,
+        uploadedRef: uploadedRef,
+      );
 }
 
 class DisplayMessage {
@@ -407,6 +533,8 @@ class DisplayMessage {
   /// 按序片段 (匹配 web 客户端 parts[])。非空时 UI 据此交错渲染,
   /// 否则回退到旧的 content/thought/activities 固定顺序渲染。
   final List<MessagePart> parts;
+  /// 用户消息附件 (图片; 乐观回显带 localBytes, 行落地后带 ref)
+  final List<UserAttachment> attachments;
 
   // ── 轮次元数据 (turnHeader 行携带, 对齐 ZCode 客户端) ──
   /// 本轮工作时长 (activeMs > endedAt-startedAt)。运行中为 null,
@@ -427,6 +555,7 @@ class DisplayMessage {
     this.interrupted = false,
     this.activities = const [],
     this.parts = const [],
+    this.attachments = const [],
     this.workedMs,
     this.turnStartedAt,
     this.fileChanges,
@@ -441,6 +570,7 @@ class DisplayMessage {
     bool? interrupted,
     List<ToolActivity>? activities,
     List<MessagePart>? parts,
+    List<UserAttachment>? attachments,
     int? workedMs,
     DateTime? turnStartedAt,
     V4TurnFileChanges? fileChanges,
@@ -455,6 +585,7 @@ class DisplayMessage {
       interrupted: interrupted ?? this.interrupted,
       activities: activities ?? this.activities,
       parts: parts ?? this.parts,
+      attachments: attachments ?? this.attachments,
       workedMs: workedMs ?? this.workedMs,
       turnStartedAt: turnStartedAt ?? this.turnStartedAt,
       fileChanges: fileChanges ?? this.fileChanges,
@@ -501,6 +632,9 @@ class ChatState {
   /// 服务端排队中的消息 (任务运行中发送, state.queue.items)。
   /// 非空时输入框上方显示队列条 (立即/编辑/删除)。
   final List<QueuedMessage> queuedMessages;
+  /// 后台工作 (V4 snapshot.backgroundWorks / state patch: bash 终端 + 子代理)。
+  /// 指示条只消费 kind=='bash' 且 status=='running' 的条目。
+  final List<V4BackgroundWork> backgroundWorks;
 
   const ChatState({
     this.messages = const [],
@@ -519,6 +653,7 @@ class ChatState {
     this.isPlanMode = false,
     this.pendingPlan,
     this.queuedMessages = const [],
+    this.backgroundWorks = const [],
   });
 
   ChatState copyWith({
@@ -530,7 +665,7 @@ class ChatState {
     String? mode,
     String? thoughtLevel,
     String? model,
-    AskUserQuestion? pendingQuestion,
+    Object? pendingQuestion,
     ({int input, int output, int max})? tokenUsage,
     String? sessionTitle,
     List<PlanItem>? plan,
@@ -538,6 +673,7 @@ class ChatState {
     bool? isPlanMode,
     Object? pendingPlan,
     List<QueuedMessage>? queuedMessages,
+    List<V4BackgroundWork>? backgroundWorks,
   }) {
     return ChatState(
       messages: messages ?? this.messages,
@@ -548,7 +684,12 @@ class ChatState {
       mode: mode ?? this.mode,
       thoughtLevel: thoughtLevel ?? this.thoughtLevel,
       model: model ?? this.model,
-      pendingQuestion: pendingQuestion ?? this.pendingQuestion,
+      // pendingQuestion: sentinel 区分"不传"(保留旧值) 和"传null"(清空)
+      pendingQuestion: identical(pendingQuestion, _clearPendingQuestion)
+          ? null
+          : (pendingQuestion is AskUserQuestion
+              ? pendingQuestion
+              : this.pendingQuestion),
       tokenUsage: tokenUsage ?? this.tokenUsage,
       sessionTitle: sessionTitle ?? this.sessionTitle,
       // List 字段直接赋值 (允许传空列表清空, 不用 ?? 保留旧值)
@@ -556,6 +697,7 @@ class ChatState {
       pendingPermissions: pendingPermissions ?? this.pendingPermissions,
       isPlanMode: isPlanMode ?? this.isPlanMode,
       queuedMessages: queuedMessages ?? this.queuedMessages,
+      backgroundWorks: backgroundWorks ?? this.backgroundWorks,
       // pendingPlan: sentinel 区分"不传"(保留旧值) 和"传null"(清空)
       pendingPlan: identical(pendingPlan, _clearPendingPlan)
           ? null
@@ -568,6 +710,9 @@ class ChatState {
 
 /// sentinel: copyWith 传此对象表示"清空 pendingPlan"
 const _clearPendingPlan = Object();
+
+/// sentinel: copyWith 传此对象表示"清空 pendingQuestion"
+const _clearPendingQuestion = Object();
 
 /// 对话 Notifier
 class ChatNotifier extends StateNotifier<ChatState> {
@@ -638,6 +783,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// 避免"发送后消息闪没"; 对应 row 到达时清除 (不再依赖 isResponding —
   /// 闪断会把乐观消息和"思考中"占位一起删掉, 列表高度骤变导致视口跳动)。
   String? _pendingUserText;
+  /// _pendingUserText 的附件 (乐观回显本地缩略图; row 到达后由行上 ref 接管)
+  List<UserAttachment> _pendingUserAttachments = const [];
   /// _pendingUserText 的设置时间: 任务已确认结束但 row 始终未到 (协议异常) 的兜底清除
   DateTime? _pendingUserTextAt;
 
@@ -1245,12 +1392,15 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
     // 2. AI 提问 (pendingQuestion null→非空)
     if (prev.pendingQuestion == null && next.pendingQuestion != null) {
-      appLog.i('[Chat] AI 提问到达');
-      NotificationService.notifyQuestion(
-        taskId: taskId,
-        workspaceKey: _ref.workspacePath,
-        question: next.pendingQuestion!.question,
-      );
+      final qs = next.pendingQuestion!.questions;
+      if (qs.isNotEmpty) {
+        appLog.i('[Chat] AI 提问到达');
+        NotificationService.notifyQuestion(
+          taskId: taskId,
+          workspaceKey: _ref.workspacePath,
+          question: qs.first.question,
+        );
+      }
     }
   }
 
@@ -1318,25 +1468,33 @@ class ChatNotifier extends StateNotifier<ChatState> {
       queuedMessages: snap.queue.items
           .map((e) => QueuedMessage(id: e.queueItemId, text: e.text))
           .toList(),
+      backgroundWorks: snap.backgroundWorks,
       tokenUsage: usage != null
           ? (input: usage.usedTokens, output: 0, max: usage.maxTokens)
           : state.tokenUsage,
     );
 
-    // 处理 AskUserQuestion
+    // 处理 AskUserQuestion (全部题一次给出, 弹窗逐题作答后一次性提交)
     if (question != null && question.userInput != null) {
       final u = question.userInput!;
       if (u.questions.isNotEmpty) {
-        final q = u.questions[u.currentQuestionIndex ?? 0];
         state = state.copyWith(
           pendingQuestion: AskUserQuestion(
             callId: question.interactionId,
-            question: q.question,
-            header: q.header,
-            multiSelect: q.multiSelect,
-            options: q.options.map((o) => QuestionOption(
-              label: o.label, description: o.description ?? '',
-            )).toList(),
+            questions: u.questions
+                .map((q) => QuestionItem(
+                      question: q.question,
+                      header: q.header,
+                      multiSelect: q.multiSelect,
+                      options: q.options
+                          .map((o) => QuestionOption(
+                                value: o.value,
+                                label: o.label,
+                                description: o.description ?? '',
+                              ))
+                          .toList(),
+                    ))
+                .toList(),
           ),
           isResponding: false,
         );
@@ -1487,12 +1645,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
         _trackRevision(row.revision);
         _logMarkerRow(row, 'delta');
         _logTurnHeaderRow(row, 'delta-append');
+        _invalidateSubagentChildrenCache(row);
       case V4RowUpserted(:final row):
         _rows[row.rowId] = row;
         _markDirtyRow(row);
         _trackRevision(row.revision);
         _logMarkerRow(row, 'delta');
         _logTurnHeaderRow(row, 'delta-upsert');
+        _invalidateSubagentChildrenCache(row);
       case V4RowRemoved(:final fromRowId):
         _rows.remove(fromRowId);
         // 删行影响该行起的整段 → 水位压到该行
@@ -1511,6 +1671,17 @@ class ChatNotifier extends StateNotifier<ChatState> {
         if (r != null) _trackRevision(r);
       case _:
         appLog.w('[Chat] V4 delta: unhandled ${delta.runtimeType}');
+    }
+  }
+
+  /// 子代理行到达完成态 → 逐出该子会话的 children 缓存
+  /// (子会话内容此刻才定稿; 不逐出则重开弹窗/再展开仍吃运行中旧快照)。
+  void _invalidateSubagentChildrenCache(V4Row row) {
+    if (row is V4SubagentRow &&
+        row.status != 'running' &&
+        row.childSessionId != null &&
+        row.childSessionId!.isNotEmpty) {
+      _subagentChildrenCache.remove(row.childSessionId);
     }
   }
 
@@ -1632,6 +1803,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
       state = state.copyWith(
           queuedMessages:
               q.items.map((e) => QueuedMessage(id: e.queueItemId, text: e.text)).toList());
+    }
+    if (patch.containsKey('backgroundWorks')) {
+      state = state.copyWith(
+        backgroundWorks: (patch['backgroundWorks'] as List<dynamic>? ?? [])
+            .whereType<Map>()
+            .map((e) => V4BackgroundWork.fromJson(Map<String, dynamic>.from(e)))
+            .toList(),
+      );
     }
     if (patch.containsKey('pendingInteractions')) {
       final raw = patch['pendingInteractions'] as List<dynamic>? ?? [];
@@ -1868,6 +2047,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
             id: 'row_${row.rowId}',
             role: 'user',
             content: row.text,
+            attachments: [
+              for (final a in row.attachments) UserAttachment.wire(a),
+            ],
           ));
         case V4AssistantTextRow():
           if (skipping) {
@@ -1878,7 +2060,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
           if (row.text.isEmpty && row.state != 'streaming') continue;
           ensureTurn(row.turnId);
           if (row.text.isNotEmpty) {
-            parts.add(TextPart(row.text));
+            appendTextPart(parts, row.text);
             if (contentBuf.isNotEmpty) contentBuf.write('\n');
             contentBuf.write(row.text);
           }
@@ -1989,11 +2171,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
       if (arrived || stale) {
         _pendingUserText = null;
         _pendingUserTextAt = null;
+        _pendingUserAttachments = const [];
       } else {
         messages.add(DisplayMessage(
           id: 'pending_user',
           role: 'user',
           content: pending,
+          attachments: _pendingUserAttachments,
         ));
       }
     }
@@ -2107,51 +2291,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
     try {
       // 3. 新会话: 先 createSession 拿 taskId, 再订阅 + 发消息
-      if (_taskId == null) {
-        _creating = true;
-        // bridge 复用 (打开工作区时已开) + 幂等握手
-        await _relay.ensureBridgeOpen(
-            _ref.workspaceIdentity ?? _ref.workspacePath);
-        // V4 命令前必须先握手 (3.7.7 实测顺序: hello → initialize → createSession,
-        // 否则服务端报 fault.connection.handshakeRequired)
-        await _relay.v4Handshake();
-        appLog.i('[Chat] V4 createSession: mode=${state.mode}');
-        // 3.7.7 迁移: 网页端已改走 sendConversationCommandV4(type: createSession)
-        _taskId = await _relay.createSessionV4(
-          workspacePath: _ref.workspacePath,
-          workspaceIdentity: _ref.workspaceIdentity,
-          mode: state.mode,
-        );
-        appLog.i('[Chat] 会话已创建(V4): $_taskId');
-        // 热切换模型
-        final desiredModel = _preferredModelReader();
-        if (desiredModel != null) {
-          try {
-            await _relay.setSessionModel(
-              workspacePath: _ref.workspacePath,
-              sessionId: _taskId!,
-              model: desiredModel,
-            );
-          } catch (e) {
-            appLog.w('[Chat] 新会话热切换模型失败 ($desiredModel): $e');
-          }
-        }
-        _onSessionCreated?.call(Task(
-          id: _taskId!,
-          workspaceKey: _ref.workspacePath,
-          title: content,
-          status: TaskStatus.running,
-          createdAt: DateTime.now(),
-          updatedAt: DateTime.now(),
-        ));
-        // 订阅新会话 (V4 握手已在 createSession 前完成)
-        final stream = await _relay.subscribeConversationV4(
-          workspacePath: _ref.workspacePath,
-          workspaceIdentity: _ref.workspaceIdentity,
-          sessionId: _taskId!,
-        );
-        _frameSub = stream.listen(_onV4Frame);
-      }
+      await _ensureSessionReady(taskTitle: content);
       // 4. V4 发送命令
       await _relay.sendConversationCommandV4(
         workspacePath: _ref.workspacePath,
@@ -2164,6 +2304,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       appLog.e('[Chat] 发送失败: $e');
       _pendingUserText = null;
       _pendingUserTextAt = null;
+      _pendingUserAttachments = const [];
       _respondingFallTimer?.cancel();
       _respondingFallTimer = null;
       state = state.copyWith(
@@ -2176,27 +2317,223 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
+  /// 新会话引导 (sendMessage / sendMessageWithAttachments 共用, 行为同原
+  /// sendMessage 内联块): bridge 复用 → 幂等握手 → createSession → 热切换
+  /// 模型 → 通知任务列表 → 订阅会话流。已有 taskId 时幂等直通。
+  Future<void> _ensureSessionReady({required String taskTitle}) async {
+    if (_taskId != null) return;
+    _creating = true;
+    // bridge 复用 (打开工作区时已开) + 幂等握手
+    await _relay.ensureBridgeOpen(
+        _ref.workspaceIdentity ?? _ref.workspacePath);
+    // V4 命令前必须先握手 (3.7.7 实测顺序: hello → initialize → createSession,
+    // 否则服务端报 fault.connection.handshakeRequired)
+    await _relay.v4Handshake();
+    appLog.i('[Chat] V4 createSession: mode=${state.mode}');
+    // 3.7.7 迁移: 网页端已改走 sendConversationCommandV4(type: createSession)
+    _taskId = await _relay.createSessionV4(
+      workspacePath: _ref.workspacePath,
+      workspaceIdentity: _ref.workspaceIdentity,
+      mode: state.mode,
+    );
+    appLog.i('[Chat] 会话已创建(V4): $_taskId');
+    // 热切换模型
+    final desiredModel = _preferredModelReader();
+    if (desiredModel != null) {
+      try {
+        await _relay.setSessionModel(
+          workspacePath: _ref.workspacePath,
+          sessionId: _taskId!,
+          model: desiredModel,
+        );
+      } catch (e) {
+        appLog.w('[Chat] 新会话热切换模型失败 ($desiredModel): $e');
+      }
+    }
+    _onSessionCreated?.call(Task(
+      id: _taskId!,
+      workspaceKey: _ref.workspacePath,
+      title: taskTitle,
+      status: TaskStatus.running,
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    ));
+    // 订阅新会话 (V4 握手已在 createSession 前完成)
+    final stream = await _relay.subscribeConversationV4(
+      workspacePath: _ref.workspacePath,
+      workspaceIdentity: _ref.workspaceIdentity,
+      sessionId: _taskId!,
+    );
+    _frameSub = stream.listen(_onV4Frame);
+  }
+
+  /// 带附件发送 (图片走 V4 分片上传, 对齐网页端)。
+  ///
+  /// 流程: 乐观回显 (文本+本地缩略图) → 确保会话 (上传需要 sessionId) →
+  /// 逐张顺序上传 (begin→chunks→commit, 已带 uploadedRef 的直接复用) →
+  /// 一条 sendText 带全部 attachments 发出/入队。
+  ///
+  /// 返回 (sent, refs): sent=false = 任一附件上传失败 — refs 按序回填
+  /// 已成功分片的 ref (UI 保留 chips 复用, 重试不重复上传);
+  /// 不自动降级 base64。排队路径 (任务运行中) 无乐观回显, 队列条由
+  /// 服务端 queue 状态渲染 (与纯文本排队一致)。
+  Future<(bool sent, List<String?> refs)> sendMessageWithAttachments(
+      String content, List<PendingAttachment> attachments) async {
+    if (_creating || attachments.isEmpty) return (false, <String?>[]);
+    final queued = state.isResponding && _taskId != null;
+    if (!queued) {
+      _pendingUserText = content;
+      _pendingUserTextAt = DateTime.now();
+      _pendingUserAttachments = [
+        for (final a in attachments)
+          UserAttachment(
+            ref: '',
+            fileName: a.fileName,
+            mime: a.mime,
+            bytes: a.bytes.length,
+            localBytes: a.bytes,
+          ),
+      ];
+      _respondingFallTimer?.cancel();
+      _respondingFallTimer = null;
+      state = state.copyWith(isResponding: true, error: null);
+      _rebuildMessagesFromRows();
+    }
+
+    final refs = List<String?>.filled(attachments.length, null);
+    try {
+      await _ensureSessionReady(
+        taskTitle: content.trim().isEmpty ? attachments.first.fileName : content,
+      );
+      for (var i = 0; i < attachments.length; i++) {
+        final a = attachments[i];
+        if (a.uploadedRef != null && a.uploadedRef!.isNotEmpty) {
+          refs[i] = a.uploadedRef; // 失败重试: 复用已上传分片, 不重复上传
+          continue;
+        }
+        refs[i] = await _relay.uploadAttachmentV4(
+          workspacePath: _ref.workspacePath,
+          workspaceIdentity: _ref.workspaceIdentity,
+          sessionId: _taskId!,
+          fileName: a.fileName,
+          mime: a.mime,
+          bytes: a.bytes,
+        );
+      }
+      await _relay.sendConversationCommandV4(
+        workspacePath: _ref.workspacePath,
+        workspaceIdentity: _ref.workspaceIdentity,
+        commandType: 'sendText',
+        sessionId: _taskId,
+        payload: {
+          'text': content,
+          'attachments': [
+            // 服务端 strict schema: 严格四字段, 一个不多
+            for (var i = 0; i < attachments.length; i++)
+              {
+                'ref': refs[i]!,
+                'fileName': attachments[i].fileName,
+                'mime': attachments[i].mime,
+                'bytes': attachments[i].bytes.length,
+              },
+          ],
+        },
+      );
+      return (true, refs);
+    } catch (e) {
+      appLog.w('[Chat] 附件发送失败: $e');
+      if (!queued) {
+        // 未发出 → 撤乐观回显, chips 留在 composer 供重试/移除
+        _pendingUserText = null;
+        _pendingUserTextAt = null;
+        _pendingUserAttachments = const [];
+        _respondingFallTimer?.cancel();
+        _respondingFallTimer = null;
+        state = state.copyWith(isResponding: false);
+        _rebuildMessagesFromRows();
+      }
+      return (false, refs);
+    } finally {
+      _creating = false;
+    }
+  }
+
+  /// 读回附件字节 (历史消息图片渲染): ref 缓存命中直接返回; 未命中走
+  /// attachmentReadV4 循环读 (512KB/次) 并写缓存 (总量 32MB, 超限丢最早)。
+  Future<Uint8List?> loadAttachmentBytes(String ref) async {
+    if (ref.isEmpty) return null;
+    final cached = _attachmentCacheGet(ref);
+    if (cached != null) return cached;
+    try {
+      final bytes = await _relay.attachmentReadAllV4(
+        workspacePath: _ref.workspacePath,
+        workspaceIdentity: _ref.workspaceIdentity,
+        sessionId: _taskId ?? '',
+        ref: ref,
+      );
+      _attachmentCachePut(ref, bytes);
+      return bytes;
+    } catch (e) {
+      appLog.w('[Chat] 附件读回失败 ($ref): $e');
+      return null;
+    }
+  }
+
+  /// 取消后台工作 (后台终端面板的取消按钮)
+  Future<void> cancelBackgroundWork(String workId) async {
+    if (_taskId == null) return;
+    try {
+      await _relay.cancelBackgroundWorkV4(
+        workspacePath: _ref.workspacePath,
+        workspaceIdentity: _ref.workspaceIdentity,
+        sessionId: _taskId!,
+        workId: workId,
+        baseRevision: _v4Revision,
+        baseLogEpoch: _v4LogEpoch,
+      );
+      // 列表由后续 state patch / 快照自然更新, 不做本地乐观删
+    } catch (e) {
+      appLog.w('[Chat] 取消后台工作失败 ($workId): $e');
+      state = state.copyWith(error: '取消后台工作失败: $e');
+    }
+  }
+
   /// 处理 session 事件 (保留兼容, V4 不走此路径)
   Future<void> _onSessionEvent(SessionEvent event) async {}
 
   /// 处理 AskUserQuestion 工具事件 (V4 由 _applySnapshotState 处理)
   void _handleAskUserQuestion(SessionEvent event) {}
 
-  /// 用户回答 AskUserQuestion
-  Future<void> answerQuestion(List<String> selectedLabels) async {
+  /// 用户回答 AskUserQuestion — V4 走 resolveInteraction, 不发用户消息
+  /// (对齐网页端: 弹窗逐题作答后一次性提交; 忽略走 decline)
+  Future<void> answerQuestion({
+    bool decline = false,
+    Map<int, List<String>> selectedValues = const {},
+    Map<int, String> customAnswers = const {},
+  }) async {
     final q = state.pendingQuestion;
     if (q == null || _taskId == null) return;
-    final answer = selectedLabels.join(', ');
     _respondingFallTimer?.cancel();
     _respondingFallTimer = null;
-    state = state.copyWith(pendingQuestion: null, isResponding: true);
+    state = state.copyWith(pendingQuestion: _clearPendingQuestion, isResponding: true);
     try {
       await _relay.sendConversationCommandV4(
         workspacePath: _ref.workspacePath,
         workspaceIdentity: _ref.workspaceIdentity,
-        commandType: 'sendText',
-              sessionId: _taskId,
-        payload: {'text': '${q.question}=$answer'},
+        commandType: 'resolveInteraction',
+        sessionId: _taskId,
+        baseRevision: _v4Revision,
+        baseLogEpoch: _v4LogEpoch,
+        payload: {
+          'interactionId': q.callId,
+          'answer': decline
+              ? {'action': 'decline'}
+              : {
+                  'action': 'accept',
+                  'content': buildQuestionAnswerContent(
+                      q.questions, selectedValues, customAnswers),
+                },
+        },
       );
     } catch (e) {
       appLog.w('[Chat] 回答提交失败: $e');
@@ -2416,9 +2753,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
   Future<List<MessagePart>> loadSubagentChildren(
     String childSessionId, {
     int depth = 1,
+    bool forceRefresh = false,
   }) async {
-    final cached = _subagentChildrenCache[childSessionId];
-    if (cached != null) return cached;
+    if (!forceRefresh) {
+      final cached = _subagentChildrenCache[childSessionId];
+      if (cached != null) return cached;
+    }
     final resp = await _relay.conversationRowsRangeV4(
       workspacePath: _ref.workspacePath,
       workspaceIdentity: _ref.workspaceIdentity,
@@ -2431,7 +2771,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       final row = V4Row.fromJson(Map<String, dynamic>.from(r));
       switch (row) {
         case V4AssistantTextRow() when row.text.isNotEmpty:
-          parts.add(TextPart(row.text));
+          appendTextPart(parts, row.text);
         case V4ReasoningRow() when row.text.isNotEmpty:
           parts.add(ThoughtPart(row.text));
         case V4ToolCallRow():
@@ -2458,6 +2798,24 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
     _subagentChildrenCache[childSessionId] = parts;
     return parts;
+  }
+
+  /// 弹窗轮询入口: 强制刷新子会话内容 + 返回子代理行实时状态。
+  /// status 为 null = 主行流里找不到该子代理 (嵌套子代理), 调用方自行降级。
+  Future<({List<MessagePart> parts, String? status})> refreshSubagentDetail(
+      String childSessionId) async {
+    final parts = await loadSubagentChildren(childSessionId, forceRefresh: true);
+    return (parts: parts, status: findSubagentStatus(childSessionId));
+  }
+
+  /// 从权威行日志 _rows 按 childSessionId 找子代理行状态 (无则 null)。
+  String? findSubagentStatus(String childSessionId) {
+    for (final r in _rows.values) {
+      if (r is V4SubagentRow && r.childSessionId == childSessionId) {
+        return r.status;
+      }
+    }
+    return null;
   }
 
   /// ★ 轮次完成时刻的元数据补读 (网页端同款行为)。

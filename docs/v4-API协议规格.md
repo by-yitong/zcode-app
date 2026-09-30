@@ -235,6 +235,21 @@ envelope: {
 
 **权限选项 kind**: `allowOnce | allowAlways | deny | custom`
 - `allowOnce` → 允许一次
+
+**★ AskUserQuestion (kind="userInput" 带 questions[]) 的回答** (3.12.3 renderer 逆向,
+Vat() 逐字对齐 — 网页端弹窗逐题作答后**一次性** resolveInteraction, 不发用户消息):
+- 提交: `answer: {action: "accept", content: {...}}`, 每题
+  `vals = [...选中选项的 value (非 label), ...(自定义文本 trim 非空 ? [文本] : [])]`,
+  vals 为空的题整题跳过:
+  ```typescript
+  content = {
+    answers: { [question 原文]: vals.join(", ") },  // 所有有值的题
+    answer_0: q0.multiSelect ? vals : vals[0],      // 每题按下标
+    answer_1: ...,
+    answer: content.answer_0,  // 仅单题且 answer_0 存在时
+  }
+  ```
+- 忽略: `answer: {action: "decline"}` (无 content)
 - `allowAlways` → 始终允许
 - `deny` → 拒绝
 - `custom` → 自定义
@@ -305,30 +320,40 @@ args: [{ workspacePath, workspaceIdentity?, taskId, ifNoneMatch?: string }]
 
 ### 附件上传 (V4 Attachment)
 
-4步上传流程:
+4步上传流程 (3.14.3 asar 逆向核实, 与 App relay_client.uploadAttachmentV4 同款):
 
 ```typescript
-// 1. 开始上传
-attachmentBeginV4({ workspacePath, sessionId, uploadId, fileName, mime, totalBytes, totalChunks, checksum })
+// 1. 开始上传 — uploadId = "upload-<uuid>" (客户端生成);
+//    checksum = 全文件 SHA-256 hex 小写 (服务端按它去重);
+//    totalChunks = ceil(totalBytes / 393216)  // 分片固定 384*1024
+attachmentBeginV4({ workspacePath, workspaceIdentity?, sessionId, uploadId, fileName, mime, totalBytes, totalChunks, checksum })
 → { state: "awaitingChunks"|"committed", nextChunkIndex?, ref? }
+//    state=committed: checksum 去重命中, 直接用返回的 ref, 跳过 2/3 步;
+//    否则从 nextChunkIndex 起续传 (通常 0)
 
-// 2. 上传分块
-attachmentChunkV4({ workspacePath, uploadId, chunkIndex, data: base64, checksum? })
-→ { nextChunkIndex: number }
+// 2. 上传分块 — 字段名是 dataBase64 (非 data); 无逐块 checksum
+attachmentChunkV4({ workspacePath, workspaceIdentity?, sessionId, uploadId, chunkIndex, dataBase64: base64 })
+→ { nextChunkIndex: number }  // 必须 == chunkIndex+1, 否则进度异常
 
 // 3. 提交
-attachmentCommitV4({ workspacePath, uploadId })
+attachmentCommitV4({ workspacePath, workspaceIdentity?, sessionId, uploadId })
 → { ref: string }
 
-// 4. (可选) 取消
-attachmentAbortV4({ workspacePath, uploadId })
+// 4. 失败清理 (abort 错误可静默吞)
+attachmentAbortV4({ workspacePath, workspaceIdentity?, sessionId, uploadId })
 ```
+
+发送: `sendText` payload 带 `attachments: [{ref, fileName, mime, bytes}]`(strict schema, 恰好四字段; text 可空串)。
+回显: userInput 行自带 `attachments: [{ref, fileName, mime, bytes, previewRef?}]`。
+服务端限额: maxStaged 64MB, 未提交上传 TTL 5min, 未引用产物 TTL 24h。
 
 ### 附件读取
 
 ```typescript
-attachmentReadV4({ workspacePath, sessionId, ref, offset, limit })
+attachmentReadV4({ workspacePath, workspaceIdentity?, sessionId, ref, offset, limit })
 → { bytes: base64, nextOffset?: number, mediaType?: string }
+// 循环读: offset 从 0 起, 每次推进 nextOffset, 直到无 nextOffset;
+// 分段 base64 长度恒为 4 的倍数, 可直接字符串拼接后一次解码
 ```
 
 ### 运行时模型解析
@@ -838,7 +863,12 @@ Workspace-Config Delta:
 | `validatePlugin` | `{source, workspaceIdentity?, workspacePath?}` | 验证插件 |
 | `configurePlugin` | `{pluginId, options}` | 配置插件 |
 
-### model-provider channel
+### model-provider channel ★ 3.14.4 已移除
+> **⚠ host 3.14.4 起此通道不再注册** — 调用报
+> `Channel name 'model-provider' timed out after 1000ms` (真机实测 2026-10-01)。
+> 模型列表改走 [model-selection channel](#model-selection-channel-host--3144)。
+> 仅 host ≤ 3.12.x 可用:
+
 | 方法 | 参数 | 说明 |
 |------|------|------|
 | `getAll` | — | 全部模型列表 |
@@ -848,6 +878,34 @@ Workspace-Config Delta:
 | `onDidChangeProviderRegistry` | — | (listen) 注册表变更 |
 | `refreshCodingPlanApiKey` | `{...}` | 刷新 API key |
 | `resolveWorkspaceModelSelection` | `{...}` | 解析工作区模型选择 |
+
+### model-selection channel (host ≥ 3.14.4)
+> 3.14.4 asar 逆向 + 真机实证 (`getView` 返回 6 个模型)。App 侧
+> `relay_client.getModelSelectionView()` 即此调用, 失败自动回退旧通道。
+
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `getView` | — | 模型选择视图 (下方结构) |
+| `onDidChange` | — | (listen) 视图变更 |
+
+```typescript
+// getView 响应 (modelSelectionView):
+{
+  revision: number,
+  providers: [{
+    providerId: string,          // 如 "zai"
+    providerName?: string,       // 展示名
+    models: [{
+      modelId: string,           // 如 "glm-4.7"
+      config?: {
+        visibility?: "visible" | "hidden",   // hidden 不展示 (对齐网页端)
+        optionSpecs?: { reasoningLevel?: { values: string[] } },  // 思考级别选项
+      },
+    }],
+  }],
+}
+// 模型完整 ID = "<providerId>/<modelId>" (switchModelConfig 拆分用)
+```
 
 ### file channel
 | 方法 | 参数 | 说明 |

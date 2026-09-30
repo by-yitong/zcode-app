@@ -4,6 +4,7 @@ import 'dart:math';
 import 'dart:io' show WebSocket;
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart' as crypto;
+import 'package:uuid/uuid.dart';
 
 import 'relay_events.dart';
 import 'relay_protocol.dart';
@@ -1354,6 +1355,24 @@ class RelayClient {
     return {'raw': resp.body, 'typeCode': resp.typeCode};
   }
 
+  /// 模型选择视图 — model-selection.getView (host ≥ 3.14.4)。
+  ///
+  /// 桌面 3.14.4 移除了 model-provider 通道 (调用报 "Channel name
+  /// 'model-provider' timed out"), 模型列表改由 model-selection 通道提供。
+  /// 返回 {revision, providers:[{providerId, providerName?,
+  /// models:[{modelId, config:{visibility?}}]}]} (3.14.4 asar 逆向)。
+  Future<Map<String, dynamic>> getModelSelectionView() async {
+    final resp = await _rpcCall(
+      'model-selection',
+      'getView',
+      [],
+      // 通道不存在时 ~1s 快速失败, 尽快回退旧通道
+      timeout: const Duration(seconds: 3),
+    );
+    if (resp.body is Map) return resp.body as Map<String, dynamic>;
+    return {'raw': resp.body, 'typeCode': resp.typeCode};
+  }
+
   /// 获取账号可用模型列表 — model-provider.getAll (规格 §5.5 表)。
   /// 这是模型列表的**权威来源** (区别于 zcode-workspace/readState, 后者在 relay 桥为
   /// Unknown channel)。getAll 失败回退 getAllCached。
@@ -1592,6 +1611,28 @@ class RelayClient {
     return sessionId;
   }
 
+  /// V4 取消后台工作 (后台终端/子代理) — sendConversationCommandV4(type: cancelBackgroundWork)
+  ///
+  /// CAS 命令: 必须带当前 baseRevision/baseLogEpoch,
+  /// 过期会被服务端以 proto.staleRevision 拒绝。
+  Future<Map<String, dynamic>> cancelBackgroundWorkV4({
+    required String workspacePath,
+    String? workspaceIdentity,
+    required String sessionId,
+    required String workId,
+    required int baseRevision,
+    String? baseLogEpoch,
+  }) =>
+      sendConversationCommandV4(
+        workspacePath: workspacePath,
+        workspaceIdentity: workspaceIdentity,
+        sessionId: sessionId,
+        commandType: 'cancelBackgroundWork',
+        payload: {'workId': workId},
+        baseRevision: baseRevision,
+        baseLogEpoch: baseLogEpoch,
+      );
+
   /// V4 分页加载历史消息
   Future<Map<String, dynamic>> conversationRowsRangeV4({
     required String workspacePath,
@@ -1649,6 +1690,228 @@ class RelayClient {
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
+  }
+
+  // ================================================================
+  // V4 附件分片上传/读回 (网页端图片发送同款协议, 3.14.3 asar 逆向)
+  // ================================================================
+
+  /// 附件分片大小: 384KB (attachmentBegin.totalChunks 按此切, 网页端同款)
+  static const int attachmentChunkSize = 384 * 1024;
+
+  /// 分片上传一个附件, 返回服务端产物 ref。
+  ///
+  /// 流程 begin → chunk* → commit; checksum 去重命中 (state=committed) 时
+  /// 直接返回 ref (跳过 chunk/commit)。任一步失败且已 begin → 尽力 abort
+  /// (abort 失败静默吞), 原始错误向上抛。
+  Future<String> uploadAttachmentV4({
+    required String workspacePath,
+    String? workspaceIdentity,
+    required String sessionId,
+    required String fileName,
+    required String mime,
+    required Uint8List bytes,
+  }) async {
+    final uploadId = 'upload-${const Uuid().v4()}';
+    // 全文件 SHA-256 hex 小写 — 服务端按它去重
+    final checksum = crypto.sha256.convert(bytes).toString();
+    final totalChunks = (bytes.length / attachmentChunkSize).ceil();
+    var began = false;
+    try {
+      final begin = await attachmentBeginV4(
+        workspacePath: workspacePath,
+        workspaceIdentity: workspaceIdentity,
+        sessionId: sessionId,
+        uploadId: uploadId,
+        fileName: fileName,
+        mime: mime,
+        totalBytes: bytes.length,
+        totalChunks: totalChunks,
+        checksum: checksum,
+      );
+      began = true;
+      final committedRef = begin['ref'] as String?;
+      if (begin['state'] == 'committed') {
+        // 服务端按 checksum 去重命中: 上传即已完成, 直接用产物 ref
+        if (committedRef == null || committedRef.isEmpty) {
+          throw StateError('attachmentBeginV4 committed 但响应缺 ref');
+        }
+        return committedRef;
+      }
+      // 断点续传: 从服务端告知的分片起点继续 (通常 0)
+      var index = (begin['nextChunkIndex'] as num?)?.toInt() ?? 0;
+      for (; index < totalChunks; index++) {
+        final start = index * attachmentChunkSize;
+        final end = (start + attachmentChunkSize) > bytes.length
+            ? bytes.length
+            : (start + attachmentChunkSize);
+        final next = await attachmentChunkV4(
+          workspacePath: workspacePath,
+          workspaceIdentity: workspaceIdentity,
+          sessionId: sessionId,
+          uploadId: uploadId,
+          chunkIndex: index,
+          dataBase64: base64Encode(
+            Uint8List.sublistView(bytes, start, end),
+          ),
+        );
+        if (next != index + 1) {
+          throw StateError(
+              'attachmentChunkV4 进度异常: chunkIndex=$index nextChunkIndex=$next');
+        }
+      }
+      return await attachmentCommitV4(
+        workspacePath: workspacePath,
+        workspaceIdentity: workspaceIdentity,
+        sessionId: sessionId,
+        uploadId: uploadId,
+      );
+    } catch (e) {
+      if (began) {
+        try {
+          await attachmentAbortV4(
+            workspacePath: workspacePath,
+            workspaceIdentity: workspaceIdentity,
+            sessionId: sessionId,
+            uploadId: uploadId,
+          );
+        } catch (_) {}
+      }
+      rethrow;
+    }
+  }
+
+  /// attachmentBeginV4 — 开启上传会话。
+  /// 响应 {state, ref?, nextChunkIndex?}: committed=去重命中直接用 ref。
+  Future<Map<String, dynamic>> attachmentBeginV4({
+    required String workspacePath,
+    String? workspaceIdentity,
+    required String sessionId,
+    required String uploadId,
+    required String fileName,
+    required String mime,
+    required int totalBytes,
+    required int totalChunks,
+    required String checksum,
+  }) async {
+    final resp = await _rpcCall('zcode-agent', 'attachmentBeginV4', [
+      {
+        'workspacePath': workspacePath,
+        if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
+        'sessionId': sessionId,
+        'uploadId': uploadId,
+        'fileName': fileName,
+        'mime': mime,
+        'totalBytes': totalBytes,
+        'totalChunks': totalChunks,
+        'checksum': checksum,
+      }
+    ]);
+    if (resp.body is Map) return resp.body as Map<String, dynamic>;
+    return {'raw': resp.body};
+  }
+
+  /// attachmentChunkV4 — 推送单分片 (标准 base64, 末片可不足 384KB)。
+  /// 返回 nextChunkIndex, 调用方必须校验 == chunkIndex+1。
+  Future<int> attachmentChunkV4({
+    required String workspacePath,
+    String? workspaceIdentity,
+    required String sessionId,
+    required String uploadId,
+    required int chunkIndex,
+    required String dataBase64,
+  }) async {
+    final resp = await _rpcCall('zcode-agent', 'attachmentChunkV4', [
+      {
+        'workspacePath': workspacePath,
+        if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
+        'sessionId': sessionId,
+        'uploadId': uploadId,
+        'chunkIndex': chunkIndex,
+        'dataBase64': dataBase64,
+      }
+    ]);
+    if (resp.body is Map) {
+      final next = (resp.body as Map<String, dynamic>)['nextChunkIndex'];
+      if (next is num) return next.toInt();
+    }
+    throw StateError('attachmentChunkV4 响应缺 nextChunkIndex');
+  }
+
+  /// attachmentCommitV4 — 提交上传, 返回服务端产物引用 ref
+  Future<String> attachmentCommitV4({
+    required String workspacePath,
+    String? workspaceIdentity,
+    required String sessionId,
+    required String uploadId,
+  }) async {
+    final resp = await _rpcCall('zcode-agent', 'attachmentCommitV4', [
+      {
+        'workspacePath': workspacePath,
+        if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
+        'sessionId': sessionId,
+        'uploadId': uploadId,
+      }
+    ]);
+    if (resp.body is Map) {
+      final ref = (resp.body as Map<String, dynamic>)['ref'] as String?;
+      if (ref != null && ref.isNotEmpty) return ref;
+    }
+    throw StateError('attachmentCommitV4 响应缺 ref');
+  }
+
+  /// attachmentAbortV4 — 中止上传 (失败清理; 调用方静默吞错)
+  Future<void> attachmentAbortV4({
+    required String workspacePath,
+    String? workspaceIdentity,
+    required String sessionId,
+    required String uploadId,
+  }) async {
+    await _rpcCall('zcode-agent', 'attachmentAbortV4', [
+      {
+        'workspacePath': workspacePath,
+        if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
+        'sessionId': sessionId,
+        'uploadId': uploadId,
+      }
+    ]);
+  }
+
+  /// attachmentReadV4 循环读回附件全部字节 (512KB/次, 网页端同款)。
+  /// 分段 base64 长度恒为 4 的倍数 → 直接字符串拼接后一次解码。
+  Future<Uint8List> attachmentReadAllV4({
+    required String workspacePath,
+    String? workspaceIdentity,
+    required String sessionId,
+    required String ref,
+  }) async {
+    final b64 = StringBuffer();
+    var offset = 0;
+    while (true) {
+      final resp = await _rpcCall('zcode-agent', 'attachmentReadV4', [
+        {
+          'workspacePath': workspacePath,
+          if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
+          'sessionId': sessionId,
+          'ref': ref,
+          'offset': offset,
+          'limit': 524288,
+        }
+      ]);
+      if (resp.body is! Map) {
+        throw StateError('attachmentReadV4 响应非 Map: ${resp.body}');
+      }
+      final body = resp.body as Map<String, dynamic>;
+      final chunk = body['bytes'] as String? ?? '';
+      if (chunk.isEmpty) break; // 防御: 空分片 + nextOffset 会死循环
+      b64.write(chunk);
+      final next = body['nextOffset'];
+      if (next is! num) break; // 无 nextOffset = 读完
+      final nextOffset = next.toInt();
+      if (nextOffset <= offset) break; // 防御: 服务端进度不前进
+      offset = nextOffset;
+    }
+    return base64Decode(b64.toString());
   }
 
   // V4 frame 订阅分发表 (替代 _eventSubs for V4 frames)
