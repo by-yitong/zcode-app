@@ -101,7 +101,7 @@ TextPart / 旧路径 content），按行切分取尾部至多 60 行（缓冲常
   "index": 0,
   "sessions": [
     {
-      "key": "/workspace/abs/path",
+      "key": "task-uuid",
       "title": "重构登录模块",
       "running": true,
       "error": false,
@@ -111,11 +111,15 @@ TextPart / 旧路径 content），按行切分取尾部至多 60 行（缓冲常
 }
 ```
 
+`key` 语义（实现期定稿）：`Task.id`（路由跳会话需要 taskId）。悬浮窗把它当
+不透明串原样回传，主 App 收到 `open` 后经 `allTasksProvider` 反查 workspace；
+反查不到（如任务列表未加载完）则放弃跳转。
+
 悬浮窗 → 主 App：
 
 ```json
 {"action": "refresh"}                      // 悬浮窗启动时拉一次最新快照 (防白屏)
-{"action": "open", "key": "/workspace/abs/path"}   // 轻点某页
+{"action": "open", "key": "task-uuid"}     // 轻点某页 (key=Task.id, 见上)
 ```
 
 ## 数据模型

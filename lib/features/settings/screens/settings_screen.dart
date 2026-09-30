@@ -5,11 +5,13 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/relay/relay_protocol.dart';
 import '../../../core/services/glm_quota_service.dart';
+import '../../../core/services/pip_service.dart';
 import '../../../core/services/update_service.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../../../data/models/glm_quota.dart';
 import '../../../providers/app_providers.dart';
 import '../../../providers/connections_providers.dart';
+import '../../../providers/pip_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/widgets/app_section_header.dart';
 import '../../../shared/widgets/app_tile_group.dart';
@@ -62,18 +64,23 @@ class SettingsScreen extends ConsumerWidget {
                         ),
                         borderRadius: BorderRadius.circular(AppRadius.md),
                       ),
-                      child: const Icon(Icons.person_rounded,
-                          color: Colors.white, size: 22),
+                      child: const Icon(
+                        Icons.person_rounded,
+                        color: Colors.white,
+                        size: 22,
+                      ),
                     ),
                     const SizedBox(width: AppSpacing.md),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(userName,
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w600,
-                              )),
+                          Text(
+                            userName,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                           Text(
                             'SID · $deviceId',
                             style: AppText.mono(
@@ -103,14 +110,16 @@ class SettingsScreen extends ConsumerWidget {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.cloud_done_rounded,
-                          size: 14,
-                          color: connectionAsync.maybeWhen(
-                            data: (s) => s == RelayConnectionState.ready
-                                ? AppColors.success
-                                : AppColors.warning,
-                            orElse: () => AppColors.warning,
-                          )),
+                      Icon(
+                        Icons.cloud_done_rounded,
+                        size: 14,
+                        color: connectionAsync.maybeWhen(
+                          data: (s) => s == RelayConnectionState.ready
+                              ? AppColors.success
+                              : AppColors.warning,
+                          orElse: () => AppColors.warning,
+                        ),
+                      ),
                       const SizedBox(width: AppSpacing.xs),
                       Text(
                         connectionAsync.maybeWhen(
@@ -126,9 +135,11 @@ class SettingsScreen extends ConsumerWidget {
                           },
                           orElse: () => '—',
                         ),
-                        style: AppText.mono(context,
-                            size: AppTextSizes.monoXs,
-                            color: theme.colorScheme.onSurfaceVariant),
+                        style: AppText.mono(
+                          context,
+                          size: AppTextSizes.monoXs,
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ],
                   ),
@@ -144,153 +155,179 @@ class SettingsScreen extends ConsumerWidget {
 
           // Agent 设置 (六项独立页面)
           const AppSectionHeader(title: 'Agent 能力'),
-          AppTileGroup(tiles: [
-            AppTile(
-              icon: Icons.auto_awesome_outlined,
-              title: '技能',
-              subtitle: '技能启停 / 详情 / 新建 / 外部导入',
-              showChevron: true,
-              onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => SkillsPage(onNewSkill: () {
-                  Navigator.of(context)
-                      .popUntil((r) => r.isFirst || r is! MaterialPageRoute);
-                }),
-              )),
-            ),
-            AppTile(
-              icon: Icons.smart_toy_outlined,
-              title: '子智能体',
-              subtitle: '模型 / 思考级别 / 提示词 / 工具',
-              showChevron: true,
-              onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => const SubagentsPage(),
-              )),
-            ),
-            AppTile(
-              icon: Icons.dns_outlined,
-              title: 'MCP',
-              subtitle: '服务器管理 / 状态 / 授权',
-              showChevron: true,
-              onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => const McpPage(),
-              )),
-            ),
-            AppTile(
-              icon: Icons.terminal_rounded,
-              title: '命令',
-              subtitle: '斜杠命令的新建与编辑',
-              showChevron: true,
-              onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => const CommandsPage(),
-              )),
-            ),
-            AppTile(
-              icon: Icons.webhook_outlined,
-              title: '钩子',
-              subtitle: '事件触发的自定义命令',
-              showChevron: true,
-              onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => const HooksPage(),
-              )),
-            ),
-            AppTile(
-              icon: Icons.extension_outlined,
-              title: '插件',
-              subtitle: '已装插件与市场安装',
-              showChevron: true,
-              onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => const PluginsPage(),
-              )),
-            ),
-          ]),
+          AppTileGroup(
+            tiles: [
+              AppTile(
+                icon: Icons.auto_awesome_outlined,
+                title: '技能',
+                subtitle: '技能启停 / 详情 / 新建 / 外部导入',
+                showChevron: true,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => SkillsPage(
+                      onNewSkill: () {
+                        Navigator.of(
+                          context,
+                        ).popUntil((r) => r.isFirst || r is! MaterialPageRoute);
+                      },
+                    ),
+                  ),
+                ),
+              ),
+              AppTile(
+                icon: Icons.smart_toy_outlined,
+                title: '子智能体',
+                subtitle: '模型 / 思考级别 / 提示词 / 工具',
+                showChevron: true,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const SubagentsPage()),
+                ),
+              ),
+              AppTile(
+                icon: Icons.dns_outlined,
+                title: 'MCP',
+                subtitle: '服务器管理 / 状态 / 授权',
+                showChevron: true,
+                onTap: () => Navigator.of(
+                  context,
+                ).push(MaterialPageRoute(builder: (_) => const McpPage())),
+              ),
+              AppTile(
+                icon: Icons.terminal_rounded,
+                title: '命令',
+                subtitle: '斜杠命令的新建与编辑',
+                showChevron: true,
+                onTap: () => Navigator.of(
+                  context,
+                ).push(MaterialPageRoute(builder: (_) => const CommandsPage())),
+              ),
+              AppTile(
+                icon: Icons.webhook_outlined,
+                title: '钩子',
+                subtitle: '事件触发的自定义命令',
+                showChevron: true,
+                onTap: () => Navigator.of(
+                  context,
+                ).push(MaterialPageRoute(builder: (_) => const HooksPage())),
+              ),
+              AppTile(
+                icon: Icons.extension_outlined,
+                title: '插件',
+                subtitle: '已装插件与市场安装',
+                showChevron: true,
+                onTap: () => Navigator.of(
+                  context,
+                ).push(MaterialPageRoute(builder: (_) => const PluginsPage())),
+              ),
+            ],
+          ),
 
           // 外观
           const AppSectionHeader(title: '外观'),
-          AppTileGroup(tiles: [
-            AppTile(
-              icon: Icons.dark_mode_rounded,
-              title: '主题',
-              value: themeModeLabel(ref.watch(themeModeProvider)),
-              showChevron: true,
-              onTap: () => _showThemePicker(context, ref),
-            ),
-          ]),
+          AppTileGroup(
+            tiles: [
+              AppTile(
+                icon: Icons.dark_mode_rounded,
+                title: '主题',
+                value: themeModeLabel(ref.watch(themeModeProvider)),
+                showChevron: true,
+                onTap: () => _showThemePicker(context, ref),
+              ),
+              AppTile(
+                icon: Icons.picture_in_picture_alt_rounded,
+                title: '悬浮窗行数',
+                value: '${ref.watch(pipLinesProvider)} 行',
+                showChevron: true,
+                onTap: () => _showPipLinesPicker(context, ref),
+              ),
+            ],
+          ),
 
           // 桌面端设置 (只读查看)
           const AppSectionHeader(title: '桌面端设置'),
-          AppTileGroup(tiles: [
-            AppTile(
-              icon: Icons.settings_remote_rounded,
-              title: '远程设置',
-              subtitle: '查看 ZCode 桌面端的配置',
-              showChevron: true,
-              onTap: () {
-                final ws = ref.read(workspaceListProvider).valueOrNull ?? [];
-                Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => RemoteSettingsScreen(
-                    workspacePath: ws.isNotEmpty ? ws.first.workspacePath : '',
-                  ),
-                ));
-              },
-            ),
-          ]),
+          AppTileGroup(
+            tiles: [
+              AppTile(
+                icon: Icons.settings_remote_rounded,
+                title: '远程设置',
+                subtitle: '查看 ZCode 桌面端的配置',
+                showChevron: true,
+                onTap: () {
+                  final ws = ref.read(workspaceListProvider).valueOrNull ?? [];
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => RemoteSettingsScreen(
+                        workspacePath: ws.isNotEmpty
+                            ? ws.first.workspacePath
+                            : '',
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
 
           // 关于
           const AppSectionHeader(title: '关于'),
-          AppTileGroup(tiles: [
-            FutureBuilder<String>(
-              future: UpdateService.localVersion(),
-              builder: (_, snap) => AppTile(
-                icon: Icons.info_outline_rounded,
-                title: '版本',
-                value: 'v${snap.data ?? '…'}',
+          AppTileGroup(
+            tiles: [
+              FutureBuilder<String>(
+                future: UpdateService.localVersion(),
+                builder: (_, snap) => AppTile(
+                  icon: Icons.info_outline_rounded,
+                  title: '版本',
+                  value: 'v${snap.data ?? '…'}',
+                ),
               ),
-            ),
-            AppTile(
-              icon: Icons.system_update_alt_rounded,
-              title: '检查更新',
-              subtitle: 'GitHub Releases',
-              showChevron: true,
-              onTap: () => _checkUpdate(context),
-            ),
-            AppTile(
-              icon: Icons.code_rounded,
-              title: 'GitHub',
-              subtitle: 'github.com/by-yitong/zcode-app',
-              showChevron: true,
-              onTap: () => _openUrl('https://github.com/by-yitong/zcode-app'),
-            ),
-            AppTile(
-              icon: Icons.description_outlined,
-              title: '开源协议',
-              value: 'MIT',
-              showChevron: true,
-              onTap: () => _showLicenseDialog(context),
-            ),
-          ]),
+              AppTile(
+                icon: Icons.system_update_alt_rounded,
+                title: '检查更新',
+                subtitle: 'GitHub Releases',
+                showChevron: true,
+                onTap: () => _checkUpdate(context),
+              ),
+              AppTile(
+                icon: Icons.code_rounded,
+                title: 'GitHub',
+                subtitle: 'github.com/by-yitong/zcode-app',
+                showChevron: true,
+                onTap: () => _openUrl('https://github.com/by-yitong/zcode-app'),
+              ),
+              AppTile(
+                icon: Icons.description_outlined,
+                title: '开源协议',
+                value: 'MIT',
+                showChevron: true,
+                onTap: () => _showLicenseDialog(context),
+              ),
+            ],
+          ),
 
           const SizedBox(height: AppSpacing.xl),
 
           // 连接管理 — 远程连接 + 断开连接 融合为一组
-          AppTileGroup(tiles: [
-            AppTile(
-              icon: Icons.devices_rounded,
-              title: '远程连接',
-              subtitle: _connectionSubtitle(ref),
-              showChevron: true,
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const ConnectionsScreen()),
+          AppTileGroup(
+            tiles: [
+              AppTile(
+                icon: Icons.devices_rounded,
+                title: '远程连接',
+                subtitle: _connectionSubtitle(ref),
+                showChevron: true,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const ConnectionsScreen()),
+                ),
               ),
-            ),
-            AppTile(
-              icon: Icons.power_settings_new_rounded,
-              iconTint: AppColors.danger,
-              title: '断开连接',
-              subtitle: '仅断开当前会话, 已保存的设备不受影响',
-              showChevron: true,
-              onTap: () => _logout(context, ref),
-            ),
-          ]),
+              AppTile(
+                icon: Icons.power_settings_new_rounded,
+                iconTint: AppColors.danger,
+                title: '断开连接',
+                subtitle: '仅断开当前会话, 已保存的设备不受影响',
+                showChevron: true,
+                onTap: () => _logout(context, ref),
+              ),
+            ],
+          ),
           const SizedBox(height: AppSpacing.xxl),
         ],
       ),
@@ -367,11 +404,14 @@ class SettingsScreen extends ConsumerWidget {
       builder: (context) => AlertDialog(
         title: const Text('MIT License'),
         content: SingleChildScrollView(
-          child: Text(kMitLicenseText,
-              style: AppText.mono(
-                  context,
-                  size: AppTextSizes.monoSm,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
+          child: Text(
+            kMitLicenseText,
+            style: AppText.mono(
+              context,
+              size: AppTextSizes.monoSm,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
         ),
         actions: [
           TextButton(
@@ -403,10 +443,9 @@ class SettingsScreen extends ConsumerWidget {
                   alignment: Alignment.centerLeft,
                   child: Text(
                     '选择主题',
-                    style: Theme.of(context)
-                        .textTheme
-                        .titleMedium
-                        ?.copyWith(fontWeight: FontWeight.w600),
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ),
@@ -424,17 +463,18 @@ class SettingsScreen extends ConsumerWidget {
                         entry.$1 == ThemeMode.dark
                             ? Icons.dark_mode_outlined
                             : entry.$1 == ThemeMode.light
-                                ? Icons.light_mode_outlined
-                                : Icons.brightness_auto_outlined,
+                            ? Icons.light_mode_outlined
+                            : Icons.brightness_auto_outlined,
                       ),
                       title: Text(entry.$2),
                       subtitle: entry.$3 != null ? Text(entry.$3!) : null,
                       trailing: selected
-                          ? Icon(Icons.check,
-                              color: Theme.of(context).colorScheme.primary)
+                          ? Icon(
+                              Icons.check,
+                              color: Theme.of(context).colorScheme.primary,
+                            )
                           : null,
-                      onTap: () =>
-                          _applyTheme(sheetContext, ref, entry.$1),
+                      onTap: () => _applyTheme(sheetContext, ref, entry.$1),
                     );
                   },
                 ),
@@ -455,6 +495,83 @@ class SettingsScreen extends ConsumerWidget {
     ref.read(themeModeProvider.notifier).state = mode;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(kThemeModePrefKey, themeModeToString(mode));
+    if (sheetContext.mounted) Navigator.of(sheetContext).pop();
+  }
+
+  /// 弹出悬浮窗行数选择器 (1–10, 交互仿主题选择)
+  void _showPipLinesPicker(BuildContext context, WidgetRef ref) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      // ⚠️ 不透明背景, 避免深色主题的半透明 surface 透出底层卡片重叠。
+      backgroundColor: Theme.of(context).brightness == Brightness.dark
+          ? AppColors.darkBg
+          : AppColors.lightSurface,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '悬浮窗行数',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '画中画小窗正文的可视行数, 修改后即时生效',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ),
+              // 1–10 选项
+              for (var n = pipMinLines; n <= pipMaxLines; n++)
+                Consumer(
+                  builder: (context, ref, _) {
+                    final current = ref.watch(pipLinesProvider);
+                    final selected = n == current;
+                    return ListTile(
+                      leading: const Icon(Icons.picture_in_picture_alt_rounded),
+                      title: Text('$n 行'),
+                      trailing: selected
+                          ? Icon(
+                              Icons.check,
+                              color: Theme.of(context).colorScheme.primary,
+                            )
+                          : null,
+                      onTap: () => _applyPipLines(sheetContext, ref, n),
+                    );
+                  },
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// 应用悬浮窗行数: 更新 provider 状态 + 持久化, 然后关闭选择器。
+  /// 悬浮窗开着时由 PipMonitorService 监听 pipLinesProvider 自动
+  /// resizeOverlay + 立即重推, 无需在此处理。
+  Future<void> _applyPipLines(
+    BuildContext sheetContext,
+    WidgetRef ref,
+    int lines,
+  ) async {
+    ref.read(pipLinesProvider.notifier).state = lines;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(kPipLinesPrefKey, lines);
     if (sheetContext.mounted) Navigator.of(sheetContext).pop();
   }
 }
@@ -485,9 +602,11 @@ class _GlmQuotaInlineSummary extends ConsumerWidget {
       padding: const EdgeInsets.only(top: AppSpacing.sm),
       child: Text(
         parts.join(' · '),
-        style: AppText.mono(context,
-            size: AppTextSizes.monoSm,
-            color: Theme.of(context).colorScheme.onSurfaceVariant),
+        style: AppText.mono(
+          context,
+          size: AppTextSizes.monoSm,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
       ),
     );
   }
@@ -506,36 +625,41 @@ class _GlmQuotaCard extends ConsumerWidget {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.lg),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 标题行 + 刷新按钮
-              Row(
-                children: [
-                  Icon(Icons.bolt_outlined,
-                      size: 18, color: theme.colorScheme.primary),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text('Coding Plan 余量',
-                        style: theme.textTheme.titleSmall
-                            ?.copyWith(fontWeight: FontWeight.w600)),
-                  ),
-                  if (configured)
-                    _RefreshButton(
-                      loading: quotaAsync.isLoading,
-                      onTap: () =>
-                          ref.read(glmQuotaProvider.notifier).refresh(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 标题行 + 刷新按钮
+            Row(
+              children: [
+                Icon(
+                  Icons.bolt_outlined,
+                  size: 18,
+                  color: theme.colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Coding Plan 余量',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
                     ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              if (!configured)
-                _buildNotConfigured(context, ref)
-              else
-                _buildBody(context, ref, quotaAsync, cred),
-            ],
-          ),
+                  ),
+                ),
+                if (configured)
+                  _RefreshButton(
+                    loading: quotaAsync.isLoading,
+                    onTap: () => ref.read(glmQuotaProvider.notifier).refresh(),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (!configured)
+              _buildNotConfigured(context, ref)
+            else
+              _buildBody(context, ref, quotaAsync, cred),
+          ],
         ),
+      ),
     );
   }
 
@@ -543,7 +667,10 @@ class _GlmQuotaCard extends ConsumerWidget {
     return Row(
       children: [
         const Expanded(
-          child: Text('未配置 GLM API Key', style: TextStyle(fontSize: AppTextSizes.bodySm)),
+          child: Text(
+            '未配置 GLM API Key',
+            style: TextStyle(fontSize: AppTextSizes.bodySm),
+          ),
         ),
         TextButton.icon(
           onPressed: () => _showGlmCredentialEditor(context, ref),
@@ -564,8 +691,13 @@ class _GlmQuotaCard extends ConsumerWidget {
     return quotaAsync.when(
       loading: () => const Padding(
         padding: EdgeInsets.symmetric(vertical: 12),
-        child: Center(child: SizedBox(
-            width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))),
+        child: Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
       ),
       error: (e, _) => _ErrorRow(
         message: '查询失败: $e',
@@ -575,7 +707,10 @@ class _GlmQuotaCard extends ConsumerWidget {
         if (quota == null) {
           return const Padding(
             padding: EdgeInsets.symmetric(vertical: 8),
-            child: Text('暂无数据', style: TextStyle(fontSize: AppTextSizes.bodySm)),
+            child: Text(
+              '暂无数据',
+              style: TextStyle(fontSize: AppTextSizes.bodySm),
+            ),
           );
         }
         if (!quota.success) {
@@ -595,9 +730,12 @@ class _GlmQuotaCard extends ConsumerWidget {
             if (level != null && level.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: Text('套餐: $level',
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                child: Text(
+                  '套餐: $level',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
               ),
             for (final tier in quota.tiers) ...[
               _TierRow(tier: tier),
@@ -620,8 +758,9 @@ class _GlmQuotaCard extends ConsumerWidget {
                   Expanded(
                     child: Text(
                       '更新于 ${_fmtTime(quota.queriedAt!)}',
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   )
                 else
@@ -656,14 +795,21 @@ class _TierRow extends StatelessWidget {
         Row(
           children: [
             Expanded(
-              child: Text(label,
-                  style: theme.textTheme.bodyMedium
-                      ?.copyWith(fontWeight: FontWeight.w500)),
+              child: Text(
+                label,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
             ),
             Text(
               '${_fmtPct(tier.utilization)}%',
-              style: AppText.mono(context,
-                  size: 13, weight: FontWeight.w600, color: color),
+              style: AppText.mono(
+                context,
+                size: 13,
+                weight: FontWeight.w600,
+                color: color,
+              ),
             ),
           ],
         ),
@@ -682,8 +828,9 @@ class _TierRow extends StatelessWidget {
             padding: const EdgeInsets.only(top: 4),
             child: Text(
               '重置: ${_fmtRelative(tier.resetsAt!)}',
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
       ],
@@ -707,22 +854,30 @@ class _McpSection extends StatelessWidget {
         Row(
           children: [
             Expanded(
-              child: Text('本月 MCP 用量',
-                  style: theme.textTheme.bodyMedium
-                      ?.copyWith(fontWeight: FontWeight.w500)),
+              child: Text(
+                '本月 MCP 用量',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
             ),
             Text(
               '${_fmtPct(mcp.percentage)}%',
-              style: AppText.mono(context,
-                  size: 13, weight: FontWeight.w600, color: color),
+              style: AppText.mono(
+                context,
+                size: 13,
+                weight: FontWeight.w600,
+                color: color,
+              ),
             ),
           ],
         ),
         const SizedBox(height: 2),
         Text(
           '${mcp.used} / ${mcp.total} 次',
-          style: theme.textTheme.bodySmall
-              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
         ),
         const SizedBox(height: 6),
         ClipRRect(
@@ -739,8 +894,9 @@ class _McpSection extends StatelessWidget {
             padding: const EdgeInsets.only(top: 4),
             child: Text(
               '重置: ${_fmtRelative(mcp.resetsAt!)}',
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
         if (mcp.details.isNotEmpty) ...[
@@ -777,15 +933,18 @@ class _McpDetailRow extends StatelessWidget {
         Expanded(
           child: Text(
             glmMcpDisplayName(detail.modelCode),
-            style: theme.textTheme.bodySmall
-                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ),
         ),
         Text(
           '${detail.usage} 次',
-          style: AppText.mono(context,
-              size: AppTextSizes.monoSm,
-              color: theme.colorScheme.onSurfaceVariant),
+          style: AppText.mono(
+            context,
+            size: AppTextSizes.monoSm,
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
         ),
       ],
     );
@@ -803,7 +962,10 @@ class _RefreshButton extends StatelessWidget {
       return const Padding(
         padding: EdgeInsets.all(8),
         child: SizedBox(
-            width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
       );
     }
     return IconButton(
@@ -836,21 +998,31 @@ class _ErrorRow extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(message,
-                      style: const TextStyle(
-                          color: AppColors.danger, fontSize: AppTextSizes.bodySm)),
+                  Text(
+                    message,
+                    style: const TextStyle(
+                      color: AppColors.danger,
+                      fontSize: AppTextSizes.bodySm,
+                    ),
+                  ),
                   if (hint != null)
                     Padding(
                       padding: const EdgeInsets.only(top: 2),
-                      child: Text(hint!,
-                          style: theme.textTheme.bodySmall
-                              ?.copyWith(color: AppColors.warning)),
+                      child: Text(
+                        hint!,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: AppColors.warning,
+                        ),
+                      ),
                     ),
                 ],
               ),
             ),
-            Icon(Icons.chevron_right,
-                size: 18, color: theme.colorScheme.onSurfaceVariant),
+            Icon(
+              Icons.chevron_right,
+              size: 18,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ],
         ),
       ),
@@ -859,10 +1031,14 @@ class _ErrorRow extends StatelessWidget {
 }
 
 /// 凭据编辑 BottomSheet (Base URL + API Key)
-Future<void> _showGlmCredentialEditor(BuildContext context, WidgetRef ref) async {
+Future<void> _showGlmCredentialEditor(
+  BuildContext context,
+  WidgetRef ref,
+) async {
   final cred = ref.read(glmCredentialProvider);
-  final baseUrlCtrl =
-      TextEditingController(text: cred?.baseUrl ?? SecureStorageService.defaultGlmBaseUrl);
+  final baseUrlCtrl = TextEditingController(
+    text: cred?.baseUrl ?? SecureStorageService.defaultGlmBaseUrl,
+  );
   final apiKeyCtrl = TextEditingController(text: cred?.apiKey);
   var obscure = true;
 
@@ -877,16 +1053,21 @@ Future<void> _showGlmCredentialEditor(BuildContext context, WidgetRef ref) async
         builder: (context, setSheetState) {
           return Padding(
             padding: EdgeInsets.fromLTRB(
-              16, 0, 16,
+              16,
+              0,
+              16,
               16 + MediaQuery.of(context).viewInsets.bottom,
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('配置 GLM Coding Plan',
-                    style: theme.textTheme.titleMedium
-                        ?.copyWith(fontWeight: FontWeight.w600)),
+                Text(
+                  '配置 GLM Coding Plan',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
                 const SizedBox(height: 4),
                 Text(
                   'API Key 在智谱开放平台 → API Keys 获取。'
@@ -911,11 +1092,12 @@ Future<void> _showGlmCredentialEditor(BuildContext context, WidgetRef ref) async
                     border: const OutlineInputBorder(),
                     prefixIcon: const Icon(Icons.key_outlined),
                     suffixIcon: IconButton(
-                      icon: Icon(obscure
-                          ? Icons.visibility_outlined
-                          : Icons.visibility_off_outlined),
-                      onPressed: () =>
-                          setSheetState(() => obscure = !obscure),
+                      icon: Icon(
+                        obscure
+                            ? Icons.visibility_outlined
+                            : Icons.visibility_off_outlined,
+                      ),
+                      onPressed: () => setSheetState(() => obscure = !obscure),
                     ),
                   ),
                 ),
@@ -929,19 +1111,21 @@ Future<void> _showGlmCredentialEditor(BuildContext context, WidgetRef ref) async
                           await ref
                               .read(glmCredentialProvider.notifier)
                               .clear();
-                          await ref
-                              .read(glmQuotaProvider.notifier)
-                              .refresh();
+                          await ref.read(glmQuotaProvider.notifier).refresh();
                           if (sheetContext.mounted) Navigator.pop(sheetContext);
                         },
-                        child: const Text('清除',
-                            style: TextStyle(color: AppColors.danger)),
+                        child: const Text(
+                          '清除',
+                          style: TextStyle(color: AppColors.danger),
+                        ),
                       )
                     else
                       const SizedBox.shrink(),
                     FilledButton(
                       onPressed: () async {
-                        await ref.read(glmCredentialProvider.notifier).save(
+                        await ref
+                            .read(glmCredentialProvider.notifier)
+                            .save(
                               baseUrl: baseUrlCtrl.text,
                               apiKey: apiKeyCtrl.text,
                             );

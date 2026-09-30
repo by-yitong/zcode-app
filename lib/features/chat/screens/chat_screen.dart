@@ -17,11 +17,13 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../core/logging/app_logger.dart';
 import '../../../core/relay/relay_events.dart';
 import '../../../core/relay/relay_protocol.dart';
+import '../../../core/services/pip_service.dart';
 import '../../../core/services/update_service.dart';
 import '../../../data/models/glm_quota.dart' as glm;
 import '../../../data/models/workspace.dart';
 import '../../../providers/app_providers.dart';
 import '../../../providers/chat_provider.dart';
+import '../../../providers/pip_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/theme/app_router.dart';
 import '../../../shared/widgets/code_highlight.dart';
@@ -236,6 +238,7 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
 
   /// AI 提问答题弹窗是否打开 (防重复弹出)
   bool _questionSheetOpen = false;
+
   /// 上一帧是否有挂起的 AI 提问 (null→非空跳变 → 自动弹答题弹窗)
   bool _hadPendingQuestion = false;
 
@@ -248,9 +251,11 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
   // 校正永远慢一帧且要与框架内部重锚定赛跑 — 已废弃)。
   /// center sliver (older 块) 的 key
   final GlobalKey _centerSliverKey = GlobalKey();
+
   /// older 块最后一条消息 (紧邻锚点) 的 id — 边界一经确定不再移动,
   /// 新消息只进 live 块; 翻页/刷新后按 id 重新解析下标
   String? _boundaryMsgId;
+
   /// 当前按在列表上的指针数 — 手指未离开时不做贴底跟随
   /// (Hold 窗口/按住不动时 jumpTo 会打断手势起点)
   int _pointerArmed = 0;
@@ -376,6 +381,63 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
     }
   }
 
+  /// 打开悬浮窗进度监视器 (画中画, 仅 Android):
+  /// 权限检查 → 钉住当前会话 + 置位 active (启动聚合推送) → showOverlay
+  /// (失败回滚 active + SnackBar)
+  Future<void> _openPipOverlay() async {
+    if (!Platform.isAndroid) return;
+    final pip = ref.read(pipServiceProvider);
+    // 幂等: 已打开则忽略
+    if (await pip.isActive()) return;
+    // 未授权 → 跳系统设置, 引导开启后重试
+    if (!await pip.isPermissionGranted()) {
+      await pip.requestPermission();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('请先在 系统设置 → 应用 → ZCode → 显示其他应用上层 开启悬浮窗权限后重试'),
+            duration: Duration(seconds: 4),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      return;
+    }
+    if (!mounted) return;
+    final mq = MediaQuery.of(context);
+    final widthPx =
+        (mq.size.width * pipWindowWidthFraction * mq.devicePixelRatio).round();
+    final heightPx = pipWindowHeightPx(
+      ref.read(pipLinesProvider),
+      mq.devicePixelRatio,
+    );
+    try {
+      // 记录窗口尺寸 (行数设置变化 resize 用) + 钉住当前会话 + 置位 active。
+      // active 置位即启动 pipMonitorProvider 聚合推送, 悬浮窗启动即拉快照不白屏。
+      ref
+          .read(pipPushSchedulerProvider)
+          .configure(
+            windowWidthPx: widthPx,
+            devicePixelRatio: mq.devicePixelRatio,
+          );
+      ref.read(pipPinnedTaskProvider.notifier).state = widget.chatRef.taskId;
+      ref.read(pipOverlayActiveProvider.notifier).state = true;
+      await pip.show(widthPx: widthPx, heightPx: heightPx);
+    } catch (e) {
+      ref.read(pipOverlayActiveProvider.notifier).state = false;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('悬浮窗启动失败: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+  }
+
   /// 打开 AI 提问答题弹窗 (已打开或无挂起问题时直接返回)。
   /// 关闭后仅复位标志, 不自动重弹 (由状态跳变或用户点提示条重新触发)。
   void _openQuestionSheet(ThemeData theme) {
@@ -387,17 +449,20 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
       context,
       question: q,
       theme: theme,
-      onAnswer: ({
-        decline = false,
-        selectedValues = const {},
-        customAnswers = const {},
-      }) {
-        ref.read(chatProvider(widget.chatRef).notifier).answerQuestion(
-              decline: decline,
-              selectedValues: selectedValues,
-              customAnswers: customAnswers,
-            );
-      },
+      onAnswer:
+          ({
+            decline = false,
+            selectedValues = const {},
+            customAnswers = const {},
+          }) {
+            ref
+                .read(chatProvider(widget.chatRef).notifier)
+                .answerQuestion(
+                  decline: decline,
+                  selectedValues: selectedValues,
+                  customAnswers: customAnswers,
+                );
+          },
     ).whenComplete(() {
       _questionSheetOpen = false;
     });
@@ -445,7 +510,9 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
   /// 逐张上传后一条 sendText 发出; 失败 → SnackBar + chips 保留
   /// (已上传 ref 回填复用), 用户可重试或移除, 不降级 base64
   Future<void> _sendWithAttachments(
-      String text, List<PendingAttachment> attachments) async {
+    String text,
+    List<PendingAttachment> attachments,
+  ) async {
     var sent = false;
     var refs = const <String?>[];
     try {
@@ -466,8 +533,9 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
         for (var i = 0; i < attachments.length && i < refs.length; i++) {
           final ref = refs[i];
           if (ref == null || ref.isEmpty) continue;
-          _pendingAttachments[i] =
-              _pendingAttachments[i].copyWith(uploadedRef: ref);
+          _pendingAttachments[i] = _pendingAttachments[i].copyWith(
+            uploadedRef: ref,
+          );
         }
       }
     });
@@ -494,9 +562,7 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
 
   void _jumpToBottom() {
     if (!_scrollController.hasClients) return;
-    _scrollController.jumpTo(
-      _scrollController.position.minScrollExtent,
-    );
+    _scrollController.jumpTo(_scrollController.position.minScrollExtent);
   }
 
   /// 构建单个消息项 — 稳定项复用缓存 widget 实例。
@@ -636,8 +702,10 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
     );
     // 附件 (ref 变化 = 读回数据源变化; localBytes 有无决定乐观/读回渲染)
     for (final a in m.attachments) {
-      b.write('|img${a.ref.length}:${a.localBytes != null ? 1 : 0}'
-          ':${a.bytes}:${a.fileName.length}');
+      b.write(
+        '|img${a.ref.length}:${a.localBytes != null ? 1 : 0}'
+        ':${a.bytes}:${a.fileName.length}',
+      );
     }
     for (final p in m.parts) {
       switch (p) {
@@ -727,6 +795,13 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
           onPressed: widget.onMenuTap,
         ),
         actions: [
+          // 悬浮窗进度监视器 (画中画; flutter_overlay_window 仅 Android)
+          if (Platform.isAndroid)
+            IconButton(
+              icon: const Icon(Icons.picture_in_picture_alt_rounded, size: 20),
+              tooltip: '悬浮窗监视',
+              onPressed: _openPipOverlay,
+            ),
           // 新对话 (+): 搜索右侧
           IconButton(
             icon: const Icon(Icons.add_rounded, size: 22),
@@ -897,109 +972,113 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                               onPointerCancel: (_) => _pointerArmed =
                                   _pointerArmed > 0 ? _pointerArmed - 1 : 0,
                               child: CustomScrollView(
-                            controller: _scrollController,
-                            // ★ center 锚定双 sliver (见字段组注释):
-                            // reverse 下 sliver 顺序 视觉底帽 → live 块 →
-                            // center(older 块) → 视觉顶帽。live 增长向负向
-                            // (视觉下方) 扩展坐标, older 翻页向正向扩展 —
-                            // 已有内容坐标永不变化, 上翻阅读时流式输出零位移;
-                            // 贴底跟随由 metrics 通知 jumpTo min。
-                            reverse: true,
-                            center: _centerSliverKey,
-                            slivers: [
-                              // 视觉最底留白 (负向末端)
-                              const SliverToBoxAdapter(
-                                child: SizedBox(height: AppSpacing.sm),
-                              ),
-                              // live 块: index 0 = 边界消息 (块顶, 紧邻锚点),
-                              // 递增到最新消息, 审批卡在块尾 (视觉最底)
-                              SliverPadding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                ),
-                                sliver: SliverList(
-                                  delegate: SliverChildBuilderDelegate(
-                                    (context, index) {
-                                      final liveCount =
-                                          state.messages.length - bEnd;
-                                      if (index < liveCount) {
-                                        final msgIndex = bEnd + index;
-                                        final msg = state.messages[msgIndex];
-                                        return KeyedSubtree(
-                                          key: ValueKey(msg.id),
-                                          child: _buildMessageItem(
-                                            state,
-                                            msgIndex,
-                                            theme,
-                                            lastUserIndex,
-                                          ),
-                                        );
-                                      }
-                                      final perm =
-                                          nonPlanPerms[index - liveCount];
-                                      return KeyedSubtree(
-                                        key: ValueKey('perm_${perm.id}'),
-                                        child: ApprovalCard(
-                                          perm: perm,
-                                          theme: theme,
-                                          onAnswer: (optionId, decision) => ref
-                                              .read(
-                                                chatProvider(
-                                                  widget.chatRef,
-                                                ).notifier,
-                                              )
-                                              .answerPermission(
-                                                perm.id,
-                                                optionId,
-                                                decision,
-                                                permOptions: perm.options,
-                                                permTraceId: perm.traceId,
+                                controller: _scrollController,
+                                // ★ center 锚定双 sliver (见字段组注释):
+                                // reverse 下 sliver 顺序 视觉底帽 → live 块 →
+                                // center(older 块) → 视觉顶帽。live 增长向负向
+                                // (视觉下方) 扩展坐标, older 翻页向正向扩展 —
+                                // 已有内容坐标永不变化, 上翻阅读时流式输出零位移;
+                                // 贴底跟随由 metrics 通知 jumpTo min。
+                                reverse: true,
+                                center: _centerSliverKey,
+                                slivers: [
+                                  // 视觉最底留白 (负向末端)
+                                  const SliverToBoxAdapter(
+                                    child: SizedBox(height: AppSpacing.sm),
+                                  ),
+                                  // live 块: index 0 = 边界消息 (块顶, 紧邻锚点),
+                                  // 递增到最新消息, 审批卡在块尾 (视觉最底)
+                                  SliverPadding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                    ),
+                                    sliver: SliverList(
+                                      delegate: SliverChildBuilderDelegate(
+                                        (context, index) {
+                                          final liveCount =
+                                              state.messages.length - bEnd;
+                                          if (index < liveCount) {
+                                            final msgIndex = bEnd + index;
+                                            final msg =
+                                                state.messages[msgIndex];
+                                            return KeyedSubtree(
+                                              key: ValueKey(msg.id),
+                                              child: _buildMessageItem(
+                                                state,
+                                                msgIndex,
+                                                theme,
+                                                lastUserIndex,
                                               ),
-                                        ),
-                                      );
-                                    },
-                                    childCount:
-                                        state.messages.length -
-                                        bEnd +
-                                        nonPlanPerms.length,
-                                    addAutomaticKeepAlives: false,
+                                            );
+                                          }
+                                          final perm =
+                                              nonPlanPerms[index - liveCount];
+                                          return KeyedSubtree(
+                                            key: ValueKey('perm_${perm.id}'),
+                                            child: ApprovalCard(
+                                              perm: perm,
+                                              theme: theme,
+                                              onAnswer: (optionId, decision) =>
+                                                  ref
+                                                      .read(
+                                                        chatProvider(
+                                                          widget.chatRef,
+                                                        ).notifier,
+                                                      )
+                                                      .answerPermission(
+                                                        perm.id,
+                                                        optionId,
+                                                        decision,
+                                                        permOptions:
+                                                            perm.options,
+                                                        permTraceId:
+                                                            perm.traceId,
+                                                      ),
+                                            ),
+                                          );
+                                        },
+                                        childCount:
+                                            state.messages.length -
+                                            bEnd +
+                                            nonPlanPerms.length,
+                                        addAutomaticKeepAlives: false,
+                                      ),
+                                    ),
                                   ),
-                                ),
-                              ),
-                              // older 块 = center: index 0 = 最新的老消息
-                              // (紧邻锚点), 递增到最旧; 翻页在尾部追加
-                              SliverPadding(
-                                key: _centerSliverKey,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                ),
-                                sliver: SliverList(
-                                  delegate: SliverChildBuilderDelegate(
-                                    (context, index) {
-                                      final msgIndex = bEnd - 1 - index;
-                                      final msg = state.messages[msgIndex];
-                                      return KeyedSubtree(
-                                        key: ValueKey(msg.id),
-                                        child: _buildMessageItem(
-                                          state,
-                                          msgIndex,
-                                          theme,
-                                          lastUserIndex,
-                                        ),
-                                      );
-                                    },
-                                    childCount: bEnd,
-                                    addAutomaticKeepAlives: false,
+                                  // older 块 = center: index 0 = 最新的老消息
+                                  // (紧邻锚点), 递增到最旧; 翻页在尾部追加
+                                  SliverPadding(
+                                    key: _centerSliverKey,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                    ),
+                                    sliver: SliverList(
+                                      delegate: SliverChildBuilderDelegate(
+                                        (context, index) {
+                                          final msgIndex = bEnd - 1 - index;
+                                          final msg = state.messages[msgIndex];
+                                          return KeyedSubtree(
+                                            key: ValueKey(msg.id),
+                                            child: _buildMessageItem(
+                                              state,
+                                              msgIndex,
+                                              theme,
+                                              lastUserIndex,
+                                            ),
+                                          );
+                                        },
+                                        childCount: bEnd,
+                                        addAutomaticKeepAlives: false,
+                                      ),
+                                    ),
                                   ),
-                                ),
+                                  // 视觉最顶留白 (正向末端)
+                                  const SliverToBoxAdapter(
+                                    child: SizedBox(height: AppSpacing.sm),
+                                  ),
+                                ],
                               ),
-                              // 视觉最顶留白 (正向末端)
-                              const SliverToBoxAdapter(
-                                child: SizedBox(height: AppSpacing.sm),
-                              ),
-                            ],
                             ),
-                          ),
                           ),
                           // 滚动到底部悬浮按钮: 不在底部时显示
                           if (!_isAtBottom)
@@ -1036,59 +1115,59 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
             ),
           // AI 提问提示条: 挂起时常驻输入栏上方, 点击弹出答题弹窗
           if (state.pendingQuestion != null)
-            QuestionPendingBar(
-              onTap: () => _openQuestionSheet(theme),
-            ),
+            QuestionPendingBar(onTap: () => _openQuestionSheet(theme)),
           // 后台运行指示条: 运行中子智能体 / 后台终端 >0 时常驻输入栏上方,
           // 点击弹清单面板 (子智能体进详情, 后台终端可取消)
-          Builder(builder: (context) {
-            final runningSubs = runningSubagentsIn(state.messages);
-            final bashWorks = state.backgroundWorks
-                .where((w) => w.kind == 'bash' && w.status == 'running')
-                .toList();
-            if (runningSubs.isEmpty && bashWorks.isEmpty) {
-              return const SizedBox.shrink();
-            }
-            // 胶囊自带入场动画, 常驻与消失由这里直接增删 (短内容, 无需 AnimatedSize)
-            return Padding(
-              padding: const EdgeInsets.only(
-                bottom: AppSpacing.sm - 2,
-                left: AppSpacing.md,
-                right: AppSpacing.md,
-              ),
-              child: RunningWorkBar(
-                subagentCount: runningSubs.length,
-                bashCount: bashWorks.length,
-                onTap: () => showRunningWorksSheet(
-                context,
-                theme: theme,
-                subagents: runningSubs,
-                bashWorks: bashWorks,
-                onOpenSubagent: (part) {
-                  if (!mounted) return;
-                  // 先关清单弹窗, 再从该 SubagentPart 构建详情弹窗
-                  Navigator.of(context).pop();
-                  final nodes = buildExecutionNodes([part]);
-                  if (nodes.isEmpty) return;
-                  showExecutionDetail(
+          Builder(
+            builder: (context) {
+              final runningSubs = runningSubagentsIn(state.messages);
+              final bashWorks = state.backgroundWorks
+                  .where((w) => w.kind == 'bash' && w.status == 'running')
+                  .toList();
+              if (runningSubs.isEmpty && bashWorks.isEmpty) {
+                return const SizedBox.shrink();
+              }
+              // 胶囊自带入场动画, 常驻与消失由这里直接增删 (短内容, 无需 AnimatedSize)
+              return Padding(
+                padding: const EdgeInsets.only(
+                  bottom: AppSpacing.sm - 2,
+                  left: AppSpacing.md,
+                  right: AppSpacing.md,
+                ),
+                child: RunningWorkBar(
+                  subagentCount: runningSubs.length,
+                  bashCount: bashWorks.length,
+                  onTap: () => showRunningWorksSheet(
                     context,
-                    nodes.first,
-                    theme,
-                    onLoadChildren: (childSessionId) => ref
+                    theme: theme,
+                    subagents: runningSubs,
+                    bashWorks: bashWorks,
+                    onOpenSubagent: (part) {
+                      if (!mounted) return;
+                      // 先关清单弹窗, 再从该 SubagentPart 构建详情弹窗
+                      Navigator.of(context).pop();
+                      final nodes = buildExecutionNodes([part]);
+                      if (nodes.isEmpty) return;
+                      showExecutionDetail(
+                        context,
+                        nodes.first,
+                        theme,
+                        onLoadChildren: (childSessionId) => ref
+                            .read(chatProvider(widget.chatRef).notifier)
+                            .loadSubagentChildren(childSessionId),
+                        onLiveRefresh: (childSessionId) => ref
+                            .read(chatProvider(widget.chatRef).notifier)
+                            .refreshSubagentDetail(childSessionId),
+                      );
+                    },
+                    onCancelBash: (work) => ref
                         .read(chatProvider(widget.chatRef).notifier)
-                        .loadSubagentChildren(childSessionId),
-                    onLiveRefresh: (childSessionId) => ref
-                        .read(chatProvider(widget.chatRef).notifier)
-                        .refreshSubagentDetail(childSessionId),
-                  );
-                },
-                onCancelBash: (work) => ref
-                    .read(chatProvider(widget.chatRef).notifier)
-                    .cancelBackgroundWork(work.workId),
-              ),
-              ),
-            );
-          }),
+                        .cancelBackgroundWork(work.workId),
+                  ),
+                ),
+              );
+            },
+          ),
           _buildInputArea(theme),
         ],
       ),
@@ -1345,11 +1424,13 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                     valueListenable: _messageController,
                     builder: (context, value, _) {
                       final hasText = value.text.trim().isNotEmpty;
-                      final canSend = (hasText || _pendingAttachments.isNotEmpty) &&
+                      final canSend =
+                          (hasText || _pendingAttachments.isNotEmpty) &&
                           !_isUploadingAttachments;
                       // 有文字或挂了附件 = 发送 (任务运行中发送会进入服务端队列);
                       // 无内容且任务运行中 = 暂停
-                      final showStop = widget.state.isResponding &&
+                      final showStop =
+                          widget.state.isResponding &&
                           !hasText &&
                           _pendingAttachments.isEmpty &&
                           !_isUploadingAttachments;
@@ -1784,11 +1865,9 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
       _ => 'image/jpeg',
     };
     setState(() {
-      _pendingAttachments.add(PendingAttachment(
-        fileName: xfile.name,
-        mime: mime,
-        bytes: bytes,
-      ));
+      _pendingAttachments.add(
+        PendingAttachment(fileName: xfile.name, mime: mime, bytes: bytes),
+      );
     });
   }
 
@@ -2230,8 +2309,8 @@ class _AttachmentChip extends StatelessWidget {
                             uploading
                                 ? '上传中'
                                 : (attachment.uploadedRef != null
-                                    ? '已就绪'
-                                    : _fmtBytes(attachment.bytes.length)),
+                                      ? '已就绪'
+                                      : _fmtBytes(attachment.bytes.length)),
                             style: TextStyle(
                               fontSize: AppTextSizes.caption,
                               color: theme.colorScheme.onSurfaceVariant,

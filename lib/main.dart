@@ -1,22 +1,32 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/logging/app_logger.dart';
 import 'core/notifications/notification_service.dart';
+import 'core/services/pip_service.dart';
 import 'providers/app_providers.dart';
+import 'providers/pip_providers.dart';
 import 'shared/theme/app_router.dart';
 import 'shared/theme/app_theme.dart';
+import 'shared/widgets/pip_overlay_card.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-
   // 启动时从 SharedPreferences 恢复主题选择, 避免首帧闪烁。
   final prefs = await SharedPreferences.getInstance();
-  final initialThemeMode =
-      themeModeFromString(prefs.getString(kThemeModePrefKey));
-  appLog.i('[App] 启动完成, 主题=${themeModeLabel(initialThemeMode)}');
+  final initialThemeMode = themeModeFromString(
+    prefs.getString(kThemeModePrefKey),
+  );
+  // 悬浮窗行数设置同步恢复 (空/损坏/越界在 pipLinesFromPref 内回落默认 4)
+  final initialPipLines = pipLinesFromPref(prefs.get(kPipLinesPrefKey));
+  appLog.i(
+    '[App] 启动完成, 主题=${themeModeLabel(initialThemeMode)}, '
+    '悬浮窗行数=$initialPipLines',
+  );
 
   // 通知: 初始化 + 点击通知的深链路由 (goRouterProvider 是全局 GoRouter 实例)
   await NotificationService.init();
@@ -26,10 +36,19 @@ void main() async {
     ProviderScope(
       overrides: [
         themeModeProvider.overrideWith((ref) => initialThemeMode),
+        pipLinesProvider.overrideWith((ref) => initialPipLines),
       ],
       child: const ZcodeApp(),
     ),
   );
+}
+
+/// 悬浮窗进度监视器: 独立 Flutter 引擎入口
+/// (flutter_overlay_window 原生侧按 "overlayMain" 名字创建引擎, pragma 不可省略)
+@pragma("vm:entry-point")
+void overlayMain() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const ProviderScope(child: PipOverlayApp()));
 }
 
 class ZcodeApp extends ConsumerStatefulWidget {
@@ -41,14 +60,29 @@ class ZcodeApp extends ConsumerStatefulWidget {
 
 class _ZcodeAppState extends ConsumerState<ZcodeApp>
     with WidgetsBindingObserver {
+  /// 悬浮窗回传动作流订阅 (refresh / open)
+  StreamSubscription<Object>? _pipActionsSub;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // 主 App 侧监听悬浮窗动作: refresh → 立即重推快照;
+    // open → bringToForeground + 跳对应会话 (见 pipActionHandlerProvider)
+    _pipActionsSub = ref
+        .read(pipServiceProvider)
+        .actions
+        .listen(ref.read(pipActionHandlerProvider));
+    // 悬浮窗快照聚合变化 → 节流 500ms shareData 推送 (见 pipPushSchedulerProvider)
+    ref.listenManual(pipMonitorProvider, (_, __) {
+      ref.read(pipPushSchedulerProvider).schedule();
+    });
   }
 
   @override
   void dispose() {
+    unawaited(_pipActionsSub?.cancel());
+    _pipActionsSub = null;
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -67,6 +101,8 @@ class _ZcodeAppState extends ConsumerState<ZcodeApp>
   Widget build(BuildContext context) {
     // 激活前台服务启停 (登录常驻保活)
     ref.watch(keepAliveProvider);
+    // 悬浮窗打开期间激活 X 关闭兜底轮询 (isActive 失败 → active 回滚)
+    ref.watch(pipLivenessProvider);
     final themeMode = ref.watch(themeModeProvider);
     return MaterialApp.router(
       title: 'ZCode',
