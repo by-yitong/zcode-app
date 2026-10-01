@@ -7,7 +7,7 @@ import '../../../shared/theme/app_design_tokens.dart';
 
 /// 聊天页三段式悬浮胶囊 Header (非连续式 AppBar)
 ///
-/// [左胶囊: 返回(=打开会话抽屉)] 12px [中间胶囊: 会话标题 + 状态行] 12px
+/// [左胶囊: 菜单(=打开会话抽屉)] 12px [中间胶囊: 会话标题 + 状态行] 12px
 /// [右胶囊: 更多菜单]。每个胶囊独立毛玻璃 (ClipRRect + BackdropFilter),
 /// 胶囊之间与上下透出页面背景, 不做整条连续底色。
 ///
@@ -77,17 +77,13 @@ class ChatFloatingHeader extends StatelessWidget
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // 左胶囊: 返回 (= 会话列表抽屉)
+                // 左胶囊: 菜单 (= 打开会话列表抽屉)
                 _GlassPill(
                   key: const ValueKey('chatHeaderPillLeft'),
                   bg: bg,
                   borderColor: borderColor,
                   child: IconButton(
-                    icon: Icon(
-                      Icons.arrow_back_ios_new_rounded,
-                      size: 18,
-                      color: inkColor,
-                    ),
+                    icon: Icon(Icons.menu, size: 22, color: inkColor),
                     tooltip: '会话列表',
                     onPressed: onMenuTap,
                     style: IconButton.styleFrom(
@@ -226,7 +222,8 @@ class ChatFloatingHeader extends StatelessWidget
   }
 }
 
-/// 单个悬浮胶囊: 圆角 + 毛玻璃 + 细边框 (三段共用)
+/// 单个悬浮胶囊: 圆角 + 毛玻璃 + 细边框 (三段共用)。
+/// 半径 32 超过半高会被自动钳到半高 → 两侧正圆端点 (胶囊形)。
 class _GlassPill extends StatelessWidget {
   final Color bg;
   final Color borderColor;
@@ -242,13 +239,13 @@ class _GlassPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(22),
+      borderRadius: BorderRadius.circular(32),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
         child: Container(
           decoration: BoxDecoration(
             color: bg,
-            borderRadius: BorderRadius.circular(22),
+            borderRadius: BorderRadius.circular(32),
             border: Border.all(color: borderColor),
           ),
           child: child,
