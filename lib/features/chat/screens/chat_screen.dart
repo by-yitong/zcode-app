@@ -1323,12 +1323,11 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
           AppSpacing.sm,
           AppSpacing.xs,
         ),
-        // 整个 composer 是一个圆角卡片 (深灰, 柔边)
+        // 整个 composer 是一个圆角卡片 (深灰填充, 无边框)
         child: Container(
           decoration: BoxDecoration(
             color: theme.colorScheme.surfaceContainerHigh,
             borderRadius: BorderRadius.circular(AppRadius.lg),
-            border: Border.all(color: theme.colorScheme.outlineVariant),
           ),
           padding: const EdgeInsets.fromLTRB(
             AppSpacing.sm,

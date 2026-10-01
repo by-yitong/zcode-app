@@ -7,9 +7,9 @@ import '../../../shared/theme/app_design_tokens.dart';
 
 /// 聊天页三段式悬浮胶囊 Header (非连续式 AppBar)
 ///
-/// [左胶囊: 菜单(=打开会话抽屉)] 12px [中间胶囊: 会话标题 + 状态行] 12px
+/// [左胶囊: 菜单(=打开会话抽屉)] 12px [中间胶囊: 会话标题 + 状态行] 弹性空隙
 /// [右胶囊: 更多菜单]。每个胶囊独立毛玻璃 (ClipRRect + BackdropFilter),
-/// 胶囊之间与上下透出页面背景, 不做整条连续底色。
+/// 无边框; 三者等高, 中间卡片贴左侧排列 (不居中), 超长标题在剩余空间省略。
 ///
 /// 纯展示 + 回调组件 (无 ref 依赖): 标题/状态行数据与动作均由 ChatScreen
 /// 组装传入。配色与 GlassAppBar 一致 (亮: 半透明白 0.72; 暗: #08090A @94%)。
@@ -49,6 +49,9 @@ class ChatFloatingHeader extends StatelessWidget
   /// 主体高度 (不含状态栏); body 顶部占位 = padding.top + 该值
   static const double barHeight = 64;
 
+  /// 三枚胶囊统一高度 (等高对齐)
+  static const double pillHeight = 56;
+
   @override
   Size get preferredSize => const Size.fromHeight(barHeight);
 
@@ -59,9 +62,6 @@ class ChatFloatingHeader extends StatelessWidget
     final bg = isDark
         ? const Color(0xF008090A)
         : Colors.white.withValues(alpha: 0.72);
-    final borderColor = isDark
-        ? const Color(0x14FFFFFF)
-        : Colors.black.withValues(alpha: 0.08);
     final inkColor = isDark ? const Color(0xFFF7F8F8) : Colors.black;
 
     // 本组件是聊天页状态栏样式的唯一来源 (非真正 AppBar, 需 AnnotatedRegion
@@ -75,14 +75,13 @@ class ChatFloatingHeader extends StatelessWidget
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 // 左胶囊: 菜单 (= 打开会话列表抽屉)
                 _GlassPill(
                   key: const ValueKey('chatHeaderPillLeft'),
                   bg: bg,
-                  borderColor: borderColor,
+                  height: pillHeight,
                   child: IconButton(
                     icon: Icon(Icons.menu, size: 22, color: inkColor),
                     tooltip: '会话列表',
@@ -97,16 +96,18 @@ class ChatFloatingHeader extends StatelessWidget
                 ),
                 const SizedBox(width: 12),
                 // 中间胶囊: 会话信息卡片 (标题 + 上下文/用量状态行)。
-                // Flexible(loose) 适配内容宽度, 不占满; 超长标题在剩余空间内省略。
+                // 贴左侧排列 (不居中); Flexible(loose) 适配内容宽度,
+                // 超长标题最多占满剩余空间 (flex 8 : Spacer 1), 右胶囊恒贴右缘。
                 Flexible(
+                  flex: 8,
                   child: _GlassPill(
                     key: const ValueKey('chatHeaderPillCenter'),
                     bg: bg,
-                    borderColor: borderColor,
+                    height: pillHeight,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
+                        horizontal: 16,
+                        vertical: 6,
                       ),
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -138,12 +139,12 @@ class ChatFloatingHeader extends StatelessWidget
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
+                const Spacer(flex: 1),
                 // 右胶囊: 更多菜单
                 _GlassPill(
                   key: const ValueKey('chatHeaderPillRight'),
                   bg: bg,
-                  borderColor: borderColor,
+                  height: pillHeight,
                   child: IconButton(
                     icon: Icon(
                       Icons.more_horiz_rounded,
@@ -224,17 +225,18 @@ class ChatFloatingHeader extends StatelessWidget
   }
 }
 
-/// 单个悬浮胶囊: 圆角 + 毛玻璃 + 细边框 (三段共用)。
+/// 单个悬浮胶囊: 圆角 + 毛玻璃, 无边框 (三段共用)。
+/// [height] 给定后三段等高, 内容垂直居中;
 /// 半径 32 超过半高会被自动钳到半高 → 两侧正圆端点 (胶囊形)。
 class _GlassPill extends StatelessWidget {
   final Color bg;
-  final Color borderColor;
+  final double? height;
   final Widget child;
 
   const _GlassPill({
     super.key,
     required this.bg,
-    required this.borderColor,
+    this.height,
     required this.child,
   });
 
@@ -245,10 +247,11 @@ class _GlassPill extends StatelessWidget {
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
         child: Container(
+          height: height,
+          alignment: height == null ? null : Alignment.center,
           decoration: BoxDecoration(
             color: bg,
             borderRadius: BorderRadius.circular(32),
-            border: Border.all(color: borderColor),
           ),
           child: child,
         ),
