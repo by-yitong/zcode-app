@@ -17,7 +17,6 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../core/logging/app_logger.dart';
 import '../../../core/relay/relay_events.dart';
 import '../../../core/relay/relay_protocol.dart';
-import '../../../core/services/pip_service.dart';
 import '../../../core/services/update_service.dart';
 import '../../../data/models/glm_quota.dart' as glm;
 import '../../../data/models/workspace.dart';
@@ -375,83 +374,45 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
   }
 
   /// 打开悬浮窗进度监视器 (画中画, 仅 Android):
-  /// 权限检查 → 钉住当前会话 + 置位 active (启动聚合推送) → showOverlay
-  /// (失败回滚 active + SnackBar)
+  /// 主体抽到 pip_providers.openPipOverlay (进后台自动打开同源复用);
+  /// 打开成功后 app 自动退到后台 — 用户开小窗就是为了在其他 app 上用。
+  /// 权限被拒 → 跳系统设置引导 (仅手动路径; 自动打开路径静默跳过)。
   Future<void> _openPipOverlay() async {
-    appLog.d('[Pip] tap → 打开流程开始');
     if (!Platform.isAndroid) return;
     final pip = ref.read(pipServiceProvider);
-    // 幂等: 已打开则忽略
-    if (await pip.isActive()) {
-      appLog.d('[Pip] 已打开, 忽略本次点击');
-      return;
-    }
-    // 未授权 → 跳系统设置, 引导开启后重试
-    if (!await pip.isPermissionGranted()) {
-      appLog.d('[Pip] 无悬浮窗权限 → 跳系统设置');
-      await pip.requestPermission();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('请先在 系统设置 → 应用 → ZCode → 显示其他应用上层 开启悬浮窗权限后重试'),
-            duration: Duration(seconds: 4),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      return;
-    }
-    if (!mounted) return;
-    final mq = MediaQuery.of(context);
-    final widthPx =
-        (mq.size.width * pipWindowWidthFraction * mq.devicePixelRatio).round();
-    final heightPx = pipWindowHeightPx(
-      ref.read(pipLinesProvider),
-      mq.devicePixelRatio,
-    );
-    try {
-      // 记录窗口尺寸 (行数设置变化 resize 用) + 钉住当前会话 + 置位 active
-      // (active 置位即启动 pipMonitorProvider 聚合)。
-      ref
-          .read(pipPushSchedulerProvider)
-          .configure(
-            windowWidthPx: widthPx,
-            devicePixelRatio: mq.devicePixelRatio,
+    final result = await ref.read(
+      pipOpenOverlayProvider,
+    )(pinTaskId: widget.chatRef.taskId);
+    switch (result) {
+      case PipOpenResult.permissionDenied:
+        appLog.d('[Pip] 无悬浮窗权限 → 跳系统设置');
+        await pip.requestPermission();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('请先在 系统设置 → 应用 → ZCode → 显示其他应用上层 开启悬浮窗权限后重试'),
+              duration: Duration(seconds: 4),
+              behavior: SnackBarBehavior.floating,
+            ),
           );
-      // 屏幕物理尺寸随快照带给悬浮窗 (松手钳制回屏用; TOP|LEFT 锚点下
-      // 初始位置也按屏幕居中算)
-      ref.read(pipScreenPxProvider.notifier).state = (
-        w: (mq.size.width * mq.devicePixelRatio).round(),
-        h: (mq.size.height * mq.devicePixelRatio).round(),
-      );
-      ref.read(pipPinnedTaskProvider.notifier).state = widget.chatRef.taskId;
-      ref.read(pipOverlayActiveProvider.notifier).state = true;
-      // 起始位置: 屏幕水平居中、垂直约 1/3 处 (逻辑 dp, TOP|LEFT 绝对坐标)
-      final startXdp = ((mq.size.width - widthPx / mq.devicePixelRatio) / 2)
-          .round();
-      final startYdp = (mq.size.height * 0.3).round();
-      await pip.show(
-        widthPx: widthPx,
-        heightPx: heightPx,
-        startX: startXdp,
-        startY: startYdp,
-      );
-      // 防白屏 (IPC v2: 悬浮窗不再回传 refresh, 由主 App 主动首推快照)
-      appLog.d('[Pip] show 成功 → 首推快照');
-      await ref.read(pipPushSchedulerProvider).pushNow();
-    } catch (e) {
-      appLog.w('[Pip] showOverlay 失败: $e');
-      ref.read(pipOverlayActiveProvider.notifier).state = false;
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text('悬浮窗启动失败: $e'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+      case PipOpenResult.failed:
+        appLog.w('[Pip] showOverlay 失败');
+        if (!mounted) return;
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('悬浮窗启动失败'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+      case PipOpenResult.opened:
+      case PipOpenResult.alreadyActive:
+        // 已打开时 openPipOverlay 内部已恢复展开 — 用户点按钮的意图就是
+        // "要小窗去别处用", 两种结果都退后台
+        await pip.moveToBackground();
     }
   }
 
@@ -658,6 +619,8 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
               : null,
           onRewind: () =>
               ref.read(chatProvider(widget.chatRef).notifier).rewindLastTurn(),
+          // ★ 工作区路径 (markdown 文件链接 / 变更文件条目 → 预览页)
+          workspacePath: widget.workspacePath,
         ),
       ],
     );
@@ -790,19 +753,25 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
       appBar: ChatFloatingHeader(
         title: widget.title,
         // 上下文环移入中间胶囊 (新对话还没有内容时不显示)
+        // 点击 → 与 UsagePill 同一张用量详情表 (上下文+GLM+MCP, 含压缩按钮)
         contextIndicator: state.messages.isNotEmpty
             ? ContextLengthIndicator(
                 usage: state.tokenUsage,
                 onCompact: () =>
                     ref.read(chatProvider(widget.chatRef).notifier).compact(),
+                quotaAsync: ref.watch(glmQuotaProvider),
+                onRefreshQuota: () =>
+                    ref.read(glmQuotaProvider.notifier).refresh(),
               )
             : null,
         // 状态行: 常驻用量统计 (AI 工作中状态在消息流里已有体现)
-        // 点击 → 用量详情底部表
+        // 点击 → 用量详情底部表 (与上下文环同一张, 含压缩按钮)
         usagePill: UsagePill(
           tokenUsage: state.tokenUsage,
           glmQuotaAsync: ref.watch(glmQuotaProvider),
           onRefreshQuota: () => ref.read(glmQuotaProvider.notifier).refresh(),
+          onCompact: () =>
+              ref.read(chatProvider(widget.chatRef).notifier).compact(),
         ),
         onMenuTap: widget.onMenuTap,
         onNewChat: () {
@@ -815,61 +784,67 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
         onOpenPip: Platform.isAndroid ? _openPipOverlay : null,
         onOpenSettings: () => context.push(AppRoutes.settings),
       ),
-      body: Column(
+      // 内容可穿过顶部: 无占位块, 消息列表从 y=0 起滚, 从三枚胶囊的空隙
+      // 与毛玻璃后穿过; 顶部渐变把穿过内容淡出 (胶囊由 appBar 层盖在渐变上)。
+      body: Stack(
         children: [
-          // 占位: extendBodyBehindAppBar=true, body 从 y=0 开始,
-          // 需手动留出 状态栏+胶囊栏(64) 高度, 否则 PlanList 等被遮挡
-          SizedBox(height: MediaQuery.of(context).padding.top + 64),
-          // 连接状态条 (非 ready 时显示)
-          Consumer(
-            builder: (context, ref, _) {
-              final connAsync = ref.watch(relayConnectionStateProvider);
-              final connState = connAsync.valueOrNull;
-              if (connState == null ||
-                  connState == RelayConnectionState.ready) {
-                return const SizedBox.shrink();
-              }
+          Column(
+            children: [
+              // 连接状态条 (非 ready 时显示) — 显示时下移到胶囊栏之下
+              Consumer(
+                builder: (context, ref, _) {
+                  final connAsync = ref.watch(relayConnectionStateProvider);
+                  final connState = connAsync.valueOrNull;
+                  if (connState == null ||
+                      connState == RelayConnectionState.ready) {
+                    return const SizedBox.shrink();
+                  }
               // error 状态仅在 RelayClient 重连重试次数耗尽后出现
               // → 极可能是 Cookie (acw_tc 30min 过期) 失效, 给出重新登录入口。
               if (connState == RelayConnectionState.error) {
-                return Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
+                return Padding(
+                  padding: EdgeInsets.only(
+                    top: MediaQuery.of(context).padding.top + 64,
                   ),
-                  color: Colors.red.withValues(alpha: 0.15),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.cookie_outlined,
-                        size: 14,
-                        color: Colors.red,
-                      ),
-                      const SizedBox(width: 6),
-                      const Expanded(
-                        child: Text(
-                          'Cookie 可能已过期',
-                          style: TextStyle(
-                            fontSize: AppTextSizes.label,
-                            color: Colors.red,
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    color: Colors.red.withValues(alpha: 0.15),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.cookie_outlined,
+                          size: 14,
+                          color: Colors.red,
+                        ),
+                        const SizedBox(width: 6),
+                        const Expanded(
+                          child: Text(
+                            'Cookie 可能已过期',
+                            style: TextStyle(
+                              fontSize: AppTextSizes.label,
+                              color: Colors.red,
+                            ),
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          overflow: TextOverflow.ellipsis,
                         ),
-                      ),
-                      TextButton.icon(
-                        onPressed: () => context.go(AppRoutes.login),
-                        icon: const Icon(Icons.refresh, size: 14),
-                        label: const Text('重新连接'),
-                        style: TextButton.styleFrom(
-                          foregroundColor: Colors.red,
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          minimumSize: const Size(0, 28),
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        TextButton.icon(
+                          onPressed: () => context.go(AppRoutes.login),
+                          icon: const Icon(Icons.refresh, size: 14),
+                          label: const Text('重新连接'),
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.red,
+                            visualDensity: VisualDensity.compact,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            minimumSize: const Size(0, 28),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 );
               }
@@ -892,54 +867,69 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                 ),
                 _ => (Icons.hourglass_empty, Colors.grey, ''),
               };
-              return Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 6,
+              return Padding(
+                padding: EdgeInsets.only(
+                  top: MediaQuery.of(context).padding.top + 64,
                 ),
-                color: info.$2.withValues(alpha: 0.15),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(info.$1, size: 14, color: info.$2),
-                    const SizedBox(width: 6),
-                    Text(
-                      info.$3,
-                      style: TextStyle(
-                        fontSize: AppTextSizes.label,
-                        color: info.$2,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 6,
+                  ),
+                  color: info.$2.withValues(alpha: 0.15),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(info.$1, size: 14, color: info.$2),
+                      const SizedBox(width: 6),
+                      Text(
+                        info.$3,
+                        style: TextStyle(
+                          fontSize: AppTextSizes.label,
+                          color: info.$2,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               );
             },
           ),
-          if (state.error != null)
-            ErrorBanner(
-              message: state.error!,
-              theme: theme,
-              onRetry: () => ref
-                  .read(chatProvider(widget.chatRef).notifier)
-                  .reloadHistory(),
-            ),
-          // plan 提议批准卡 (AI 调 ExitPlanMode, 等用户批准/拒绝)
-          if (state.pendingPlan != null)
-            PlanApprovalCard(
-              planText: state.pendingPlan!,
-              theme: theme,
-              onApprove: () {
-                ref
-                    .read(chatProvider(widget.chatRef).notifier)
-                    .answerPlan(true);
-              },
-              onReject: () {
-                ref
-                    .read(chatProvider(widget.chatRef).notifier)
-                    .answerPlan(false);
-              },
-            ),
+              if (state.error != null)
+                Padding(
+                  padding: EdgeInsets.only(
+                    top: MediaQuery.of(context).padding.top + 64,
+                  ),
+                  child: ErrorBanner(
+                    message: state.error!,
+                    theme: theme,
+                    onRetry: () => ref
+                        .read(chatProvider(widget.chatRef).notifier)
+                        .reloadHistory(),
+                  ),
+                ),
+              // plan 提议批准卡 (AI 调 ExitPlanMode, 等用户批准/拒绝)
+              if (state.pendingPlan != null)
+                Padding(
+                  padding: EdgeInsets.only(
+                    top: MediaQuery.of(context).padding.top + 64,
+                  ),
+                  child: PlanApprovalCard(
+                    planText: state.pendingPlan!,
+                    theme: theme,
+                    onApprove: () {
+                      ref
+                          .read(chatProvider(widget.chatRef).notifier)
+                          .answerPlan(true);
+                    },
+                    onReject: () {
+                      ref
+                          .read(chatProvider(widget.chatRef).notifier)
+                          .answerPlan(false);
+                    },
+                  ),
+                ),
           // 工具执行前确认 → 列表尾部内联审批卡 (聊天上下文全程可见, 不再模态遮挡)
           Expanded(
             child: Stack(
@@ -953,8 +943,8 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                         children: [
                           // 已有缓存内容时的同步指示条 (断连恢复/刷新中)
                           if (state.isLoadingHistory)
-                            const Positioned(
-                              top: 0,
+                            Positioned(
+                              top: MediaQuery.of(context).padding.top + 64,
                               left: 0,
                               right: 0,
                               child: LinearProgressIndicator(
@@ -1072,9 +1062,15 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                                       ),
                                     ),
                                   ),
-                                  // 视觉最顶留白 (正向末端)
-                                  const SliverToBoxAdapter(
-                                    child: SizedBox(height: AppSpacing.sm),
+                                  // 视觉最顶留白 (正向末端) — 加高到胶囊栏下,
+                                  // 翻到最旧消息时第一条不被悬浮头部遮挡
+                                  SliverToBoxAdapter(
+                                    child: SizedBox(
+                                      height:
+                                          AppSpacing.sm +
+                                          MediaQuery.of(context).padding.top +
+                                          64,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -1093,9 +1089,10 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                         ],
                       ),
                 // 浮动: Todo 计划面板 (叠加在消息列表上方, 展开/收起不影响列表滚动)
+                // 内容可穿过顶部: 面板下移到胶囊栏之下
                 if (state.plan.isNotEmpty)
                   Positioned(
-                    top: 0,
+                    top: MediaQuery.of(context).padding.top + 64,
                     left: 0,
                     right: 0,
                     child: PlanList(
@@ -1171,13 +1168,40 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
           _buildInputArea(theme),
         ],
       ),
+          // 顶部渐变: 穿过胶囊区的内容淡出到背景色 (IgnorePointer 放行点击)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: MediaQuery.of(context).padding.top + 76,
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Theme.of(context).scaffoldBackgroundColor,
+                      Theme.of(
+                        context,
+                      ).scaffoldBackgroundColor.withValues(alpha: 0),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   /// 消息加载骨架屏
   Widget _buildSkeleton(ThemeData theme) {
     final shimmerColor = theme.colorScheme.surfaceContainerHighest;
-    final topInset = AppSpacing.sm;
+    // 内容可穿过顶部: 骨架从胶囊栏下开始
+    final topInset =
+        AppSpacing.sm + MediaQuery.of(context).padding.top + 64;
     return Padding(
       padding: EdgeInsets.fromLTRB(AppSpacing.md, topInset, AppSpacing.md, 0),
       child: Column(
@@ -1265,7 +1289,10 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
   /// 工作区主页 — 新会话空状态 (时段问候语, 对齐网页手机端)
   Widget _buildWorkspaceHome(ThemeData theme) {
     final (greeting, sub) = _greetingForNow();
-    return Center(
+    // 内容可穿过顶部: 空态垂直居中时避开胶囊栏
+    return Padding(
+      padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top + 64),
+      child: Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -1287,6 +1314,7 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
             ),
           ],
         ],
+      ),
       ),
     );
   }
