@@ -138,17 +138,17 @@ class CapsFilterBar extends StatelessWidget {
               filled: true,
               fillColor: cs.surfaceContainerHigh,
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(AppRadius.lg),
+                borderRadius: BorderRadius.circular(28),
                 borderSide: BorderSide.none,
               ),
               enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(AppRadius.lg),
+                borderRadius: BorderRadius.circular(28),
                 borderSide: BorderSide(
                   color: cs.outlineVariant.withValues(alpha: 0.5),
                 ),
               ),
               focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(AppRadius.lg),
+                borderRadius: BorderRadius.circular(28),
                 borderSide: BorderSide(
                   color: AppColors.accent.withValues(alpha: 0.5),
                 ),

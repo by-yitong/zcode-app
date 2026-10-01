@@ -9,10 +9,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/logging/app_logger.dart';
 import '../../../../shared/theme/app_design_tokens.dart';
-import '../../../../shared/widgets/app_section_header.dart';
-import '../../../../shared/widgets/app_tile_group.dart';
 import '../models/capability_models.dart';
 import '../providers/agent_caps_providers.dart';
+import '../widgets/caps_page_chrome.dart';
 import '../widgets/caps_widgets.dart';
 import '../widgets/import_sheet.dart';
 
@@ -41,8 +40,6 @@ class SkillsTabState extends ConsumerState<SkillsTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
     final skills = ref.watch(skillsCapsProvider);
 
     return CapsAsyncView(
@@ -61,7 +58,6 @@ class SkillsTabState extends ConsumerState<SkillsTab>
         final filtered = _applyFilter(list);
         final local = filtered.where((s) => !s.isPlugin).toList();
         final plugin = filtered.where((s) => s.isPlugin).toList();
-        final enabledCount = filtered.where((s) => s.enabled).length;
         return RefreshIndicator(
           onRefresh: () => ref.read(skillsCapsProvider.notifier).load(),
           child: ListView(
@@ -72,80 +68,33 @@ class SkillsTabState extends ConsumerState<SkillsTab>
               AppSpacing.xxl,
             ),
             children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-                child: Text(
-                  '共 ${filtered.length} 个技能 · $enabledCount 个已启用',
-                  style: TextStyle(
-                    fontSize: AppTextSizes.caption,
-                    color: cs.onSurfaceVariant,
-                  ),
-                ),
-              ),
               if (local.isNotEmpty) ...[
-                const AppSectionHeader(title: '工作区与个人技能'),
-                AppTileGroup(
-                  tiles: [
-                    for (final s in local)
-                      AppTile(
-                        icon: Icons.auto_awesome_outlined,
-                        iconTint: s.enabled
-                            ? AppColors.accent
-                            : cs.onSurfaceVariant,
-                        title: s.name,
-                        subtitle: s.description.isNotEmpty
-                            ? s.description
-                            : null,
-                        subtitleMaxLines: 2,
-                        showChevron: true,
-                        onTap: () => _openDetail(context, s),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            CapsBadge(s.scope == 'workspace' ? '工作区' : '个人'),
-                            const SizedBox(width: AppSpacing.sm),
-                            CapsSwitch(
-                              value: s.enabled,
-                              onChanged: (v) => _toggle(s, v),
-                            ),
-                          ],
-                        ),
-                      ),
-                  ],
-                ),
+                const CapsSectionHeader('工作区与个人技能'),
+                for (final s in local)
+                  CapsPlainTile(
+                    leading: PluginIconBox(icon: null, name: s.name, size: 44),
+                    title: s.name,
+                    subtitle: s.description.isNotEmpty ? s.description : null,
+                    trailing: CapsSwitch(
+                      value: s.enabled,
+                      onChanged: (v) => _toggle(s, v),
+                    ),
+                    onTap: () => _openDetail(context, s),
+                  ),
               ],
               if (plugin.isNotEmpty) ...[
-                const SizedBox(height: AppSpacing.md),
-                const AppSectionHeader(title: 'Plugin 技能'),
-                AppTileGroup(
-                  tiles: [
-                    for (final s in plugin)
-                      AppTile(
-                        icon: Icons.extension_outlined,
-                        iconTint: s.enabled
-                            ? AppColors.accent
-                            : cs.onSurfaceVariant,
-                        title: s.name,
-                        subtitle: s.description.isNotEmpty
-                            ? s.description
-                            : null,
-                        subtitleMaxLines: 2,
-                        showChevron: true,
-                        onTap: () => _openDetail(context, s),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            CapsBadge('插件'),
-                            const SizedBox(width: AppSpacing.sm),
-                            CapsSwitch(
-                              value: s.enabled,
-                              onChanged: (v) => _toggle(s, v),
-                            ),
-                          ],
-                        ),
-                      ),
-                  ],
-                ),
+                const CapsSectionHeader('Plugin 技能'),
+                for (final s in plugin)
+                  CapsPlainTile(
+                    leading: PluginIconBox(icon: null, name: s.name, size: 44),
+                    title: s.name,
+                    subtitle: s.description.isNotEmpty ? s.description : null,
+                    trailing: CapsSwitch(
+                      value: s.enabled,
+                      onChanged: (v) => _toggle(s, v),
+                    ),
+                    onTap: () => _openDetail(context, s),
+                  ),
               ],
             ],
           ),

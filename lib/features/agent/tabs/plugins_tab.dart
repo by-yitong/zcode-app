@@ -6,11 +6,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/logging/app_logger.dart';
 import '../../../../shared/theme/app_design_tokens.dart';
-import '../../../../shared/widgets/app_section_header.dart';
-import '../../../../shared/widgets/app_tile_group.dart';
 import '../models/capability_models.dart';
 import '../providers/agent_caps_providers.dart';
 import '../screens/plugins_browser_page.dart';
+import '../widgets/caps_page_chrome.dart';
 import '../widgets/caps_widgets.dart';
 
 class PluginsTab extends ConsumerStatefulWidget {
@@ -28,8 +27,7 @@ class PluginsTabState extends ConsumerState<PluginsTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
+    final cs = Theme.of(context).colorScheme;
     final plugins = ref.watch(pluginsProvider);
 
     return CapsAsyncView(
@@ -44,6 +42,7 @@ class PluginsTabState extends ConsumerState<PluginsTab>
         for (final a in data.available) {
           iconOf['${a.marketplace}/${a.name}'] = a.icon;
         }
+        final installed = data.installed;
         return RefreshIndicator(
           onRefresh: () => ref.read(pluginsProvider.notifier).load(),
           child: ListView(
@@ -54,28 +53,48 @@ class PluginsTabState extends ConsumerState<PluginsTab>
               AppSpacing.xxl,
             ),
             children: [
-              AppSectionHeader(title: '已安装 (${data.installed.length})'),
-              if (data.installed.isNotEmpty)
-                AppTileGroup(
-                  tiles: [
-                    for (final p in data.installed)
-                      _pluginTile(
-                        theme,
-                        cs,
-                        p,
-                        icon: iconOf['${p.marketplace}/${p.name}'],
-                      ),
-                  ],
+              const CapsSectionHeader('已安装'),
+              if (installed.isNotEmpty)
+                // 横向一排大图标 (无文字标签), 点击弹详情
+                SizedBox(
+                  height: 64,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (var i = 0; i < installed.length; i++)
+                          Padding(
+                            padding: EdgeInsets.only(
+                              right: i == installed.length - 1 ? 0 : 16,
+                            ),
+                            child: _installedIcon(
+                              installed[i],
+                              iconOf['${installed[i].marketplace}/${installed[i].name}'],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                CapsPlainTile(
+                  leading: Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: cs.surfaceContainerHigh,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      Icons.storefront_outlined,
+                      size: 20,
+                      color: cs.onSurfaceVariant,
+                    ),
+                  ),
+                  title: '暂无插件,点右上角商店逛逛市场',
                 ),
-              const SizedBox(height: AppSpacing.md),
-              AppSectionHeader(title: '插件市场 (${data.marketplaces.length})'),
-              if (data.marketplaces.isNotEmpty)
-                AppTileGroup(
-                  tiles: [
-                    for (final m in data.marketplaces)
-                      _marketTile(theme, cs, m),
-                  ],
-                ),
+              const CapsSectionHeader('插件市场'),
+              for (final m in data.marketplaces) _marketRow(cs, m),
             ],
           ),
         );
@@ -83,51 +102,46 @@ class PluginsTabState extends ConsumerState<PluginsTab>
     );
   }
 
-  AppTile _pluginTile(
-    ThemeData theme,
-    ColorScheme cs,
-    PluginEntry p, {
-    String? icon,
-  }) {
-    final compLabel = p.componentTypes.isEmpty
-        ? null
-        : p.componentTypes.map(pluginComponentLabel).join(' · ');
-    final subtitle = [
-      if (p.description.isNotEmpty) p.description,
-      if (compLabel != null) compLabel,
-    ].join('\n');
-    return AppTile(
-      customLeading: PluginIconBox(icon: icon, name: p.label, size: 32),
-      title: p.hasUpdate ? '${p.label} · 有更新' : p.label,
-      subtitle: subtitle.isNotEmpty ? subtitle : null,
-      subtitleMaxLines: 2,
-      value: p.version != null && p.version!.isNotEmpty
-          ? 'v${p.version}'
-          : null,
-      showChevron: true,
+  /// 已装插件横向图标 (64px 圆角方块), 点击弹详情
+  Widget _installedIcon(PluginEntry p, String? icon) {
+    return GestureDetector(
       onTap: () => _pluginActions(context, p),
-      trailing: CapsSwitch(
-        value: p.enabled,
-        onChanged: (v) =>
-            _run(() => ref.read(pluginsProvider.notifier).setEnabled(p, v)),
-      ),
+      child: PluginIconBox(icon: icon, name: p.label, size: 64),
     );
   }
 
-  AppTile _marketTile(ThemeData theme, ColorScheme cs, MarketplaceEntry m) {
-    return AppTile(
-      icon: m.isOfficial ? Icons.verified_outlined : Icons.storefront_outlined,
-      iconTint: m.isOfficial ? AppColors.accent : cs.onSurfaceVariant,
+  /// 市场行 (无边框极简)
+  Widget _marketRow(ColorScheme cs, MarketplaceEntry m) {
+    return CapsPlainTile(
+      leading: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: m.isOfficial
+              ? AppColors.accentContainer
+              : cs.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(
+          m.isOfficial ? Icons.verified_outlined : Icons.storefront_outlined,
+          size: 20,
+          color: m.isOfficial ? AppColors.accent : cs.onSurfaceVariant,
+        ),
+      ),
       title: m.name,
       subtitle: '${m.pluginCount} 个插件${m.isOfficial ? ' · 官方' : ''}',
-      subtitleMaxLines: 1,
-      showChevron: true,
+      trailing: Icon(
+        Icons.chevron_right_rounded,
+        size: 18,
+        color: cs.onSurfaceVariant,
+      ),
       onTap: () => _marketActions(context, m),
     );
   }
 
   void _pluginActions(BuildContext context, PluginEntry p) {
     final theme = Theme.of(context);
+    var enabled = p.enabled; // sheet 不随 provider 自动 rebuild, 局部维护视觉态
     capsSheet(
       context,
       child: Padding(
@@ -191,6 +205,23 @@ class PluginsTabState extends ConsumerState<PluginsTab>
               ),
             ],
             const SizedBox(height: AppSpacing.md),
+            // 启停 (原列表行开关移入详情弹窗)
+            StatefulBuilder(
+              builder: (context, setSheetState) => _sheetActionRow(
+                theme,
+                icon: Icons.power_settings_new_rounded,
+                label: '启用插件',
+                trailing: CapsSwitch(
+                  value: enabled,
+                  onChanged: (v) {
+                    setSheetState(() => enabled = v);
+                    _run(
+                      () => ref.read(pluginsProvider.notifier).setEnabled(p, v),
+                    );
+                  },
+                ),
+              ),
+            ),
             ListTile(
               contentPadding: EdgeInsets.zero,
               dense: true,
@@ -233,6 +264,26 @@ class PluginsTabState extends ConsumerState<PluginsTab>
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// 弹窗内动作行 (图标 + 标签 + 尾部控件), 与 skills 详情弹窗同风格
+  Widget _sheetActionRow(
+    ThemeData theme, {
+    required IconData icon,
+    required String label,
+    required Widget trailing,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: theme.colorScheme.onSurfaceVariant),
+          const SizedBox(width: AppSpacing.md),
+          Expanded(child: Text(label, style: theme.textTheme.bodyMedium)),
+          trailing,
+        ],
       ),
     );
   }

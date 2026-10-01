@@ -1,9 +1,10 @@
 /// Agent 设置六个独立详情页 (设置页菜单项 / 抽屉技能入口使用)
 ///
-/// 统一布局: 右上角添加按钮 + 列表下拉刷新。
+/// 统一布局: 极简页头 (白圆返回钮 + 居中标题 + 右上角圆钮动作) + 列表。
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../tabs/commands_tab.dart';
 import '../tabs/hooks_tab.dart';
@@ -11,6 +12,7 @@ import '../tabs/mcp_tab.dart';
 import '../tabs/plugins_tab.dart';
 import '../tabs/skills_tab.dart';
 import '../tabs/subagents_tab.dart';
+import '../widgets/caps_page_chrome.dart';
 
 /// 技能页
 class SkillsPage extends StatefulWidget {
@@ -26,23 +28,26 @@ class _SkillsPageState extends State<SkillsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('技能'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.download_rounded, size: 20),
-            tooltip: '从外部 Agent 导入',
-            onPressed: () => _tabKey.currentState?.openImport(),
-          ),
-          IconButton(
-            icon: const Icon(Icons.add_rounded, size: 22),
-            tooltip: '新建技能',
-            onPressed: widget.onNewSkill,
-          ),
-        ],
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: CapsPageHeader.overlayStyle(context),
+      child: Scaffold(
+        appBar: CapsPageHeader(
+          title: '技能',
+          actions: [
+            CapsCircleIconButton(
+              icon: Icons.download_rounded,
+              tooltip: '从外部 Agent 导入',
+              onTap: () => _tabKey.currentState?.openImport(),
+            ),
+            CapsCircleIconButton(
+              icon: Icons.add_rounded,
+              tooltip: '新建技能',
+              onTap: widget.onNewSkill,
+            ),
+          ],
+        ),
+        body: SkillsTab(key: _tabKey),
       ),
-      body: SkillsTab(key: _tabKey),
     );
   }
 }
@@ -60,18 +65,21 @@ class _SubagentsPageState extends State<SubagentsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('子智能体'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add_rounded, size: 22),
-            tooltip: '新建子智能体',
-            onPressed: () => _tabKey.currentState?.openNewEditor(),
-          ),
-        ],
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: CapsPageHeader.overlayStyle(context),
+      child: Scaffold(
+        appBar: CapsPageHeader(
+          title: '子智能体',
+          actions: [
+            CapsCircleIconButton(
+              icon: Icons.add_rounded,
+              tooltip: '新建子智能体',
+              onTap: () => _tabKey.currentState?.openNewEditor(),
+            ),
+          ],
+        ),
+        body: SubagentsTab(key: _tabKey),
       ),
-      body: SubagentsTab(key: _tabKey),
     );
   }
 }
@@ -89,18 +97,21 @@ class _McpPageState extends State<McpPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('MCP 服务器'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add_rounded, size: 22),
-            tooltip: '添加服务器',
-            onPressed: () => _tabKey.currentState?.openNewEditor(),
-          ),
-        ],
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: CapsPageHeader.overlayStyle(context),
+      child: Scaffold(
+        appBar: CapsPageHeader(
+          title: 'MCP 服务器',
+          actions: [
+            CapsCircleIconButton(
+              icon: Icons.add_rounded,
+              tooltip: '添加服务器',
+              onTap: () => _tabKey.currentState?.openNewEditor(),
+            ),
+          ],
+        ),
+        body: McpTab(key: _tabKey),
       ),
-      body: McpTab(key: _tabKey),
     );
   }
 }
@@ -118,18 +129,21 @@ class _CommandsPageState extends State<CommandsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('命令'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add_rounded, size: 22),
-            tooltip: '新建命令',
-            onPressed: () => _tabKey.currentState?.openNewEditor(),
-          ),
-        ],
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: CapsPageHeader.overlayStyle(context),
+      child: Scaffold(
+        appBar: CapsPageHeader(
+          title: '命令',
+          actions: [
+            CapsCircleIconButton(
+              icon: Icons.add_rounded,
+              tooltip: '新建命令',
+              onTap: () => _tabKey.currentState?.openNewEditor(),
+            ),
+          ],
+        ),
+        body: CommandsTab(key: _tabKey),
       ),
-      body: CommandsTab(key: _tabKey),
     );
   }
 }
@@ -147,18 +161,21 @@ class _HooksPageState extends State<HooksPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('钩子'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add_rounded, size: 22),
-            tooltip: '新建钩子',
-            onPressed: () => _tabKey.currentState?.openNewEditor(),
-          ),
-        ],
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: CapsPageHeader.overlayStyle(context),
+      child: Scaffold(
+        appBar: CapsPageHeader(
+          title: '钩子',
+          actions: [
+            CapsCircleIconButton(
+              icon: Icons.add_rounded,
+              tooltip: '新建钩子',
+              onTap: () => _tabKey.currentState?.openNewEditor(),
+            ),
+          ],
+        ),
+        body: HooksTab(key: _tabKey),
       ),
-      body: HooksTab(key: _tabKey),
     );
   }
 }
@@ -176,18 +193,21 @@ class _PluginsPageState extends State<PluginsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('插件'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.storefront_outlined, size: 20),
-            tooltip: '浏览市场安装',
-            onPressed: () => _tabKey.currentState?.openMarketplace(),
-          ),
-        ],
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: CapsPageHeader.overlayStyle(context),
+      child: Scaffold(
+        appBar: CapsPageHeader(
+          title: '插件',
+          actions: [
+            CapsCircleIconButton(
+              icon: Icons.storefront_outlined,
+              tooltip: '浏览市场安装',
+              onTap: () => _tabKey.currentState?.openMarketplace(),
+            ),
+          ],
+        ),
+        body: PluginsTab(key: _tabKey),
       ),
-      body: PluginsTab(key: _tabKey),
     );
   }
 }

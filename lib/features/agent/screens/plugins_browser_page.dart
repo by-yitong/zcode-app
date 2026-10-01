@@ -5,6 +5,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -12,9 +13,9 @@ import '../../../core/logging/app_logger.dart';
 import '../../../providers/app_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/widgets/app_empty_state.dart';
-import '../../../shared/widgets/app_section_header.dart';
 import '../models/capability_models.dart';
 import '../providers/agent_caps_providers.dart';
+import '../widgets/caps_page_chrome.dart';
 import '../widgets/caps_widgets.dart';
 
 class PluginsBrowserPage extends ConsumerStatefulWidget {
@@ -83,159 +84,152 @@ class _PluginsBrowserPageState extends ConsumerState<PluginsBrowserPage> {
     final cs = theme.colorScheme;
     final pluginsAsync = ref.watch(pluginsProvider);
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('插件市场')),
-      body: pluginsAsync.when(
-        loading: () =>
-            const Center(child: CircularProgressIndicator(strokeWidth: 2.5)),
-        error: (e, _) => AppEmptyState(
-          icon: Icons.cloud_off_rounded,
-          title: '加载失败',
-          subtitle: e.toString(),
-          iconTint: AppColors.danger,
-          actionLabel: '重试',
-          onAction: () => ref.read(pluginsProvider.notifier).load(),
-        ),
-        data: (state) {
-          var available = state.available;
-          if (available.isEmpty && _catalogFallback != null) {
-            available = _catalogFallback!;
-          } else if (available.isEmpty && !_fallbackLoaded) {
-            _ensureFallback();
-          }
-          final marketplaces = state.marketplaces;
-          // 精选集合 (各市场 featured 汇总)
-          final featured = <String>{};
-          for (final m in marketplaces) {
-            featured.addAll(m.featured);
-          }
-
-          // 筛选 (标准与网页端一致):
-          //   公开 = zcode 官方市场 (zcode-plugins-official)
-          //   个人 = 其余市场 (claude-plugins-official / 自建)
-          final q = _query.trim().toLowerCase();
-          final list = available.where((p) {
-            final isPublic = p.marketplace == kOfficialMarketplace;
-            final wantPublic = _segment == 'public';
-            if (wantPublic != isPublic) return false;
-            if (q.isNotEmpty &&
-                !p.label.toLowerCase().contains(q) &&
-                !p.description.toLowerCase().contains(q)) {
-              return false;
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: CapsPageHeader.overlayStyle(context),
+      child: Scaffold(
+        appBar: const CapsPageHeader(title: '插件市场'),
+        body: pluginsAsync.when(
+          loading: () =>
+              const Center(child: CircularProgressIndicator(strokeWidth: 2.5)),
+          error: (e, _) => AppEmptyState(
+            icon: Icons.cloud_off_rounded,
+            title: '加载失败',
+            subtitle: e.toString(),
+            iconTint: AppColors.danger,
+            actionLabel: '重试',
+            onAction: () => ref.read(pluginsProvider.notifier).load(),
+          ),
+          data: (state) {
+            var available = state.available;
+            if (available.isEmpty && _catalogFallback != null) {
+              available = _catalogFallback!;
+            } else if (available.isEmpty && !_fallbackLoaded) {
+              _ensureFallback();
             }
-            return true;
-          }).toList()..sort((a, b) => a.label.compareTo(b.label));
+            final marketplaces = state.marketplaces;
+            // 精选集合 (各市场 featured 汇总)
+            final featured = <String>{};
+            for (final m in marketplaces) {
+              featured.addAll(m.featured);
+            }
 
-          final installedNames = state.installed
-              .map((p) => '${p.marketplace}/${p.name}')
-              .toSet();
+            // 筛选 (标准与网页端一致):
+            //   公开 = zcode 官方市场 (zcode-plugins-official)
+            //   个人 = 其余市场 (claude-plugins-official / 自建)
+            final q = _query.trim().toLowerCase();
+            final list = available.where((p) {
+              final isPublic = p.marketplace == kOfficialMarketplace;
+              final wantPublic = _segment == 'public';
+              if (wantPublic != isPublic) return false;
+              if (q.isNotEmpty &&
+                  !p.label.toLowerCase().contains(q) &&
+                  !p.description.toLowerCase().contains(q)) {
+                return false;
+              }
+              return true;
+            }).toList()..sort((a, b) => a.label.compareTo(b.label));
 
-          return Column(
-            children: [
-              // 搜索
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.lg,
-                  AppSpacing.sm,
-                  AppSpacing.lg,
-                  0,
-                ),
-                child: TextField(
-                  controller: _search,
-                  onChanged: (v) => setState(() => _query = v),
-                  style: theme.textTheme.bodyMedium,
-                  cursorColor: AppColors.accent,
-                  decoration: InputDecoration(
-                    hintText: '搜索插件…',
-                    prefixIcon: Icon(
-                      Icons.search_rounded,
-                      size: 20,
-                      color: cs.onSurfaceVariant,
-                    ),
-                    isDense: true,
-                    filled: true,
-                    fillColor: cs.surfaceContainerHigh,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(AppRadius.lg),
-                      borderSide: BorderSide.none,
+            final installedNames = state.installed
+                .map((p) => '${p.marketplace}/${p.name}')
+                .toSet();
+
+            return Column(
+              children: [
+                // 搜索
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.lg,
+                    AppSpacing.sm,
+                    AppSpacing.lg,
+                    0,
+                  ),
+                  child: TextField(
+                    controller: _search,
+                    onChanged: (v) => setState(() => _query = v),
+                    style: theme.textTheme.bodyMedium,
+                    cursorColor: AppColors.accent,
+                    decoration: InputDecoration(
+                      hintText: '搜索插件…',
+                      prefixIcon: Icon(
+                        Icons.search_rounded,
+                        size: 20,
+                        color: cs.onSurfaceVariant,
+                      ),
+                      isDense: true,
+                      filled: true,
+                      fillColor: cs.surfaceContainerHigh,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(28),
+                        borderSide: BorderSide.none,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              // 公开 / 个人 (pill chips)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.lg,
-                  AppSpacing.md,
-                  AppSpacing.lg,
-                  0,
+                // 公开 / 个人 (pill chips)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.lg,
+                    AppSpacing.md,
+                    AppSpacing.lg,
+                    0,
+                  ),
+                  child: Row(
+                    children: [
+                      _segChip('公开', 'public'),
+                      const SizedBox(width: AppSpacing.sm),
+                      _segChip('个人', 'personal'),
+                    ],
+                  ),
                 ),
-                child: Row(
-                  children: [
-                    _segChip('公开', 'public'),
-                    const SizedBox(width: AppSpacing.sm),
-                    _segChip('个人', 'personal'),
-                  ],
-                ),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              const SizedBox(height: AppSpacing.xs),
-              Expanded(
-                child: available.isEmpty
-                    ? AppEmptyState(
-                        icon: Icons.storefront_outlined,
-                        title: '目录为空',
-                        subtitle: '先在「插件」页添加插件市场后下拉刷新',
-                      )
-                    : RefreshIndicator(
-                        onRefresh: () async {
-                          _fallbackLoaded = false;
-                          _catalogFallback = null;
-                          await ref.read(pluginsProvider.notifier).load();
-                        },
-                        child: list.isEmpty
-                            ? ListView(
-                                children: [
-                                  SizedBox(
-                                    height:
-                                        MediaQuery.of(context).size.height *
-                                        0.4,
-                                    child: const AppEmptyState(
-                                      icon: Icons.search_off_rounded,
-                                      title: '没有匹配的插件',
-                                      subtitle: '换个分类或关键词试试',
+                const SizedBox(height: AppSpacing.sm),
+                const SizedBox(height: AppSpacing.xs),
+                Expanded(
+                  child: available.isEmpty
+                      ? AppEmptyState(
+                          icon: Icons.storefront_outlined,
+                          title: '目录为空',
+                          subtitle: '先在「插件」页添加插件市场后下拉刷新',
+                        )
+                      : RefreshIndicator(
+                          onRefresh: () async {
+                            _fallbackLoaded = false;
+                            _catalogFallback = null;
+                            await ref.read(pluginsProvider.notifier).load();
+                          },
+                          child: list.isEmpty
+                              ? ListView(
+                                  children: [
+                                    SizedBox(
+                                      height:
+                                          MediaQuery.of(context).size.height *
+                                          0.4,
+                                      child: const AppEmptyState(
+                                        icon: Icons.search_off_rounded,
+                                        title: '没有匹配的插件',
+                                        subtitle: '换个分类或关键词试试',
+                                      ),
                                     ),
-                                  ),
-                                ],
-                              )
-                            : _segment == 'public'
-                            ? _publicList(
-                                theme,
-                                cs,
-                                list,
-                                featured,
-                                installedNames,
-                              )
-                            : _personalList(
-                                theme,
-                                cs,
-                                list,
-                                marketplaces,
-                                installedNames,
-                              ),
-                      ),
-              ),
-            ],
-          );
-        },
+                                  ],
+                                )
+                              : _segment == 'public'
+                              ? _publicList(list, featured, installedNames)
+                              : _personalList(
+                                  list,
+                                  marketplaces,
+                                  installedNames,
+                                ),
+                        ),
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
 
   /// 公开段: Featured (官方市场 featured 名单) 置顶, 其余按分类分组 (other 最后)
   Widget _publicList(
-    ThemeData theme,
-    ColorScheme cs,
     List<PluginEntry> list,
     Set<String> featured,
     Set<String> installedNames,
@@ -264,15 +258,13 @@ class _PluginsBrowserPageState extends ConsumerState<PluginsBrowserPage> {
       ),
       children: [
         if (featuredVisible.isNotEmpty) ...[
-          const AppSectionHeader(title: 'Featured'),
-          _cards(theme, cs, featuredVisible, installedNames),
+          const CapsSectionHeader('Featured'),
+          _cards(featuredVisible, installedNames),
           const SizedBox(height: AppSpacing.md),
         ],
         for (final k in catKeys) ...[
-          AppSectionHeader(
-            title: '${pluginCategoryLabel(k)} (${byCategory[k]!.length})',
-          ),
-          _cards(theme, cs, byCategory[k]!, installedNames),
+          CapsSectionHeader(pluginCategoryLabel(k)),
+          _cards(byCategory[k]!, installedNames),
           const SizedBox(height: AppSpacing.md),
         ],
       ],
@@ -282,8 +274,6 @@ class _PluginsBrowserPageState extends ConsumerState<PluginsBrowserPage> {
   /// 个人段: 「推荐」(固定名单顺序) + 按市场分组 (claude-plugins-official
   /// 显示为「Claude Code 插件」, 其余用市场名; 组按标题排序)
   Widget _personalList(
-    ThemeData theme,
-    ColorScheme cs,
     List<PluginEntry> list,
     List<MarketplaceEntry> marketplaces,
     Set<String> installedNames,
@@ -318,142 +308,87 @@ class _PluginsBrowserPageState extends ConsumerState<PluginsBrowserPage> {
       ),
       children: [
         if (recommended.isNotEmpty) ...[
-          const AppSectionHeader(title: '推荐'),
-          _cards(theme, cs, recommended, installedNames),
+          const CapsSectionHeader('推荐'),
+          _cards(recommended, installedNames),
           const SizedBox(height: AppSpacing.md),
         ],
         for (final g in groups) ...[
-          AppSectionHeader(title: '${groupTitle(g.key)} (${g.value.length})'),
-          _cards(theme, cs, g.value, installedNames),
+          CapsSectionHeader(groupTitle(g.key)),
+          _cards(g.value, installedNames),
           const SizedBox(height: AppSpacing.md),
         ],
       ],
     );
   }
 
-  /// 公开/个人切换 chip (与筛选 pill 同款样式)
+  /// 公开/个人切换 chip (左对齐紧凑 pill, 选中 accent 底白字)
   Widget _segChip(String label, String value) {
     final selected = _segment == value;
     final cs = Theme.of(context).colorScheme;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => setState(() => _segment = value),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm - 1),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: selected ? AppColors.accent : cs.surfaceContainerHigh,
-            borderRadius: BorderRadius.circular(AppRadius.pill),
-            border: Border.all(
-              color: selected ? AppColors.accent : cs.outlineVariant,
-            ),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: AppTextSizes.bodySm,
-              fontWeight: FontWeight.w600,
-              color: selected ? Colors.white : cs.onSurfaceVariant,
-            ),
+    return GestureDetector(
+      onTap: () => setState(() => _segment = value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.accent : cs.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(AppRadius.pill),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: AppTextSizes.bodySm,
+            fontWeight: FontWeight.w600,
+            color: selected ? Colors.white : cs.onSurfaceVariant,
           ),
         ),
       ),
     );
   }
 
-  Widget _cards(
-    ThemeData theme,
-    ColorScheme cs,
-    List<PluginEntry> plugins,
-    Set<String> installedNames,
-  ) {
+  Widget _cards(List<PluginEntry> plugins, Set<String> installedNames) {
     return Column(
       children: [
         for (final p in plugins)
-          Container(
-            margin: const EdgeInsets.only(bottom: AppSpacing.sm),
-            decoration: BoxDecoration(
-              color: cs.surface,
-              borderRadius: BorderRadius.circular(AppRadius.md),
-              border: Border.all(color: cs.outlineVariant),
-            ),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(AppRadius.md),
-              onTap: () => _openDetail(p),
-              child: Padding(
-                padding: const EdgeInsets.all(AppSpacing.md),
-                child: Row(
-                  children: [
-                    PluginIconBox(icon: p.icon, name: p.label, size: 44),
-                    const SizedBox(width: AppSpacing.md),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  p.label,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.bodyLarge?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                              if (p.version != null &&
-                                  p.version!.isNotEmpty) ...[
-                                const SizedBox(width: AppSpacing.sm),
-                                CapsBadge('v${p.version}'),
-                              ],
-                            ],
-                          ),
-                          if (p.description.isNotEmpty) ...[
-                            const SizedBox(height: 2),
-                            Text(
-                              p.description,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: AppTextSizes.bodySm,
-                                color: cs.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    _trailing(cs, p, installedNames),
-                  ],
-                ),
-              ),
-            ),
+          CapsPlainTile(
+            leading: PluginIconBox(icon: p.icon, name: p.label, size: 44),
+            title: p.label,
+            subtitle: p.description.isNotEmpty ? p.description : null,
+            trailing: _trailing(p, installedNames),
+            onTap: () => _openDetail(p),
           ),
       ],
     );
   }
 
-  Widget _trailing(ColorScheme cs, PluginEntry p, Set<String> installedNames) {
+  /// 行尾动作: 已安装 = 绿容器对勾 (纯展示); 未安装 = accent 圆形 + 号直装
+  Widget _trailing(PluginEntry p, Set<String> installedNames) {
     final installed =
         p.installed || installedNames.contains('${p.marketplace}/${p.name}');
     if (installed) {
-      return Icon(
-        Icons.check_circle_rounded,
-        size: 22,
-        color: AppColors.success,
+      return Container(
+        width: 28,
+        height: 28,
+        decoration: const BoxDecoration(
+          color: AppColors.successContainer,
+          shape: BoxShape.circle,
+        ),
+        child: const Icon(
+          Icons.check_rounded,
+          size: 16,
+          color: AppColors.success,
+        ),
       );
     }
-    return SizedBox(
-      height: 32,
-      child: FilledButton(
-        onPressed: () => _install(p),
-        style: FilledButton.styleFrom(
-          backgroundColor: AppColors.accent,
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+    return GestureDetector(
+      onTap: () => _install(p),
+      child: Container(
+        width: 28,
+        height: 28,
+        decoration: const BoxDecoration(
+          color: AppColors.accentContainer,
+          shape: BoxShape.circle,
         ),
-        child: const Text('安装', style: TextStyle(fontSize: AppTextSizes.label)),
+        child: const Icon(Icons.add_rounded, size: 18, color: AppColors.accent),
       ),
     );
   }
