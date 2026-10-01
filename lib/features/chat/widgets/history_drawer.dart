@@ -11,7 +11,7 @@ import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/theme/app_router.dart';
 import '../../../shared/widgets/app_empty_state.dart';
 import '../../../shared/widgets/app_section_header.dart';
-import '../../agent/screens/cap_pages.dart';
+import '../../agent/screens/plugins_browser_page.dart';
 import 'thought_block.dart';
 import '../../search/screens/search_screen.dart';
 
@@ -27,9 +27,6 @@ class HistoryDrawer extends ConsumerStatefulWidget {
   /// 打开搜索页 (跳转全屏搜索, 合并原顶栏搜索)
   final VoidCallback onOpenSearch;
 
-  /// 新建技能 (跳会话预填 skill-creator 引导)
-  final VoidCallback? onNewSkill;
-
   const HistoryDrawer({
     required this.workspacePath,
     required this.currentTaskId,
@@ -37,7 +34,6 @@ class HistoryDrawer extends ConsumerStatefulWidget {
     required this.onNewChat,
     required this.onSwitchWorkspace,
     required this.onOpenSearch,
-    this.onNewSkill,
   });
 
   @override
@@ -435,10 +431,20 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                       widget.onOpenSearch();
                     },
                   ),
+                  // 设置按钮 (搜索右侧, 自底部栏上移)
+                  IconButton(
+                    icon: const Icon(Icons.settings_outlined, size: 20),
+                    tooltip: '设置',
+                    color: theme.colorScheme.onSurfaceVariant,
+                    onPressed: () {
+                      Navigator.pop(context); // 关抽屉
+                      context.push('/settings');
+                    },
+                  ),
                 ],
               ),
             ),
-            // 快捷入口: 新建任务 / 搜索 / 自动化 / 技能
+            // 快捷入口: 新建任务 / 搜索 / 插件市场
             _buildNavItem(
               theme,
               icon: Icons.add_rounded,
@@ -460,13 +466,13 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
             ),
             _buildNavItem(
               theme,
-              icon: Icons.auto_awesome_rounded,
-              label: '技能',
+              icon: Icons.storefront_outlined,
+              label: '插件市场',
               onTap: () {
                 Navigator.pop(context);
                 Navigator.of(context).push(
                   MaterialPageRoute(
-                    builder: (_) => SkillsPage(onNewSkill: widget.onNewSkill),
+                    builder: (_) => const PluginsBrowserPage(),
                   ),
                 );
               },
@@ -549,7 +555,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
     );
   }
 
-  /// 抽屉底部栏: 左侧项目名 (点击向上弹窗切换项目) + 右侧设置按钮
+  /// 抽屉底部: 项目切换卡片 (点击向上弹窗切换项目)
   Widget _buildDrawerBottomBar(ThemeData theme) {
     final workspaces =
         ref.watch(workspaceListProvider).valueOrNull ?? const <Workspace>[];
@@ -561,79 +567,57 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
         ? '选择项目'
         : (isDefault ? '不在项目中工作' : current.name);
 
-    return Container(
-      decoration: BoxDecoration(
-        color: theme.brightness == Brightness.dark
-            ? AppColors.darkSurfaceElevated
-            : AppColors.lightSurface,
-        border: Border(
-          top: BorderSide(color: theme.colorScheme.outlineVariant),
-        ),
-      ),
+    // 圆角卡片 (填充色, 无边框), 独立于列表的浮动切换器
+    return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.md,
         AppSpacing.xs,
-        AppSpacing.xs,
-        AppSpacing.xs,
+        AppSpacing.md,
+        AppSpacing.sm,
       ),
-      child: Row(
-        children: [
-          // 项目名 + 切换提示图标
-          Expanded(
-            child: InkWell(
-              onTap: () => _openProjectSwitcher(context, workspaces),
-              borderRadius: BorderRadius.circular(AppRadius.md),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.sm,
-                  vertical: AppSpacing.sm,
+      child: Material(
+        color: theme.colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => _openProjectSwitcher(context, workspaces),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.sm + 2,
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  isDefault
+                      ? Icons.home_work_outlined
+                      : Icons.folder_outlined,
+                  size: 16,
+                  color: theme.colorScheme.onSurfaceVariant,
                 ),
-                child: Row(
-                  children: [
-                    Icon(
-                      isDefault
-                          ? Icons.home_work_outlined
-                          : Icons.folder_outlined,
-                      size: 16,
-                      color: theme.colorScheme.onSurfaceVariant,
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontSize: AppTextSizes.bodySm,
+                      fontWeight: FontWeight.w600,
                     ),
-                    const SizedBox(width: AppSpacing.sm),
-                    Expanded(
-                      child: Text(
-                        label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          fontSize: AppTextSizes.bodySm,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: AppSpacing.xs),
-                    // 向上延伸图标: 提示点击后弹窗向上展开
-                    Icon(
-                      Icons.keyboard_double_arrow_up_rounded,
-                      size: 14,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ],
+                  ),
                 ),
-              ),
+                const SizedBox(width: AppSpacing.xs),
+                // 向上延伸图标: 提示点击后弹窗向上展开
+                Icon(
+                  Icons.keyboard_double_arrow_up_rounded,
+                  size: 14,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ],
             ),
           ),
-          // 设置按钮
-          IconButton(
-            icon: const Icon(Icons.settings_outlined, size: 20),
-            tooltip: '设置',
-            style: IconButton.styleFrom(
-              foregroundColor: theme.colorScheme.onSurfaceVariant,
-            ),
-            onPressed: () {
-              Navigator.pop(context); // 关抽屉
-              context.push('/settings');
-            },
-          ),
-        ],
+        ),
       ),
     );
   }

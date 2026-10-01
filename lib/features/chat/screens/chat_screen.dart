@@ -100,12 +100,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     _chatScaffoldKey.currentState?.openSearch();
   }
 
-  /// 新建技能: 关闭 Agent 设置页, 回到对话并预填 skill-creator 引导语
-  void _startSkillCreation() {
-    Navigator.of(context).pop(); // AgentSettingsScreen
-    _chatScaffoldKey.currentState?.prefillInput('帮我创建一个新技能');
-  }
-
   @override
   Widget build(BuildContext context) {
     final workspace = ref.watch(selectedWorkspaceProvider);
@@ -176,7 +170,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             );
           },
           onOpenSearch: _openSearchFromDrawer,
-          onNewSkill: _startSkillCreation,
         ),
         body: DrawerSwipeGate(
           onOpen: () => _scaffoldKey.currentState?.openDrawer(),
