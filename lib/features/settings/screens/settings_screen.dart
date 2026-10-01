@@ -247,6 +247,17 @@ class SettingsScreen extends ConsumerWidget {
                     value: '${ref.watch(pipLinesProvider)} 行',
                     onTap: () => _showPipLinesPicker(context, ref),
                   ),
+                  // 后台自动打开小窗 (悬浮窗 v2): 切后台且有进行中会话时自动
+                  // 弹出; 无悬浮窗权限静默跳过只落日志, 不打扰
+                  _SettingsRow(
+                    icon: Icons.add_to_home_screen_outlined,
+                    title: '后台自动打开小窗',
+                    subtitle: '切到其他应用时自动弹出悬浮窗 (需有进行中会话)',
+                    trailing: Switch(
+                      value: ref.watch(pipAutoOpenProvider),
+                      onChanged: (v) => _applyPipAutoOpen(ref, v),
+                    ),
+                  ),
                   _SettingsRow(
                     icon: Icons.brightness_high_outlined,
                     title: '屏幕常亮',
@@ -596,6 +607,14 @@ class SettingsScreen extends ConsumerWidget {
     await prefs.setBool(kKeepScreenOnPrefKey, enabled);
     await DisplayService.setKeepScreenOn(enabled);
   }
+
+  /// 应用后台自动打开小窗: 更新 provider 状态 + 持久化
+  /// (重启后由 main() 恢复; 生效逻辑在 ZcodeApp 生命周期 paused 分支)。
+  Future<void> _applyPipAutoOpen(WidgetRef ref, bool enabled) async {
+    ref.read(pipAutoOpenProvider.notifier).state = enabled;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(kPipAutoOpenPrefKey, enabled);
+  }
 }
 
 /// 白色分组卡片 (无边框; 深色 darkSurfaceElevated), 圆角 20。
@@ -616,11 +635,14 @@ class _SettingsCard extends StatelessWidget {
   }
 }
 
-/// 设置行 — 描边图标 + 标题 + 右侧灰值/自定义尾部/箭头, 单行无分隔线。
-/// 行高 ~56 (图标 24 + 上下 16), 与参考截图的舒展节奏一致。
+/// 设置行 — 描边图标 + 标题 (+ 可选副标题) + 右侧灰值/自定义尾部/箭头,
+/// 单行无分隔线。行高 ~56 (图标 24 + 上下 16), 与参考截图的舒展节奏一致。
 class _SettingsRow extends StatelessWidget {
   final IconData icon;
   final String title;
+
+  /// 可选副标题 (标题下方小灰字, 如「后台自动打开小窗」的说明)
+  final String? subtitle;
   final String? value;
   final Widget? trailing; // Switch 等, 给定后不再画箭头
 
@@ -631,6 +653,7 @@ class _SettingsRow extends StatelessWidget {
   const _SettingsRow({
     required this.icon,
     required this.title,
+    this.subtitle,
     this.value,
     this.trailing,
     this.showChevron,
@@ -652,14 +675,36 @@ class _SettingsRow extends StatelessWidget {
             Icon(icon, size: 24, color: cs.onSurface),
             const SizedBox(width: AppSpacing.md),
             Expanded(
-              child: Text(
-                title,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                  color: cs.onSurface,
-                ),
-              ),
+              child: subtitle == null
+                  ? Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: cs.onSurface,
+                      ),
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                            color: cs.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          subtitle!,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: cs.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
             ),
             if (value != null) ...[
               const SizedBox(width: AppSpacing.sm),
