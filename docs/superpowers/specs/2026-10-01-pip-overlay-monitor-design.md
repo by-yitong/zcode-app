@@ -36,9 +36,17 @@ AI 输出进度：从会话页点"画中画"按钮 → 弹出系统级悬浮小�
    - 页码指示：`当前页/总页数`。
    - 左右滑动切换会话（PageView；与上下滚动手势按方向天然区分）。
    - 轻点（非拖动/滑动）某一页 → 关悬浮窗 + ZCode 回前台并打开该会话。
-4. 悬浮窗拖动：`enableDrag: false`（原生拖动会与内容手势冲突），改为标题栏
-   手柄 `onPanUpdate` 累积位移 → `FlutterOverlayWindow.moveOverlay`；
-   松手吸附左右边缘（`positionGravity: auto`）。
+4. 悬浮窗拖动（真机联调终版）：插件已 vendor 至 `third_party/flutter_overlay_window`
+   并打了三处补丁（标记 "ZCode 补丁"）——
+   - `setFitsSystemWindows(false)`：原版导致部分 ROM relayout 时窗口被系统栏顶偏；
+   - `setDragEnabled` 通道：只翻拖动标志、零 relayout（走 resizeOverlay 换开关
+     会触发 relayout）；
+   - onTouch 基准：DOWN 恒记录触点基准 + 开关中途打开时首个 MOVE 只重置基准
+     （原版旧基准差值 → 拖动起跳 + 固定错位，真机确诊的最后一根病根）。
+   交互：默认 `enableDrag: false`（保护正文手势）；标题栏按下瞬间 Dart 切
+   `setDragEnabled(true)` → 原生层零通道往返直接搬窗口（官方同款丝滑）；
+   松手切回 false 并把窗口钳制回屏内（TOP|LEFT 绝对锚点，屏幕尺寸经快照
+   `sw/sh` 带给悬浮窗引擎）。`positionGravity: none`（不做松手吸边）。
 5. 关闭悬浮窗后 ZCode 任务继续跑（已有前台服务保活）。
 
 ### 尾部行提取规则
