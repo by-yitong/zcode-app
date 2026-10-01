@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -107,6 +108,15 @@ class _ZcodeAppState extends ConsumerState<ZcodeApp>
     return MaterialApp.router(
       title: 'ZCode',
       debugShowCheckedModeBanner: false,
+      // 锁定中文: 文本选择菜单 (复制/粘贴/全选)、系统控件跟随中文化;
+      // 不锁定会回落 en_US → 长按输入框弹出英文 Copy/Paste
+      locale: const Locale('zh'),
+      supportedLocales: const [Locale('zh'), Locale('en')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       themeMode: themeMode,
