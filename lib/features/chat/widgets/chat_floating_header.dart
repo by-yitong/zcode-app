@@ -7,9 +7,10 @@ import '../../../shared/theme/app_design_tokens.dart';
 
 /// 聊天页三段式悬浮胶囊 Header (非连续式 AppBar)
 ///
-/// [左胶囊: 菜单(=打开会话抽屉)] 12px [中间胶囊: 会话标题 + 状态行] 弹性空隙
-/// [右胶囊: 更多菜单]。每个胶囊独立毛玻璃 (ClipRRect + BackdropFilter),
-/// 无边框; 三者等高, 中间卡片贴左侧排列 (不居中), 超长标题在剩余空间省略。
+/// [左圆钮: 菜单(=打开会话抽屉)] 12px [中间胶囊: 会话标题 + 状态行] 弹性空隙
+/// [右圆钮: 更多菜单]。两侧为正圆 (44×44), 中间为毛玻璃胶囊且宽度贴内容
+/// (不撑满), 三者等高 44。每个胶囊独立毛玻璃 (ClipRRect + BackdropFilter),
+/// 无边框; 超长标题在剩余空间内省略。
 ///
 /// 纯展示 + 回调组件 (无 ref 依赖): 标题/状态行数据与动作均由 ChatScreen
 /// 组装传入。配色与 GlassAppBar 一致 (亮: 半透明白 0.72; 暗: #08090A @94%)。
@@ -49,8 +50,8 @@ class ChatFloatingHeader extends StatelessWidget
   /// 主体高度 (不含状态栏); body 顶部占位 = padding.top + 该值
   static const double barHeight = 64;
 
-  /// 三枚胶囊统一高度 (等高对齐)
-  static const double pillHeight = 56;
+  /// 三枚胶囊统一高度 (等高且紧凑, 两侧宽度=高度 → 正圆)
+  static const double pillHeight = 44;
 
   @override
   Size get preferredSize => const Size.fromHeight(barHeight);
@@ -77,11 +78,10 @@ class ChatFloatingHeader extends StatelessWidget
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // 左胶囊: 菜单 (= 打开会话列表抽屉)
+                // 左圆钮: 菜单 (= 打开会话列表抽屉); 44×44 正圆
                 _GlassPill(
                   key: const ValueKey('chatHeaderPillLeft'),
                   bg: bg,
-                  height: pillHeight,
                   child: IconButton(
                     icon: Icon(Icons.menu, size: 22, color: inkColor),
                     tooltip: '会话列表',
@@ -96,18 +96,17 @@ class ChatFloatingHeader extends StatelessWidget
                 ),
                 const SizedBox(width: 12),
                 // 中间胶囊: 会话信息卡片 (标题 + 上下文/用量状态行)。
-                // 贴左侧排列 (不居中); Flexible(loose) 适配内容宽度,
-                // 超长标题最多占满剩余空间 (flex 8 : Spacer 1), 右胶囊恒贴右缘。
+                // 贴左侧排列 (不居中); 宽度贴内容 — Flexible(loose) 只限制
+                // 上限 (flex 8 : Spacer 1, 超长标题省略), 内容窄时卡片就窄。
                 Flexible(
                   flex: 8,
                   child: _GlassPill(
                     key: const ValueKey('chatHeaderPillCenter'),
                     bg: bg,
-                    height: pillHeight,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 16,
-                        vertical: 6,
+                        vertical: 3,
                       ),
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -121,6 +120,7 @@ class ChatFloatingHeader extends StatelessWidget
                             style: TextStyle(
                               fontSize: AppTextSizes.titleSm,
                               fontWeight: FontWeight.w600,
+                              height: 1.2, // 收紧行高, 保证两行内容塞进 44 高
                               color: inkColor,
                             ),
                           ),
@@ -140,11 +140,10 @@ class ChatFloatingHeader extends StatelessWidget
                   ),
                 ),
                 const Spacer(flex: 1),
-                // 右胶囊: 更多菜单
+                // 右圆钮: 更多菜单; 44×44 正圆
                 _GlassPill(
                   key: const ValueKey('chatHeaderPillRight'),
                   bg: bg,
-                  height: pillHeight,
                   child: IconButton(
                     icon: Icon(
                       Icons.more_horiz_rounded,
@@ -226,19 +225,14 @@ class ChatFloatingHeader extends StatelessWidget
 }
 
 /// 单个悬浮胶囊: 圆角 + 毛玻璃, 无边框 (三段共用)。
-/// [height] 给定后三段等高, 内容垂直居中;
-/// 半径 32 超过半高会被自动钳到半高 → 两侧正圆端点 (胶囊形)。
+/// 最小高度 44 (三段等高); 宽度贴内容 — 关键是容器不用 alignment
+/// (alignment 会让 Container 撑满父给的宽松约束 → 中间胶囊变全宽的根因)。
+/// 两侧 44×44 时半径钳到半高 → 正圆; 中间内容更高时按内容撑高。
 class _GlassPill extends StatelessWidget {
   final Color bg;
-  final double? height;
   final Widget child;
 
-  const _GlassPill({
-    super.key,
-    required this.bg,
-    this.height,
-    required this.child,
-  });
+  const _GlassPill({super.key, required this.bg, required this.child});
 
   @override
   Widget build(BuildContext context) {
@@ -247,8 +241,9 @@ class _GlassPill extends StatelessWidget {
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
         child: Container(
-          height: height,
-          alignment: height == null ? null : Alignment.center,
+          constraints: const BoxConstraints(
+            minHeight: ChatFloatingHeader.pillHeight,
+          ),
           decoration: BoxDecoration(
             color: bg,
             borderRadius: BorderRadius.circular(32),
