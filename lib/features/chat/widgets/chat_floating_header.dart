@@ -96,50 +96,53 @@ class ChatFloatingHeader extends StatelessWidget
                 ),
                 const SizedBox(width: 12),
                 // 中间胶囊: 会话信息卡片 (标题 + 上下文/用量状态行)。
-                // 贴左侧排列 (不居中); 宽度贴内容 — Flexible(loose) 只限制
-                // 上限 (flex 8 : Spacer 1, 超长标题省略), 内容窄时卡片就窄。
-                Flexible(
-                  flex: 8,
-                  child: _GlassPill(
-                    key: const ValueKey('chatHeaderPillCenter'),
-                    bg: bg,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 3,
-                      ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: AppTextSizes.titleSm,
-                              fontWeight: FontWeight.w600,
-                              height: 1.2, // 收紧行高, 保证两行内容塞进 44 高
-                              color: inkColor,
+                // 贴左侧排列: Expanded 吃掉全部剩余空间, Align 让卡片在
+                // 剩余空间内贴左且宽度贴内容 — 空隙只会出现在卡片与右圆钮
+                // 之间 (Flexible+Spacer 的组合会把没用完的弹性配额堆到行尾,
+                // 右圆钮就悬在半路了); 超长标题被钳到可用宽后省略。
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: _GlassPill(
+                      key: const ValueKey('chatHeaderPillCenter'),
+                      bg: bg,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 3,
+                        ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: AppTextSizes.titleSm,
+                                fontWeight: FontWeight.w600,
+                                height: 1.2, // 收紧行高, 保证两行内容塞进 44 高
+                                color: inkColor,
+                              ),
                             ),
-                          ),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (contextIndicator != null) ...[
-                                contextIndicator!,
-                                const SizedBox(width: 6),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (contextIndicator != null) ...[
+                                  contextIndicator!,
+                                  const SizedBox(width: 6),
+                                ],
+                                if (usagePill != null) usagePill!,
                               ],
-                              if (usagePill != null) usagePill!,
-                            ],
-                          ),
-                        ],
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
-                const Spacer(flex: 1),
                 // 右圆钮: 更多菜单; 44×44 正圆
                 _GlassPill(
                   key: const ValueKey('chatHeaderPillRight'),
