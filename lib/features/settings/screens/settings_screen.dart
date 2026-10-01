@@ -333,8 +333,9 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
-  /// 分组标题 (参考截图: 斜体灰字, 左缘与行内图标对齐, 无大写/无箭头)
+  /// 分组标题 (参考截图: 浅灰斜体小字, 左缘与行内图标对齐, 无大写/无箭头)
   Widget _sectionLabel(BuildContext context, String label) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.lg,
@@ -345,9 +346,9 @@ class SettingsScreen extends ConsumerWidget {
       child: Text(
         label,
         style: TextStyle(
-          fontSize: 15,
+          fontSize: 13,
           fontStyle: FontStyle.italic,
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
+          color: dark ? AppColors.darkInkMuted : AppColors.lightInkMuted,
         ),
       ),
     );
@@ -654,7 +655,7 @@ class _SettingsRow extends StatelessWidget {
               child: Text(
                 title,
                 style: TextStyle(
-                  fontSize: 17,
+                  fontSize: 16,
                   fontWeight: FontWeight.w500,
                   color: cs.onSurface,
                 ),
@@ -664,7 +665,7 @@ class _SettingsRow extends StatelessWidget {
               const SizedBox(width: AppSpacing.sm),
               Text(
                 value!,
-                style: TextStyle(fontSize: 15, color: cs.onSurfaceVariant),
+                style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant),
               ),
             ],
             if (trailing != null) ...[
