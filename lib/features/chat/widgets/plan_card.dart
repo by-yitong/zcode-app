@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/relay/relay_events.dart';
 import '../../../providers/chat_provider.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/widgets/ai_markdown.dart';
+import '../screens/file_preview_screen.dart';
 import 'chat_helpers.dart';
 
 class PlanCard extends StatefulWidget {
@@ -274,11 +276,15 @@ class ChangedFilesSummary extends StatefulWidget {
   /// null 时回退到从工具活动刮取
   final V4TurnFileChanges? fileChanges;
 
+  /// ★ 工作区路径 (文件条目点击 → 预览页拼相对路径)
+  final String workspacePath;
+
   const ChangedFilesSummary({
     required this.activities,
     required this.theme,
     required this.inkColor,
     this.fileChanges,
+    required this.workspacePath,
   });
 
   @override
@@ -416,37 +422,43 @@ class ChangedFilesSummaryState extends State<ChangedFilesSummary>
                         for (final path in files)
                           Padding(
                             padding: const EdgeInsets.only(bottom: 4),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  _fileIcon(path),
-                                  size: 14,
-                                  color: theme.colorScheme.onSurfaceVariant,
-                                ),
-                                const SizedBox(width: 6),
-                                Flexible(
-                                  child: Text(
-                                    path.split('/').last,
-                                    style: TextStyle(
-                                      fontSize: AppTextSizes.label,
-                                      fontFamily: kMonoFont,
-                                      color: widget.inkColor,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
+                            child: InkWell(
+                              onTap: () => _openFile(context, path),
+                              borderRadius: BorderRadius.circular(AppRadius.xs),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    _fileIcon(path),
+                                    size: 14,
+                                    color:
+                                        theme.colorScheme.onSurfaceVariant,
                                   ),
-                                ),
-                                const SizedBox(width: 4),
-                                Flexible(
-                                  child: Text(
-                                    path,
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: theme.colorScheme.onSurfaceVariant,
+                                  const SizedBox(width: 6),
+                                  Flexible(
+                                    child: Text(
+                                      path.split('/').last,
+                                      style: TextStyle(
+                                        fontSize: AppTextSizes.label,
+                                        fontFamily: kMonoFont,
+                                        color: widget.inkColor,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                    overflow: TextOverflow.ellipsis,
                                   ),
-                                ),
-                              ],
+                                  const SizedBox(width: 4),
+                                  Flexible(
+                                    child: Text(
+                                      path,
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color:
+                                            theme.colorScheme.onSurfaceVariant,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                       ],
@@ -455,6 +467,19 @@ class ChangedFilesSummaryState extends State<ChangedFilesSummary>
                 : const SizedBox.shrink(),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 文件条目点击 → App 内文件预览页 (相对路径按 workspace 拼接)
+  void _openFile(BuildContext context, String path) {
+    final target = parseFileLinkTarget(path, workspace: widget.workspacePath);
+    if (target.path.isEmpty) return;
+    context.push(
+      filePreviewRouteUrl(
+        target.path,
+        workspace: widget.workspacePath,
+        line: target.line,
       ),
     );
   }

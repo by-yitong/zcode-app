@@ -6,6 +6,7 @@ import '../../core/logging/app_logger.dart';
 import '../../features/auth/screens/login_screen.dart';
 import '../../features/auth/screens/splash_screen.dart';
 import '../../features/chat/screens/chat_screen.dart';
+import '../../features/chat/screens/file_preview_screen.dart';
 import '../../features/settings/screens/settings_screen.dart';
 import '../../providers/app_providers.dart';
 import '../../shared/theme/app_design_tokens.dart';
@@ -20,6 +21,7 @@ class AppRoutes {
   static const String home = '/';
   static const String chat = '/chat';
   static const String settings = '/settings';
+  static const String filePreview = '/file-preview';
 }
 
 /// GoRouter 配置
@@ -48,6 +50,17 @@ final goRouterProvider = GoRouter(
         final workspaceKey = state.uri.queryParameters['workspace'] ?? '';
         final taskId = state.uri.queryParameters['task'];
         return ChatScreen(workspaceKey: workspaceKey, taskId: taskId);
+      },
+    ),
+    GoRoute(
+      path: AppRoutes.filePreview,
+      builder: (context, state) {
+        final q = state.uri.queryParameters;
+        return FilePreviewScreen(
+          path: q['path'] ?? '',
+          workspace: q['workspace'],
+          line: int.tryParse(q['line'] ?? ''),
+        );
       },
     ),
   ],

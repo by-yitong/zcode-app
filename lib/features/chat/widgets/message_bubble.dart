@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -11,6 +12,7 @@ import '../../../core/relay/relay_events.dart';
 import '../../../providers/chat_provider.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/widgets/ai_markdown.dart';
+import '../screens/file_preview_screen.dart';
 import 'agent_card.dart';
 import 'chat_helpers.dart';
 import 'execution_trace.dart';
@@ -62,6 +64,9 @@ class MessageBubble extends StatefulWidget {
   /// ★ 附件图片读回器 (V4 ref → bytes; null = 不读回只显示占位)
   final Future<Uint8List?> Function(String attachmentRef)? attachmentLoader;
 
+  /// ★ 工作区路径 (markdown 文件链接 / 变更文件条目 → 预览页拼相对路径)
+  final String workspacePath;
+
   const MessageBubble({
     required this.message,
     required this.theme,
@@ -74,6 +79,7 @@ class MessageBubble extends StatefulWidget {
     this.subagentLoader,
     this.subagentLiveRefresh,
     this.attachmentLoader,
+    required this.workspacePath,
   });
 
   @override
@@ -287,13 +293,44 @@ class MessageBubbleState extends State<MessageBubble> {
     );
   }
 
-  /// markdown 链接点击 → 外部浏览器打开 (gpt_markdown 签名: url + title)
+  /// markdown 链接点击 (gpt_markdown 签名: url + title):
+  /// http(s) → 外部浏览器; 其他已知 scheme (mailto:/tel:) → 系统;
+  /// 其余 (file://、绝对/相对路径) → App 内文件预览页
   Future<void> _onMarkdownLink(String url, String title) async {
-    try {
-      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-    } catch (_) {
-      // 无可处理的应用时静默忽略
+    final trimmed = url.trim();
+    final lower = trimmed.toLowerCase();
+    if (lower.startsWith('http://') || lower.startsWith('https://')) {
+      try {
+        await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      } catch (_) {
+        // 无可处理的应用时静默忽略
+      }
+      return;
     }
+    if (trimmed.isEmpty) return;
+    final scheme = Uri.tryParse(trimmed)?.scheme ?? '';
+    if (scheme.isNotEmpty && scheme.toLowerCase() != 'file') {
+      try {
+        await launchUrl(
+          Uri.parse(trimmed),
+          mode: LaunchMode.externalApplication,
+        );
+      } catch (_) {
+        // 无可处理的应用时静默忽略
+      }
+      return;
+    }
+    if (!mounted) return;
+    // 文件类链接: 复用预览页纯函数解析 (file:// 剥离 / :line 剥离 / 相对拼 workspace)
+    final target = parseFileLinkTarget(trimmed, workspace: widget.workspacePath);
+    if (target.path.isEmpty) return;
+    await context.push(
+      filePreviewRouteUrl(
+        target.path,
+        workspace: widget.workspacePath,
+        line: target.line,
+      ),
+    );
   }
 
   /// AI 气泡的 Markdown 正文块 (统一样式见 AiMarkdown)。
@@ -519,6 +556,7 @@ class MessageBubbleState extends State<MessageBubble> {
               theme: theme,
               inkColor: aiInk,
               fileChanges: message.fileChanges,
+              workspacePath: widget.workspacePath,
             ),
           ),
         );
@@ -590,6 +628,7 @@ class MessageBubbleState extends State<MessageBubble> {
               theme: theme,
               inkColor: aiInk,
               fileChanges: message.fileChanges,
+              workspacePath: widget.workspacePath,
             ),
           ),
         );

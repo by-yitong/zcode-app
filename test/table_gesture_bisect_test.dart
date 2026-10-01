@@ -65,6 +65,7 @@ Widget _bubble() {
     theme: ThemeData.light(),
     isLastUserMessage: false,
     isResponding: false,
+    workspacePath: '/test-ws',
   );
 }
 

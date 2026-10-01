@@ -26,6 +26,7 @@ Widget _bubble(ThemeData theme) {
     theme: theme,
     isLastUserMessage: false,
     isResponding: false,
+    workspacePath: '/test-ws',
   );
 }
 
@@ -127,6 +128,7 @@ void main() {
                       theme: ThemeData.light(),
                       isLastUserMessage: false,
                       isResponding: false,
+                      workspacePath: '/test-ws',
                     ),
                     childCount: 1,
                   ),

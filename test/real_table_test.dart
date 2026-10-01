@@ -42,6 +42,7 @@ void main() {
                 theme: ThemeData.light(),
                 isLastUserMessage: false,
                 isResponding: false,
+                workspacePath: '/test-ws',
               ),
             ),
           ),
