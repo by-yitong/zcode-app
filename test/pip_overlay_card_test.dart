@@ -541,9 +541,11 @@ void main() {
     );
     await tester.pump(); // 基准就绪
 
-    // 第一发 moveOverlay 被闸门挂起 (模拟 MethodChannel 在途)
+    // 第一发 moveOverlay 被闸门挂起 (模拟 MethodChannel 在途);
+    // 发送发生在下一帧的 postFrameCallback 里, 先 pump 出帧
     pip.gate = Completer<void>();
     await gesture.moveBy(const Offset(40, 0));
+    await tester.pump();
     expect(pip.moves.length, 1, reason: '首目标立即发出');
     final firstX = pip.moves.first.x;
 
@@ -552,10 +554,12 @@ void main() {
     await gesture.moveBy(const Offset(40, 0));
     expect(pip.moves.length, 1, reason: '在途时中间目标被节流吞掉');
 
-    // 松手 → 闸门放行 → 完成回调补发最终目标 (不丢尾帧), 此后收敛不再发。
+    // 松手 → 闸门放行 → 完成回调回查 → 下一帧补发最终目标 (不丢尾帧)。
     // 两次被吞的位移 (40*2) 全部并入最终目标
     await gesture.up();
     pip.gate!.complete();
+    // 两帧: 第一帧让闸门 Future 完成 → 完成回调回查排队, 第二帧帧回调发送
+    await tester.pump();
     await tester.pump();
     expect(pip.moves.length, 2, reason: '完成后补发最新目标');
     expect(pip.moves.last.x, moreOrLessEquals(firstX + 80));

@@ -67,14 +67,16 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
   int _index = 0;
 
   // 拖动手柄 (enableDrag:false 原生拖动会抢内容手势, 故由标题栏手柄自行驱动):
-  // 以 getOverlayPosition 为基准累积位移到"最新目标位置"; in-flight 串行节流 —
-  // pan 事件只更新目标, 仅当上一发 moveOverlay Future 已完成且目标 != 上次
-  // 已发位置时才发下一发 (完成回调里再查一次, 收敛到最终位置, 不丢尾帧)。
-  // 高刷屏 (120Hz+) 每触摸事件一发 MethodChannel 往返会打爆通道导致卡顿。
+  // 以 getOverlayPosition 为基准累积位移到"最新目标位置"; 两级节流 —
+  // ① in-flight 串行: 上一发 moveOverlay Future 完成前不发下一发;
+  // ② 帧对齐: 每渲染帧至多发一发 (postFrameCallback), 目标取发送瞬间最新值。
+  // 真机教训: 通道全速发送 (往返毫秒级 = 数百次 updateViewLayout/秒) 会让
+  // ROM 窗口动画反复重定向, 表现为拖动抖动; 帧对齐后与显示刷新率同频。
   OverlayPosition _dragTarget = const OverlayPosition(0, 0);
   OverlayPosition? _lastSentPosition;
   bool _dragTargetReady = false;
   bool _moveInFlight = false;
+  bool _moveSendQueued = false;
 
   late void Function(String json) _send;
   late Future<void> Function() _close;
@@ -150,24 +152,42 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
     _dispatchMove();
   }
 
-  /// 串行发送 moveOverlay: 上一发在途 / 目标与上次已发一致时跳过;
-  /// 发出后等 Future 完成再回查 (松手后仍能补发最终目标, 不丢尾帧)。
-  /// 禁止 Timer 轮询 — 只由 pan 事件与完成回调驱动。
+  /// 串行 + 帧对齐发送 moveOverlay:
+  /// - 在途 / 本帧已排队 → 跳过 (完成回调与帧回调会回查);
+  /// - 目标量化为整数 dp, 与上次已发一致 → 跳过;
+  /// - 请求一帧, 帧回调里取当时最新目标发送 — 与显示刷新率同频, 不丢尾帧
+  ///   (pan 停止后若仍有未发目标, 最后一帧回调必达)。
   void _dispatchMove() {
-    if (_moveInFlight) return;
+    if (_moveInFlight || _moveSendQueued) return;
+    final target = _quantizedTarget();
     final last = _lastSentPosition;
-    if (last != null && last.x == _dragTarget.x && last.y == _dragTarget.y) {
+    if (last != null && last.x == target.x && last.y == target.y) {
       return;
     }
-    _moveInFlight = true;
-    _lastSentPosition = _dragTarget;
-    unawaited(
-      _pip.moveOverlay(_dragTarget).whenComplete(() {
-        _moveInFlight = false;
-        if (mounted) _dispatchMove();
-      }),
-    );
+    _moveSendQueued = true;
+    // 悬浮窗有呼吸动画常态产帧; 空闲时 scheduleFrame 保底唤起一帧
+    WidgetsBinding.instance.scheduleFrame();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _moveSendQueued = false;
+      if (!mounted || _moveInFlight) return;
+      final t = _quantizedTarget();
+      final l = _lastSentPosition;
+      if (l != null && l.x == t.x && l.y == t.y) return;
+      _moveInFlight = true;
+      _lastSentPosition = t;
+      unawaited(
+        _pip.moveOverlay(t).whenComplete(() {
+          _moveInFlight = false;
+          if (mounted) _dispatchMove();
+        }),
+      );
+    });
   }
+
+  OverlayPosition _quantizedTarget() => OverlayPosition(
+    _dragTarget.x.roundToDouble(),
+    _dragTarget.y.roundToDouble(),
+  );
 
   @override
   Widget build(BuildContext context) {
