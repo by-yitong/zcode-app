@@ -89,7 +89,7 @@ TextPart / 旧路径 content），按行切分取尾部至多 60 行（缓冲常
   `app/pip` 通道 `bringToForeground` + `goRouter.go('${AppRoutes.chat}?workspace=...')`
   （与 history_drawer 跳会话同款）。
 
-### IPC 契约（冻结，v2 — 真机联调修订）
+### IPC 契约（冻结，v3 — 悬浮窗 UI 修订）
 
 `flutter_overlay_window` 0.5.0 的 `x-slayer/overlay_messenger` 通道每个引擎只有
 一个 handler 槽位，且主引擎槽位被 Dart 侧 `overlayListener` 占用后，原生转发器
@@ -112,7 +112,7 @@ TextPart / 旧路径 content），按行切分取尾部至多 60 行（缓冲常
   由 push scheduler 以 500ms 周期主动 `read` 快照（强制重算），内容有变化才推
   （与上次推送 JSON 对比去重）。前台事件驱动路径保留作为快路径。
 
-主 App → 悬浮窗快照结构：
+主 App → 悬浮窗快照结构（v3：session 载荷由 `lines` 行数组改为 `text` 原文）：
 
 ```json
 {
@@ -124,11 +124,17 @@ TextPart / 旧路径 content），按行切分取尾部至多 60 行（缓冲常
       "title": "重构登录模块",
       "running": true,
       "error": false,
-      "lines": ["尾部缓冲行（至多 60 行，最后一行最新）"]
+      "text": "尾部原文（markdown 源文本，≤60 逻辑行 / ≤4000 字符，含最后一行最新流式内容）"
     }
   ]
 }
 ```
+
+- `text` 语义：该会话尾部 AI 输出的 markdown **源文本**（跨最多 3 条 assistant
+  消息拼接，尾部 60 行 / 4000 字符截断），悬浮窗侧用 Markdown 渲染（深色小号，
+  复用 AiMarkdown minimal 语义；行内代码/代码块按悬浮窗深色令牌渲染）。
+  无任何 AI 文本时为状态占位（"思考中…"/"运行中…"）。
+- 视口行数 `pip.lines`（1–10，默认 4）继续决定小窗高度，滚动区可看全部尾部缓冲。
 
 `key` 语义：`Task.id`（路由跳会话需要 taskId）。悬浮窗把它当不透明串原样回传，
 主 App 收到 `open` 后经 `allTasksProvider` 反查 workspace；反查不到（如任务列表

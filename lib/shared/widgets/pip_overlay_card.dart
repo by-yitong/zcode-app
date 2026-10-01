@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 
@@ -8,6 +7,7 @@ import '../../core/logging/app_logger.dart';
 import '../../core/services/pip_service.dart';
 import '../theme/app_design_tokens.dart';
 import '../theme/app_theme.dart';
+import 'ai_markdown.dart';
 
 // ================================================================
 // 悬浮窗进度监视器 UI (overlay 独立引擎侧)
@@ -15,8 +15,9 @@ import '../theme/app_theme.dart';
 // 由 main.dart 的 overlayMain() 挂载 (flutter_overlay_window 原生侧按
 // "overlayMain" 名字创建独立引擎)。固定深色卡, 不依赖跨引擎主题同步。
 //
-// 布局预算 (与 pipWindowHeight 公式 88 + N*20 严格对齐):
-//   上下 padding 10*2 + 标题栏 44 + 正文 N*20 + 页码条 24 = 88 + N*20
+// 布局预算 (与 pipWindowHeight 公式 80 + N*20 严格对齐):
+//   上下 padding 10*2 + 标题栏 36 + 正文 N*20 + 页码条 24 = 80 + N*20
+//   (正文为 markdown 流式布局, N 仅决定视口高度, 行高系数见 pipLineExtent)
 // ================================================================
 
 /// 悬浮窗引擎根 App (独立 ProviderScope 由 overlayMain 提供)
@@ -65,10 +66,15 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
   PipSnapshot? _snapshot;
   int _index = 0;
 
-  // 拖动手柄: 以 getOverlayPosition 为基准累积位移 (enableDrag:false 原生
-  // 拖动会抢内容手势, 故由标题栏手柄自行驱动)
-  OverlayPosition _dragBase = const OverlayPosition(0, 0);
-  bool _dragBaseReady = false;
+  // 拖动手柄 (enableDrag:false 原生拖动会抢内容手势, 故由标题栏手柄自行驱动):
+  // 以 getOverlayPosition 为基准累积位移到"最新目标位置"; in-flight 串行节流 —
+  // pan 事件只更新目标, 仅当上一发 moveOverlay Future 已完成且目标 != 上次
+  // 已发位置时才发下一发 (完成回调里再查一次, 收敛到最终位置, 不丢尾帧)。
+  // 高刷屏 (120Hz+) 每触摸事件一发 MethodChannel 往返会打爆通道导致卡顿。
+  OverlayPosition _dragTarget = const OverlayPosition(0, 0);
+  OverlayPosition? _lastSentPosition;
+  bool _dragTargetReady = false;
+  bool _moveInFlight = false;
 
   late void Function(String json) _send;
   late Future<void> Function() _close;
@@ -125,23 +131,42 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
   }
 
   void _onPanStart(DragStartDetails details) {
-    _dragBaseReady = false;
+    _dragTargetReady = false;
     unawaited(() async {
       final pos = await _pip.getOverlayPosition();
-      if (pos != null) {
-        _dragBase = pos;
-        _dragBaseReady = true;
+      if (pos != null && mounted) {
+        _dragTarget = pos;
+        _dragTargetReady = true;
       }
     }());
   }
 
   void _onPanUpdate(DragUpdateDetails details) {
-    if (!_dragBaseReady) return;
-    _dragBase = OverlayPosition(
-      _dragBase.x + details.delta.dx,
-      _dragBase.y + details.delta.dy,
+    if (!_dragTargetReady) return;
+    _dragTarget = OverlayPosition(
+      _dragTarget.x + details.delta.dx,
+      _dragTarget.y + details.delta.dy,
     );
-    unawaited(_pip.moveOverlay(_dragBase));
+    _dispatchMove();
+  }
+
+  /// 串行发送 moveOverlay: 上一发在途 / 目标与上次已发一致时跳过;
+  /// 发出后等 Future 完成再回查 (松手后仍能补发最终目标, 不丢尾帧)。
+  /// 禁止 Timer 轮询 — 只由 pan 事件与完成回调驱动。
+  void _dispatchMove() {
+    if (_moveInFlight) return;
+    final last = _lastSentPosition;
+    if (last != null && last.x == _dragTarget.x && last.y == _dragTarget.y) {
+      return;
+    }
+    _moveInFlight = true;
+    _lastSentPosition = _dragTarget;
+    unawaited(
+      _pip.moveOverlay(_dragTarget).whenComplete(() {
+        _moveInFlight = false;
+        if (mounted) _dispatchMove();
+      }),
+    );
   }
 
   @override
@@ -238,7 +263,8 @@ class _EmptyBody extends StatelessWidget {
   }
 }
 
-/// 标题栏: 状态点 + 标题 + X; 同时是拖动手柄 (onPanUpdate 累积位移 → moveOverlay)
+/// 标题栏: 状态点 + 标题 + X; 同时是拖动手柄 (onPanUpdate 累积位移 → moveOverlay
+/// 经 in-flight 串行节流发送, 见 _dispatchMove)
 class _Header extends StatelessWidget {
   final PipSessionSnapshot session;
   final void Function(DragStartDetails) onPanStart;
@@ -254,8 +280,10 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 紧凑标题栏: 高 44 → 36, 左右内距 10 → AppSpacing.sm, X 按钮收窄
+    // (铬高预算同步 88 → 80, 见 pipWindowChromeHeight)
     return Container(
-      height: 44,
+      height: 36,
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: AppColors.darkBorderSubtle)),
       ),
@@ -267,7 +295,7 @@ class _Header extends StatelessWidget {
               onPanStart: onPanStart,
               onPanUpdate: onPanUpdate,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
                 child: Row(
                   children: [
                     _StatusDot(session: session),
@@ -297,8 +325,8 @@ class _Header extends StatelessWidget {
             ),
             tooltip: '关闭悬浮窗',
             visualDensity: VisualDensity.compact,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
             onPressed: onClose,
           ),
         ],
@@ -370,7 +398,7 @@ class _BreathingState extends State<_Breathing>
   }
 }
 
-/// 单会话页: 正文可上下滚动的尾部缓冲 (初始停最底部; 底部自动跟随,
+/// 单会话页: 正文 markdown 尾部缓冲, 可上下滚动 (初始停最底部; 底部自动跟随,
 /// 翻历史中保持位置); 单页轻点 → 回传 open 动作。
 class _SessionBody extends StatefulWidget {
   final PipSessionSnapshot session;
@@ -398,9 +426,10 @@ class _SessionBodyState extends State<_SessionBody> {
   @override
   void didUpdateWidget(covariant _SessionBody oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final changed = !listEquals(oldWidget.session.lines, widget.session.lines);
+    // markdown 整体重建: 以 text 变化为准 (在底部 → 自动跟随; 翻历史中保持位置)
+    final changed = oldWidget.session.text != widget.session.text;
     if (changed && _atBottom) {
-      _jumpToBottomAfterFrame(); // 在底部 → 自动跟随; 翻历史中保持位置
+      _jumpToBottomAfterFrame();
     }
   }
 
@@ -433,51 +462,43 @@ class _SessionBodyState extends State<_SessionBody> {
 
   @override
   Widget build(BuildContext context) {
-    final lines = widget.session.lines;
+    final text = widget.session.text;
     return GestureDetector(
       // 轻点 (非拖动/滑动) → 回传 open, 由主 App 关悬浮窗 + 跳会话
       onTap: () => widget.onOpen(widget.session.key),
       child: SingleChildScrollView(
         controller: _scrollController,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (lines.isEmpty)
-              const SizedBox(
-                height: pipLineExtent,
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    '暂无 AI 输出',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: AppColors.darkInkMuted,
-                    ),
-                  ),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+        child: text.trim().isEmpty
+            ? const Padding(
+                padding: EdgeInsets.only(top: 2),
+                child: Text(
+                  '暂无 AI 输出',
+                  style: TextStyle(fontSize: 11, color: AppColors.darkInkMuted),
                 ),
-              ),
-            for (final line in lines)
-              SizedBox(
-                height: pipLineExtent,
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    line,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontFamily: kMonoFont,
-                      fontFamilyFallback: ['monospace'],
-                      fontSize: 11,
-                      height: 1.0,
-                      color: AppColors.darkInkSecondary,
-                    ),
-                  ),
+              )
+            : AiMarkdown(
+                // 复用主 App 统一 markdown 渲染 (同进程同包, 可跨引擎引用):
+                // 固定深色墨/码底, 字号比主 App 档小一号 (bodySm), minimal 只
+                // 接管正文/标题/行内代码, 其余交给包默认 (悬浮窗不要重能力)
+                data: text,
+                ink: AppColors.darkInk,
+                codeBg: AppColors.darkSurfaceHigh,
+                bodyStyle: const TextStyle(
+                  color: AppColors.darkInk,
+                  fontSize: AppTextSizes.bodySm,
+                  height: 1.45,
                 ),
+                headingBase: const TextStyle(
+                  color: AppColors.darkInk,
+                  fontSize: AppTextSizes.bodySm,
+                  fontWeight: FontWeight.w600,
+                  height: 1.4,
+                ),
+                minimal: true,
+                // 流式期间传该会话 running 态
+                isStreaming: widget.session.running,
               ),
-          ],
-        ),
       ),
     );
   }

@@ -9,11 +9,12 @@ import '../logging/app_logger.dart';
 // ================================================================
 // 悬浮窗进度监视器 (画中画) — flutter_overlay_window 封装 + IPC 契约模型
 //
-// 契约冻结 v2 (docs/superpowers/specs/2026-10-01-pip-overlay-monitor-design.md
-// 「IPC 契约（冻结，v2 — 真机联调修订）」):
+// 契约冻结 v3 (docs/superpowers/specs/2026-10-01-pip-overlay-monitor-design.md
+// 「IPC 契约（冻结，v3 — 悬浮窗 UI 修订）」):
 //   主 App → 悬浮窗: shareData(json) 推快照 (走原生 Java 转发器)。
 //     主 App 一律不得在 Dart 侧绑定 x-slayer/overlay_messenger 的 handler —
 //     那会抢掉通道的原生槽位, 导致推送回声到主引擎自身。
+//     session 载荷为 markdown 源文本 text (v2 行数组 lines 已废弃)。
 //   悬浮窗 → 主 App: SharedPreferences 信箱, key pip.action, 取走即清空。
 //     动作只有 {"action":"open","key":"<taskId>"} (无 refresh, 防白屏改由
 //     主 App 在 show 成功后立即主动推一次快照)。
@@ -22,11 +23,11 @@ import '../logging/app_logger.dart';
 /// IPC 快照协议版本
 const int kPipSnapshotVersion = 1;
 
-/// 尾部缓冲常量: 每会话最多推送的 AI 输出行数
+/// 尾部缓冲常量: 每会话最多推送的 AI 输出逻辑行数
 const int pipBufferLines = 60;
 
-/// 单行截断长度 (超长截断, 避免悬浮窗内横向溢出)
-const int pipMaxLineChars = 40;
+/// 尾部缓冲常量: text 载荷最大字符数 (超出从头部截掉)
+const int pipMaxTextChars = 4000;
 
 /// 行数设置 SharedPreferences key (int, 范围 1–10, 默认 4)
 const String kPipLinesPrefKey = 'pip.lines';
@@ -38,11 +39,12 @@ const int pipMaxLines = 10;
 /// (值为动作 JSON 字符串; 空串 = 无待处理动作)
 const String kPipActionPrefKey = 'pip.action';
 
-/// 悬浮窗正文单行行高 (逻辑 px)
+/// 悬浮窗正文视口单行高度系数 (仅用于窗口高度公式; 实际行高由 markdown
+/// 自身布局决定, 13px 字号 * 1.45 行距 ≈ 19px, 取 20 留半档余量)
 const double pipLineExtent = 20.0;
 
-/// 悬浮窗窗口高度公式: 88 + 行数*20 (铬高 88 = 上下 padding 10*2 + 标题栏 44 + 页码条 24)
-const double pipWindowChromeHeight = 88.0;
+/// 悬浮窗窗口高度公式: 80 + 行数*20 (铬高 80 = 上下 padding 10*2 + 标题栏 36 + 页码条 24)
+const double pipWindowChromeHeight = 80.0;
 
 /// 悬浮窗宽度 = 主 App 屏宽的 84%
 const double pipWindowWidthFraction = 0.84;
@@ -79,15 +81,16 @@ class PipSessionSnapshot {
   final bool running;
   final bool error;
 
-  /// 该会话 AI 输出尾部缓冲 (至多 60 行, 最后一行最新; 单行已按 40 字符截断)
-  final List<String> lines;
+  /// 该会话 AI 输出尾部 markdown 源文本 (跨最多 3 条 assistant 消息拼接,
+  /// 尾部 60 逻辑行 / 4000 字符截断, 末尾为最新流式内容; 悬浮窗侧渲染 markdown)
+  final String text;
 
   const PipSessionSnapshot({
     required this.key,
     required this.title,
     required this.running,
     required this.error,
-    required this.lines,
+    required this.text,
   });
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -95,7 +98,7 @@ class PipSessionSnapshot {
     'title': title,
     'running': running,
     'error': error,
-    'lines': lines,
+    'text': text,
   };
 }
 
@@ -133,18 +136,14 @@ class PipSnapshot {
         if (s is! Map) continue;
         final dynamic key = s['key'];
         if (key is! String || key.isEmpty) continue;
-        final dynamic linesRaw = s['lines'];
+        final dynamic textRaw = s['text'];
         sessions.add(
           PipSessionSnapshot(
             key: key,
             title: s['title'] is String ? s['title'] as String : key,
             running: s['running'] == true,
             error: s['error'] == true,
-            lines: <String>[
-              if (linesRaw is List)
-                for (final dynamic l in linesRaw)
-                  if (l is String) l,
-            ],
+            text: textRaw is String ? textRaw : '',
           ),
         );
       }

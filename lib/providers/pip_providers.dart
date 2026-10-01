@@ -101,7 +101,7 @@ final pipMonitorProvider = Provider<PipSnapshot>((ref) {
         title: task.title,
         running: task.status == TaskStatus.running,
         error: task.status == TaskStatus.error || chatState.error != null,
-        lines: extractPipTailLines(
+        text: extractPipTailText(
           chatState,
           running: task.status == TaskStatus.running,
         ),
@@ -197,12 +197,12 @@ class PipPushScheduler {
       final snapshot = _ref.read(pipMonitorProvider);
       final json = jsonEncode(snapshot.toJson());
       if (ifChangedSince != null && json == ifChangedSince) return;
-      final totalLines = snapshot.sessions.fold<int>(
+      final totalChars = snapshot.sessions.fold<int>(
         0,
-        (n, s) => n + s.lines.length,
+        (n, s) => n + s.text.length,
       );
       appLog.d(
-        '[Pip] push sessions=${snapshot.sessions.length} lines=$totalLines',
+        '[Pip] push sessions=${snapshot.sessions.length} chars=$totalChars',
       );
       await _ref.read(pipServiceProvider).send(json);
       _lastPushedJson = json;
@@ -317,13 +317,14 @@ Future<void> _openPipSession(Ref ref, PipService pip, String key) async {
 }
 
 // ================================================================
-// 尾部行提取 (设计文档"尾部行提取规则")
+// 尾部文本提取 (设计文档"尾部行提取规则", 契约 v3: markdown 源文本)
 // ================================================================
 
-/// 从 ChatState 提取最新 AI 输出尾部缓冲:
+/// 从 ChatState 提取最新 AI 输出尾部 markdown 源文本:
 /// 最新 assistant 消息按行切分取尾部至多 60 行; 不足时向前一条 assistant
-/// 消息补足, 最多跨 3 条消息。无任何 AI 文本且运行中 → 状态行。
-List<String> extractPipTailLines(ChatState state, {required bool running}) {
+/// 消息补足, 最多跨 3 条消息, 行间用 \n 连接; 超过 4000 字符从头部截掉。
+/// 无任何 AI 文本且运行中 → 状态占位 ("思考中…"/"运行中…")。
+String extractPipTailText(ChatState state, {required bool running}) {
   final buffer = <String>[];
   var scanned = 0;
   for (final message in state.messages.reversed) {
@@ -342,20 +343,14 @@ List<String> extractPipTailLines(ChatState state, {required bool running}) {
     );
     if (buffer.length >= pipBufferLines) break;
   }
-  final lines =
-      (buffer.length > pipBufferLines
-              ? buffer.sublist(buffer.length - pipBufferLines)
-              : buffer)
-          .map(
-            (l) => l.length > pipMaxLineChars
-                ? l.substring(0, pipMaxLineChars)
-                : l,
-          )
-          .toList();
-  if (lines.isEmpty && running) {
-    return <String>[state.isResponding ? '思考中…' : '运行中…'];
+  var joined = buffer.join('\n');
+  if (joined.length > pipMaxTextChars) {
+    joined = joined.substring(joined.length - pipMaxTextChars);
   }
-  return lines;
+  if (joined.trim().isEmpty) {
+    return running ? (state.isResponding ? '思考中…' : '运行中…') : '';
+  }
+  return joined;
 }
 
 /// assistant 消息文本: parts 路径拼接 TextPart / 旧路径 content
