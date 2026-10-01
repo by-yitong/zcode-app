@@ -665,6 +665,10 @@ class ChatState {
   /// 思考级别: 'max' | 'medium' | 'nothink'
   final String thoughtLevel;
 
+  /// 可用思考级别 (快照 config.thoughtLevels, 服务端按当前模型下发;
+  /// 网页端选择器据此动态渲染, 不同模型级别集可不同)。
+  final List<String> thoughtLevels;
+
   /// 当前会话的模型 ID (形如 providerId/slug), 来自 snapshot; null=未知。
   /// 供 UI 模型选择器显示真实模型名。
   final String? model;
@@ -711,6 +715,7 @@ class ChatState {
     this.activeTurnId,
     this.mode = 'build',
     this.thoughtLevel = 'max',
+    this.thoughtLevels = const ['max', 'medium', 'nothink'],
     this.model,
     this.pendingQuestion,
     this.tokenUsage,
@@ -731,6 +736,7 @@ class ChatState {
     String? activeTurnId,
     String? mode,
     String? thoughtLevel,
+    List<String>? thoughtLevels,
     String? model,
     Object? pendingQuestion,
     ({int input, int output, int max})? tokenUsage,
@@ -750,6 +756,11 @@ class ChatState {
       activeTurnId: activeTurnId ?? this.activeTurnId,
       mode: mode ?? this.mode,
       thoughtLevel: thoughtLevel ?? this.thoughtLevel,
+      // thoughtLevels: 空列表 = 服务端未下发, 保留旧值 (有协议默认三级)
+      thoughtLevels:
+          (thoughtLevels != null && thoughtLevels.isNotEmpty)
+          ? thoughtLevels
+          : this.thoughtLevels,
       model: model ?? this.model,
       // pendingQuestion: sentinel 区分"不传"(保留旧值) 和"传null"(清空)
       pendingQuestion: identical(pendingQuestion, _clearPendingQuestion)
@@ -1573,6 +1584,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       isLoadingHistory: false,
       mode: config.mode,
       thoughtLevel: config.thought,
+      thoughtLevels: config.thoughtLevels,
       model: config.modelId.isNotEmpty ? config.modelId : null,
       sessionTitle: snap.meta.title.isNotEmpty ? snap.meta.title : null,
       isResponding: control.isRunning,
@@ -1892,6 +1904,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       state = state.copyWith(
         mode: cfg.mode,
         thoughtLevel: cfg.thought,
+        thoughtLevels: cfg.thoughtLevels,
         model: cfg.modelId.isNotEmpty ? cfg.modelId : state.model,
       );
     }

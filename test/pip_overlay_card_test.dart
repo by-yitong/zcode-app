@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -45,6 +46,9 @@ Future<void> _pumpCard(
   required Size size,
   required List<PipSessionSnapshot> sessions,
   int index = 0,
+  bool collapsed = false,
+  int? screenW,
+  int? screenH,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -52,11 +56,16 @@ Future<void> _pumpCard(
         body: Center(
           child: SizedBox.fromSize(
             size: size,
-            child: PipOverlayCard(
-              snapshotStream: controller.stream,
-              onSend: onSend,
-              onClose: () async {},
-              pip: pip,
+            // 覆盖 MediaQuery 尺寸 = 窗口尺寸 (真机上悬浮窗引擎的 MediaQuery
+            // 反映窗口自身; 收拢态 108×44 即由此判定宽<160 高<56 出胶囊)
+            child: MediaQuery(
+              data: MediaQueryData(size: size),
+              child: PipOverlayCard(
+                snapshotStream: controller.stream,
+                onSend: onSend,
+                onClose: () async {},
+                pip: pip,
+              ),
             ),
           ),
         ),
@@ -65,7 +74,16 @@ Future<void> _pumpCard(
   );
   await tester.pump(); // initState: 订阅快照流
   controller.add(
-    jsonEncode(PipSnapshot(v: 1, index: index, sessions: sessions).toJson()),
+    jsonEncode(
+      PipSnapshot(
+        v: 1,
+        index: index,
+        sessions: sessions,
+        collapsed: collapsed,
+        screenW: screenW,
+        screenH: screenH,
+      ).toJson(),
+    ),
   );
   await tester.pump(); // 应用快照
   await tester.pump(const Duration(milliseconds: 50)); // postFrame 跳底
@@ -117,6 +135,87 @@ void main() {
     expect(pipLinesFromPref('5'), 5);
   });
 
+  test('pipSizeStepFromPref: 空/损坏/越界回落默认 0', () {
+    expect(pipSizeStepFromPref(null), 0);
+    expect(pipSizeStepFromPref('abc'), 0);
+    expect(pipSizeStepFromPref(-1), 0);
+    expect(pipSizeStepFromPref(4), 0);
+    expect(pipSizeStepFromPref(99), 0);
+    expect(pipSizeStepFromPref(0), 0);
+    expect(pipSizeStepFromPref(3), 3);
+    expect(pipSizeStepFromPref('2'), 2);
+  });
+
+  test('尺寸档位: 宽度 fraction 与高度公式 (倍率 + 上下钳制)', () {
+    // 宽度 fraction: 0 常规 0.84 → 3 超大 1.00
+    expect(pipWindowWidthFractionForStep(0), 0.84);
+    expect(pipWindowWidthFractionForStep(1), 0.92);
+    expect(pipWindowWidthFractionForStep(2), 0.96);
+    expect(pipWindowWidthFractionForStep(3), 1.0);
+    // 高度 = 80 + 行数*20*倍率; 常规档与无档位公式一致
+    expect(pipWindowHeightForStep(4, 0, 800), pipWindowHeight(4));
+    expect(pipWindowHeightForStep(4, 1, 800), 80.0 + 4 * 20 * 3);
+    // 超大档 80+4*20*9=800 超过屏高钳制 (800*0.9=720) → 取 720
+    expect(pipWindowHeightForStep(4, 3, 800), 720.0);
+    // 超高钳到屏高 dp*0.9 (80+10*20*9=1880 > 300*0.9=270)
+    expect(pipWindowHeightForStep(10, 3, 300), 270.0);
+    // 下限 80+20 (80+1*20*1=100 恰在下限)
+    expect(pipWindowHeightForStep(1, 0, 800), 100.0);
+  });
+
+  test('IPC 动作契约 v4: home/size/collapse/expand/minimize 编解码', () {
+    // 编码: 无载荷动作输出 {"action": "<名>"}
+    expect(
+      jsonDecode(encodePipAction(const PipHomeAction())) as Map<String, dynamic>,
+      <String, dynamic>{'action': 'home'},
+    );
+    expect(
+      jsonDecode(encodePipAction(const PipSizeAction())) as Map<String, dynamic>,
+      <String, dynamic>{'action': 'size'},
+    );
+    expect(
+      jsonDecode(encodePipAction(const PipCollapseAction()))
+          as Map<String, dynamic>,
+      <String, dynamic>{'action': 'collapse'},
+    );
+    expect(
+      jsonDecode(encodePipAction(const PipMinimizeAction()))
+          as Map<String, dynamic>,
+      <String, dynamic>{'action': 'minimize'},
+    );
+    expect(
+      jsonDecode(encodePipAction(const PipExpandAction())) as Map<String, dynamic>,
+      <String, dynamic>{'action': 'expand'},
+    );
+    // pillMoved: 钳后胶囊左上角坐标 (逻辑 dp) 随载荷
+    expect(
+      jsonDecode(encodePipAction(const PipPillMovedAction(12.5, 34))) as Map<String, dynamic>,
+      <String, dynamic>{'action': 'pillMoved', 'x': 12.5, 'y': 34.0},
+    );
+    // 解码回原类型; open 仍兼容
+    expect(decodePipAction('{"action":"home"}'), isA<PipHomeAction>());
+    expect(decodePipAction('{"action":"size"}'), isA<PipSizeAction>());
+    expect(decodePipAction('{"action":"collapse"}'), isA<PipCollapseAction>());
+    expect(decodePipAction('{"action":"minimize"}'), isA<PipMinimizeAction>());
+    expect(decodePipAction('{"action":"expand"}'), isA<PipExpandAction>());
+    expect(
+      decodePipAction('{"action":"open","key":"k"}'),
+      isA<PipOpenAction>(),
+    );
+    // pillMoved 解码: x/y 为 num (int/double 皆可) → double; 缺失/类型错 → null
+    final moved = decodePipAction('{"action":"pillMoved","x":8,"y":40.5}');
+    expect(moved, isA<PipPillMovedAction>());
+    expect((moved as PipPillMovedAction).x, 8.0);
+    expect(moved.y, 40.5);
+    expect(decodePipAction('{"action":"pillMoved","y":2}'), isNull);
+    expect(decodePipAction('{"action":"pillMoved","x":1}'), isNull);
+    expect(decodePipAction('{"action":"pillMoved","x":"a","y":2}'), isNull);
+    expect(decodePipAction('{"action":"pillMoved"}'), isNull);
+    // 未知动作 / 非法 JSON → null
+    expect(decodePipAction('{"action":"bogus"}'), isNull);
+    expect(decodePipAction('not-json'), isNull);
+  });
+
   test('IPC 契约 v3: session 载荷为 text 字段, 快照 JSON 不含 lines', () {
     const session = PipSessionSnapshot(
       key: 'k',
@@ -149,6 +248,34 @@ void main() {
     expect(missing!.sessions.single.text, '');
     expect(PipSnapshot.decode('{"v":2,"index":0,"sessions":[]}'), isNull);
     expect(PipSnapshot.decode('not-json'), isNull);
+  });
+
+  test('IPC 契约 v4.1: collapsed 字段编解码 (缺省 false 向后兼容)', () {
+    // collapsed=true → 'co':true; false 不输出字段
+    final collapsedJson = jsonEncode(
+      const PipSnapshot(
+        v: kPipSnapshotVersion,
+        index: 0,
+        sessions: [],
+        collapsed: true,
+      ).toJson(),
+    );
+    expect(collapsedJson.contains('"co":true'), isTrue);
+    expect(PipSnapshot.decode(collapsedJson)!.collapsed, isTrue);
+    // 旧格式 (无 co) → false
+    expect(
+      PipSnapshot.decode('{"v":1,"index":0,"sessions":[]}')!.collapsed,
+      isFalse,
+    );
+    // false 不序列化字段
+    final plainJson = jsonEncode(
+      const PipSnapshot(
+        v: kPipSnapshotVersion,
+        index: 0,
+        sessions: [],
+      ).toJson(),
+    );
+    expect(plainJson.contains('"co"'), isFalse);
   });
 
   group('extractPipTailText (契约 v3 提取端)', () {
@@ -217,7 +344,7 @@ void main() {
     });
   });
 
-  testWidgets('轻点写入 SharedPreferences 信箱 (默认通道): pip.action = open JSON', (
+  testWidgets('home 钮写入 SharedPreferences 信箱 (默认通道): pip.action = open JSON', (
     tester,
   ) async {
     // 默认回传通道走 SharedPreferences 信箱 (IPC 契约 v2/v3), 用 mock prefs 验证
@@ -234,8 +361,8 @@ void main() {
       ],
     );
 
-    // 轻点正文 (markdown 段落) → _defaultSend 写信箱
-    await tester.tap(_bodyText('alpha-line-1'));
+    // 点标题栏 home 钮 (正文单点已不再回跳) → _defaultSend 写信箱
+    await tester.tap(find.byTooltip('返回应用'));
     await tester.pump();
 
     final prefs = await SharedPreferences.getInstance();
@@ -247,7 +374,7 @@ void main() {
     });
   });
 
-  testWidgets('轻点某页回传 {"action":"open","key":...} JSON (注入通道)', (tester) async {
+  testWidgets('home 钮: 有会话回传 open 携带当前页 key (注入通道)', (tester) async {
     final sent = <String>[];
     final controller = StreamController<dynamic>();
     addTearDown(controller.close);
@@ -266,14 +393,135 @@ void main() {
         _session(key: 'task-b', title: '任务Beta'),
       ],
     );
-
-    // 轻点第 1 页正文 (非拖动/滑动)
-    await tester.tap(_bodyText('alpha-line-2'));
+    await tester.tap(find.byTooltip('返回应用'));
     await tester.pump();
-
     final last = jsonDecode(sent.last) as Map<String, dynamic>;
     expect(last['action'], 'open');
     expect(last['key'], 'task-a');
+
+    // 最小化钮 (home 左) → minimize 动作 (手动收拢为顶部胶囊)
+    await tester.tap(find.byTooltip('最小化'));
+    await tester.pump();
+    expect(
+      jsonDecode(sent.last) as Map<String, dynamic>,
+      <String, dynamic>{'action': 'minimize'},
+    );
+  });
+
+  // 空态单独一个用例: 同一 testWidgets 内二次 pumpWidget 换流注入会被
+  // Element 复用吞掉 (State 不重建, 旧 stream 订阅仍在), 拆开才各自纯净
+  testWidgets('home 钮: 空态回传 home 仅回前台 (注入通道)', (tester) async {
+    final sent = <String>[];
+    final controller = StreamController<dynamic>();
+    addTearDown(controller.close);
+
+    await _pumpCard(
+      tester,
+      controller: controller,
+      onSend: sent.add,
+      size: Size(320, pipWindowHeight(4)),
+      sessions: const <PipSessionSnapshot>[],
+    );
+    await tester.tap(find.byTooltip('返回应用'));
+    await tester.pump();
+    expect(
+      jsonDecode(sent.last) as Map<String, dynamic>,
+      <String, dynamic>{'action': 'home'},
+    );
+  });
+
+  testWidgets('正文单点不回传任何动作, 双击回传 size (注入通道)', (tester) async {
+    final sent = <String>[];
+    final controller = StreamController<dynamic>();
+    addTearDown(controller.close);
+
+    await _pumpCard(
+      tester,
+      controller: controller,
+      onSend: sent.add,
+      size: Size(320, pipWindowHeight(4)),
+      sessions: <PipSessionSnapshot>[
+        _session(key: 'task-a', title: '任务Alpha', text: 'alpha-line-1'),
+      ],
+    );
+
+    // 单点正文: 无 onTap (回跳已改由 home 钮), 不发任何动作
+    await tester.tap(_bodyText('alpha-line-1'));
+    await tester.pump();
+    expect(sent, isEmpty, reason: '正文单点不再回传 open');
+
+    // 双击正文 (两次 tap 间隔 ≥ kDoubleTapMinTime) → size 动作
+    await tester.tap(_bodyText('alpha-line-1'));
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.tap(_bodyText('alpha-line-1'));
+    await tester.pump();
+    expect(sent, hasLength(1));
+    expect(
+      jsonDecode(sent.last) as Map<String, dynamic>,
+      <String, dynamic>{'action': 'size'},
+    );
+    // 泵过双击识别器的 kDoubleTapTimeout Timer, 否则用例结束留 pending timer
+    await tester.pump(const Duration(milliseconds: 350));
+  });
+
+  testWidgets('收拢态: 108×44 顶部胶囊渲染 (无标题栏/正文), 点击回传 expand', (tester) async {
+    final sent = <String>[];
+    final controller = StreamController<dynamic>();
+    addTearDown(controller.close);
+
+    await _pumpCard(
+      tester,
+      controller: controller,
+      onSend: sent.add,
+      // 窗口被主 App resize 成 108×44 (顶部胶囊) → 宽<160 且高<56 → 收拢态
+      size: const Size(108, 44),
+      sessions: <PipSessionSnapshot>[
+        _session(key: 'task-a', title: '任务Alpha', running: true, text: 'x'),
+      ],
+    );
+
+    // 出胶囊 (状态点 + 会话标题), 不出标题栏/正文/页码结构
+    expect(find.byKey(const ValueKey('pip-collapsed-pill')), findsOneWidget);
+    expect(find.byTooltip('关闭悬浮窗'), findsNothing);
+    expect(find.byTooltip('返回应用'), findsNothing);
+    expect(find.byType(PageView), findsNothing);
+    expect(find.text('任务Alpha'), findsOneWidget);
+
+    // 点胶囊 → expand 动作 (主 App resize 回档位尺寸 + move 回记忆位置)
+    await tester.tap(find.byKey(const ValueKey('pip-collapsed-pill')));
+    await tester.pump();
+    expect(sent, hasLength(1));
+    expect(
+      jsonDecode(sent.last) as Map<String, dynamic>,
+      <String, dynamic>{'action': 'expand'},
+    );
+  });
+
+  // 真机实测: resize 后悬浮窗引擎 MediaQuery 可能不刷新 (窗口 108×44 而
+  // MediaQuery 仍报展开尺寸) → 完整卡被裁成一条缝。收拢渲染必须由快照
+  // collapsed 字段驱动, 窗口尺寸判定只作兜底。
+  testWidgets('快照 collapsed=true + 窗口尺寸未刷新 (仍展开尺寸) → 照样渲染胶囊', (
+    tester,
+  ) async {
+    final sent = <String>[];
+    final controller = StreamController<dynamic>();
+    addTearDown(controller.close);
+
+    await _pumpCard(
+      tester,
+      controller: controller,
+      onSend: sent.add,
+      // MediaQuery 故意保持展开态尺寸 (模拟 resize 未传播)
+      size: const Size(320, 160),
+      sessions: <PipSessionSnapshot>[
+        _session(key: 'task-a', title: '任务Alpha', running: true, text: 'x'),
+      ],
+      collapsed: true,
+    );
+
+    expect(find.byKey(const ValueKey('pip-collapsed-pill')), findsOneWidget);
+    expect(find.byType(PageView), findsNothing);
+    expect(find.text('任务Alpha'), findsOneWidget);
   });
 
   testWidgets('双会话快照渲染 + 左右滑动切换 + 页码指示', (tester) async {
@@ -659,14 +907,101 @@ void main() {
     await tester.pump();
     expect(pip.dragToggles, [true, false]);
   });
+
+  testWidgets('胶囊拖拽: pan 开关原生拖动, 松手钳制回屏并回传 pillMoved', (tester) async {
+    final pip = _FakePipService();
+    // 原生拖动把胶囊甩到屏外右下 (悬浮窗引擎 dpr=1 → 物理 px 即 dp)
+    pip.position = const OverlayPosition(280, 590);
+    final sent = <String>[];
+    final controller = StreamController<dynamic>();
+    addTearDown(controller.close);
+
+    await _pumpCard(
+      tester,
+      controller: controller,
+      pip: pip,
+      onSend: sent.add,
+      // 窗口 108×44 (胶囊) + 快照屏幕 320×600 物理 px (dpr=1 → dp 同值)
+      size: const Size(108, 44),
+      screenW: 320,
+      screenH: 600,
+      sessions: <PipSessionSnapshot>[
+        _session(key: 'task-a', title: '任务Alpha', running: true, text: 'x'),
+      ],
+    );
+    expect(find.byKey(const ValueKey('pip-collapsed-pill')), findsOneWidget);
+
+    // 拖胶囊: 起手开原生拖动 (移动超过 slop 后 pan 竞技场胜出)
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const ValueKey('pip-collapsed-pill'))),
+    );
+    await gesture.moveBy(const Offset(30, 10));
+    await tester.pump();
+    expect(pip.dragToggles, [true], reason: '胶囊拖拽起手开启原生拖动');
+
+    // 松手 → 关原生拖动 + 按屏钳制 (x∈[0,320-108], y∈[0,600-44]) + 回传 pillMoved
+    await gesture.up();
+    await tester.pump();
+    await tester.pump();
+    expect(pip.dragToggles, [true, false], reason: '松手关回原生拖动');
+    expect(pip.moves, hasLength(1), reason: '屏外坐标被钳回屏内');
+    expect(pip.moves.single.x, 212); // 320 - 108
+    expect(pip.moves.single.y, 556); // 600 - 44
+    expect(
+      jsonDecode(sent.last) as Map<String, dynamic>,
+      <String, dynamic>{'action': 'pillMoved', 'x': 212.0, 'y': 556.0},
+      reason: '钳后坐标回传, 主 App 持久化为胶囊记忆位',
+    );
+  });
+
+  testWidgets('胶囊 tap 与 pan 共存: 轻点 (无位移) 不触发拖拽, 仍发 expand', (tester) async {
+    final pip = _FakePipService();
+    final sent = <String>[];
+    final controller = StreamController<dynamic>();
+    addTearDown(controller.close);
+
+    await _pumpCard(
+      tester,
+      controller: controller,
+      pip: pip,
+      onSend: sent.add,
+      size: const Size(108, 44),
+      screenW: 320,
+      screenH: 600,
+      sessions: <PipSessionSnapshot>[
+        _session(key: 'task-a', title: '任务Alpha', running: true, text: 'x'),
+      ],
+    );
+
+    // 轻点无位移: pan 未过 slop 被弃, tap 胜出 → expand; 原生拖动开关不被触碰
+    await tester.tap(find.byKey(const ValueKey('pip-collapsed-pill')));
+    await tester.pump();
+    expect(
+      jsonDecode(sent.last) as Map<String, dynamic>,
+      <String, dynamic>{'action': 'expand'},
+    );
+    expect(pip.dragToggles, isEmpty, reason: '轻点不触发 pan 起手');
+    expect(pip.moves, isEmpty, reason: '轻点不产生钳制移动/pillMoved');
+  });
 }
 
-/// 假 PipService: 记录 setNativeDrag 开关
+/// 假 PipService: 记录 setNativeDrag 开关 / moveOverlay 调用,
+/// getOverlayPosition 返回注入位置 (缺省 null = 原生侧查询失败)
 class _FakePipService extends PipService {
   final List<bool> dragToggles = <bool>[];
+  final List<OverlayPosition> moves = <OverlayPosition>[];
+  OverlayPosition? position;
 
   @override
   Future<void> setNativeDrag(bool enabled) async {
     dragToggles.add(enabled);
+  }
+
+  @override
+  Future<OverlayPosition?> getOverlayPosition() async => position;
+
+  @override
+  Future<void> moveOverlay(OverlayPosition position) async {
+    moves.add(position);
   }
 }

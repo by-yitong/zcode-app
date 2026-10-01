@@ -44,8 +44,9 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
-        // 悬浮窗进度监视器: 悬浮窗独立引擎里轻点会话页 → 主 App 回前台
-        // (悬浮窗引擎无法启动 Activity, 必须经主引擎转调)
+        // 悬浮窗进度监视器: 悬浮窗独立引擎里 home 钮 → 主 App 回前台;
+        // 聊天页开小窗成功后 → 主 App 主动退后台 (用户开小窗就是为了在
+        // 其他 app 上用; 悬浮窗引擎无法操作 Activity, 必须经主引擎转调)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, pipChannelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -63,6 +64,14 @@ class MainActivity : FlutterActivity() {
                             result.success(launch != null)
                         } catch (e: Exception) {
                             result.error("foreground_failed", e.message, null)
+                        }
+                    }
+                    "moveTaskToBack" -> {
+                        try {
+                            moveTaskToBack(true)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.error("background_failed", e.message, null)
                         }
                     }
                     else -> result.notImplemented()

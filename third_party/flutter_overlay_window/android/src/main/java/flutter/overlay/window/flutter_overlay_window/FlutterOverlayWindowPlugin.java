@@ -119,6 +119,13 @@ public class FlutterOverlayWindowPlugin implements
             int x = call.argument("x");
             int y = call.argument("y");
             result.success(OverlayService.moveOverlay(x, y));
+        } else if (call.method.equals("resizeOverlay")) {
+            // ZCode 补丁: 主引擎 resizeOverlay 转发 (原版只挂在悬浮窗引擎的
+            // flutterChannel 上, 主引擎调用 notImplemented → resize 无声失败)
+            int width = call.argument("width");
+            int height = call.argument("height");
+            boolean enableDrag = Boolean.TRUE.equals(call.argument("enableDrag"));
+            result.success(OverlayService.resizeOverlay(width, height, enableDrag));
         } else if (call.method.equals("getOverlayPosition")) {
             result.success(OverlayService.getCurrentPosition());
         } else if (call.method.equals("closeOverlay")) {

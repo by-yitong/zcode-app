@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -9,6 +11,7 @@ import 'core/logging/app_logger.dart';
 import 'core/notifications/notification_service.dart';
 import 'core/services/display_service.dart';
 import 'core/services/pip_service.dart';
+import 'data/models/workspace.dart';
 import 'providers/app_providers.dart';
 import 'providers/pip_providers.dart';
 import 'shared/theme/app_router.dart';
@@ -25,11 +28,28 @@ void main() async {
   );
   // 悬浮窗行数设置同步恢复 (空/损坏/越界在 pipLinesFromPref 内回落默认 4)
   final initialPipLines = pipLinesFromPref(prefs.get(kPipLinesPrefKey));
+  // 悬浮窗尺寸档位同步恢复 (空/损坏/越界在 pipSizeStepFromPref 内回落默认 0)
+  final initialPipSizeStep = pipSizeStepFromPref(
+    prefs.get(kPipSizeStepPrefKey),
+  );
+  // 后台自动打开小窗设置同步恢复 (null → 默认关)
+  final initialPipAutoOpen = prefs.getBool(kPipAutoOpenPrefKey) ?? false;
+  // 悬浮窗形态记忆同步恢复 (用户上次收拢成胶囊后, 自动打开仍弹胶囊)
+  final initialPipForm = pipFormFromPref(prefs.get(kPipFormPrefKey));
+  // 胶囊位置记忆同步恢复 (拖拽松手时持久化; 缺任一轴 → null 走顶部居中默认)
+  final pillX = prefs.getDouble(kPipPillXPrefKey);
+  final pillY = prefs.getDouble(kPipPillYPrefKey);
+  final initialPipPillPos = pillX == null || pillY == null
+      ? null
+      : OverlayPosition(pillX, pillY);
   // 屏幕常亮设置同步恢复 (null → 默认关)
   final initialKeepScreenOn = prefs.getBool(kKeepScreenOnPrefKey) ?? false;
   appLog.i(
     '[App] 启动完成, 主题=${themeModeLabel(initialThemeMode)}, '
-    '悬浮窗行数=$initialPipLines, 屏幕常亮=$initialKeepScreenOn',
+    '悬浮窗行数=$initialPipLines, 尺寸档位=$initialPipSizeStep, '
+    '后台自动小窗=$initialPipAutoOpen, 形态记忆=${initialPipForm.name}, '
+    '胶囊位=${initialPipPillPos == null ? "默认" : "(${initialPipPillPos.x}, ${initialPipPillPos.y})"}, '
+    '屏幕常亮=$initialKeepScreenOn',
   );
 
   // 通知: 初始化 + 点击通知的深链路由 (goRouterProvider 是全局 GoRouter 实例)
@@ -44,6 +64,10 @@ void main() async {
       overrides: [
         themeModeProvider.overrideWith((ref) => initialThemeMode),
         pipLinesProvider.overrideWith((ref) => initialPipLines),
+        pipSizeStepProvider.overrideWith((ref) => initialPipSizeStep),
+        pipAutoOpenProvider.overrideWith((ref) => initialPipAutoOpen),
+        pipFormProvider.overrideWith((ref) => initialPipForm),
+        pipPillPosProvider.overrideWith((ref) => initialPipPillPos),
         keepScreenOnProvider.overrideWith((ref) => initialKeepScreenOn),
       ],
       child: const ZcodeApp(),
@@ -92,6 +116,53 @@ class _ZcodeAppState extends ConsumerState<ZcodeApp>
     if (state == AppLifecycleState.resumed) {
       appLog.d('[App] 前台恢复, 探活 relay 连接');
       ref.read(relayClientProvider)?.revive();
+      // 回前台: 小窗完全隐藏让位 (v5: 任何形态都不再以胶囊留在屏上,
+      // 隐藏的窗口活着, 切后台按形态记忆恢复)
+      unawaited(_onResumedPip());
+    } else if (state == AppLifecycleState.paused) {
+      // 进后台: 未开小窗按开关自动开 (打开形态由 openPipOverlay 按 form);
+      // 隐藏态小窗按形态记忆恢复 (回 app 时让位隐藏了, 去别的 app 续上);
+      // 胶囊/展开态本就可见 → 不动
+      unawaited(_onPausedPip());
+    }
+  }
+
+  /// 回前台的小窗处理 (仅 Android; 悬浮窗插件仅 Android 可用):
+  /// v5 任何形态都完全隐藏 (展开大窗/胶囊都让位给 app 全屏, 不再收拢成
+  /// 胶囊留在屏上)。窗口保持活着 (1×1 移出屏外), 切后台直接恢复,
+  /// 免重走 show 的权限/首推时序 — 隐藏例程内部对 hidden 态幂等。
+  Future<void> _onResumedPip() async {
+    if (!Platform.isAndroid) return;
+    if (!ref.read(pipOverlayActiveProvider)) return;
+    await ref.read(pipHideOverlayProvider)();
+  }
+
+  /// 进后台的小窗处理 (仅 Android): 自动打开 / 隐藏态恢复。
+  /// 自动打开需同时满足: 开关开 + 有进行中会话 + 有悬浮窗权限;
+  /// 无权限静默跳过只落日志 (用户在别的 app 里, 不能弹系统设置页打扰)。
+  /// 每个 return 都落日志 — 真机"没自动弹"时 logcat 一抓即知挂在哪个条件。
+  Future<void> _onPausedPip() async {
+    if (!Platform.isAndroid) return;
+    if (!ref.read(pipOverlayActiveProvider)) {
+      if (!ref.read(pipAutoOpenProvider)) return;
+      final hasRunning = ref
+          .read(allTasksProvider)
+          .any((t) => t.status == TaskStatus.running);
+      if (!hasRunning) {
+        appLog.d('[Pip] 后台自动打开跳过: 无进行中会话');
+        return;
+      }
+      final pip = ref.read(pipServiceProvider);
+      if (!await pip.isPermissionGranted()) {
+        appLog.d('[Pip] 后台自动打开跳过: 无悬浮窗权限');
+        return;
+      }
+      final result = await ref.read(pipOpenOverlayProvider)();
+      appLog.d('[Pip] 后台自动打开: $result');
+      return;
+    }
+    if (ref.read(pipModeProvider) == PipMode.hidden) {
+      await ref.read(pipRestoreFromHiddenProvider)();
     }
   }
 

@@ -117,12 +117,16 @@ class FlutterOverlayWindow {
   }
 
   /// Update the overlay size in the screen
+  ///
+  /// ZCode 补丁: 走主引擎通道 (x-slayer/overlay_channel, 原生 plugin 已加
+  /// resizeOverlay 转发)。原版发到 x-slayer/overlay (悬浮窗引擎通道),
+  /// 主引擎调用无 handler → 无声失败。
   static Future<bool?> resizeOverlay(
     int width,
     int height,
     bool enableDrag,
   ) async {
-    final bool? _res = await _overlayChannel.invokeMethod<bool?>(
+    final bool? _res = await _channel.invokeMethod<bool?>(
       'resizeOverlay',
       {
         'width': width,

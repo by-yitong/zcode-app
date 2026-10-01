@@ -311,6 +311,27 @@ public class OverlayService extends Service implements View.OnTouchListener {
         }
     }
 
+    // ZCode 补丁: 主引擎侧 resizeOverlay 静态转发。原版只有悬浮窗引擎内
+    // flutterChannel 的实例 handler, 主引擎经 plugin channel 调 resizeOverlay
+    // 直接 notImplemented (调用方吞异常后表现为 "resize 无声失败")。
+    // 入参与实例版一致: 逻辑 dp, 原生 dpToPx 换算一次。
+    public static boolean resizeOverlay(int width, int height, boolean enableDrag) {
+        if (instance != null && instance.flutterView != null) {
+            if (instance.windowManager != null) {
+                WindowManager.LayoutParams params = (WindowManager.LayoutParams) instance.flutterView.getLayoutParams();
+                params.width = (width == -1999 || width == -1) ? -1 : instance.dpToPx(width);
+                params.height = (height == -1999 || height == -1) ? height : instance.dpToPx(height);
+                WindowSetup.enableDrag = enableDrag;
+                instance.windowManager.updateViewLayout(instance.flutterView, params);
+                return true;
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
 
     @Override
     public void onCreate() {
