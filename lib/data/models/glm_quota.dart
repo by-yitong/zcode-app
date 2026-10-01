@@ -13,6 +13,21 @@ class GlmQuota {
   final String? error;
   final int? queriedAt; // ms
 
+  /// 套餐名 (如 "GLM Coding Max")。仅会话 RPC 路径填充, 直调路径无此数据。
+  final String? planName;
+
+  /// 套餐到期时间 (ISO 8601 字符串, 如 "2026-12-03T00:00:00.000Z")。
+  final String? planExpireAt;
+
+  /// 订阅周期 (上游原文, 如 "annually" / "monthly")。
+  final String? planBillingCycle;
+
+  /// 套餐等级 (snapshot.quota.level, 如 "max")。会话 RPC 路径填充。
+  final String? quotaLevel;
+
+  /// 数据来源: 'session' (会话 RPC) / 'api' (API key 直调)。null = 旧数据未标注。
+  final String? source;
+
   const GlmQuota({
     required this.success,
     required this.credentialStatus,
@@ -21,6 +36,11 @@ class GlmQuota {
     this.mcp,
     this.error,
     this.queriedAt,
+    this.planName,
+    this.planExpireAt,
+    this.planBillingCycle,
+    this.quotaLevel,
+    this.source,
   });
 
   GlmQuota copyWith({
@@ -31,6 +51,11 @@ class GlmQuota {
     GlmMcpQuota? mcp,
     String? error,
     int? queriedAt,
+    String? planName,
+    String? planExpireAt,
+    String? planBillingCycle,
+    String? quotaLevel,
+    String? source,
   }) {
     return GlmQuota(
       success: success ?? this.success,
@@ -40,6 +65,11 @@ class GlmQuota {
       mcp: mcp ?? this.mcp,
       error: error ?? this.error,
       queriedAt: queriedAt ?? this.queriedAt,
+      planName: planName ?? this.planName,
+      planExpireAt: planExpireAt ?? this.planExpireAt,
+      planBillingCycle: planBillingCycle ?? this.planBillingCycle,
+      quotaLevel: quotaLevel ?? this.quotaLevel,
+      source: source ?? this.source,
     );
   }
 

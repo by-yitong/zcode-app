@@ -143,8 +143,8 @@ class GlmQuotaService {
       );
     }
 
-    final tiers = _parseZhipuTokenTiers(data);
-    final mcp = _parseZhipuMcpQuota(data);
+    final tiers = parseZhipuTokenTiers(data);
+    final mcp = parseZhipuMcpQuota(data);
     final level = data['level'] as String?;
     appLog.i(
       '[GLM] 配额查询成功: ${tiers.length} 个 tier, '
@@ -165,7 +165,10 @@ class GlmQuotaService {
   ///
   /// 取第一条 TIME_LIMIT (当前上游只有 1 条: unit:5+number:1 = 1 个月窗口)。
   /// usageDetails 缺失/为空时仍返回总量信息, details 为空列表。
-  GlmMcpQuota? _parseZhipuMcpQuota(Map<String, dynamic> data) {
+  ///
+  /// 公开静态: 会话 RPC 路径 (SessionUsageService) 复用 — RPC snapshot 的
+  /// quota.limits[] 与直调 API 的 data.limits[] 完全同构。
+  static GlmMcpQuota? parseZhipuMcpQuota(Map<String, dynamic> data) {
     final limits = data['limits'];
     if (limits is! List) return null;
 
@@ -215,7 +218,10 @@ class GlmQuotaService {
   /// 2. 兜底 (unit 缺失/未识别): 按 reset 升序依次填入空缺槽位,
   ///    无 reset 的优先归 five_hour
   /// 老套餐 (2026-02-12 前订阅) 只回 1 条, 自然降级为仅 five_hour。
-  List<GlmQuotaTier> _parseZhipuTokenTiers(Map<String, dynamic> data) {
+  ///
+  /// 公开静态: 会话 RPC 路径 (SessionUsageService) 复用 — RPC snapshot 的
+  /// quota.limits[] 与直调 API 的 data.limits[] 完全同构。
+  static List<GlmQuotaTier> parseZhipuTokenTiers(Map<String, dynamic> data) {
     final limits = data['limits'];
     if (limits is! List) return const [];
 
@@ -301,13 +307,13 @@ class GlmQuotaService {
   }
 
   /// 兼容数字和字符串格式 (100 / "100")
-  double? _parseF64(dynamic v) {
+  static double? _parseF64(dynamic v) {
     if (v is num) return v.toDouble();
     if (v is String) return double.tryParse(v);
     return null;
   }
 
-  String? _millisToIso8601(int ms) {
+  static String? _millisToIso8601(int ms) {
     try {
       return DateTime.fromMillisecondsSinceEpoch(ms).toUtc().toIso8601String();
     } catch (_) {

@@ -548,6 +548,79 @@ Headers:
 - Provider: `glmCredentialProvider` + `glmQuotaProvider` (`lib/providers/app_providers.dart`)
 - UI: 设置页用户卡片摘要 + 'GLM 用量' 分区卡片 (含凭据编辑 sheet)
 
+#### 查询套餐用量 ★ — `usage-stats.getEntitlementSnapshot` (2026-10-01 实测 3.14.4)
+
+> 网页版 (zcode.z.ai) 的套餐用量走**会话 RPC** 通道, 用桌面端账号登录态, **无需 API key**,
+> 数据比 5.6 直调接口更丰富 (套餐名 / 到期时间 / 订阅周期)。App 查用量优先走本通道,
+> RPC 不可用 (未连接/未就绪/报错) 时回退 5.6 直调。
+> 实现: `lib/core/services/session_usage_service.dart` (`SessionUsageService`)。
+
+**前置**: relay bridge 已 open 且 RPC Init 完成 (见 4.3.2)。**不要为查用量主动开桥** —
+用 `RelayClient.waitRpcReady(Duration(seconds: 3))` 探测, 超时即跳过会话路径走直调。
+
+**请求** (网页版同款: service proxy 方法名即 RPC method, args 为单对象包一层数组):
+```
+header: [100, requestId, "usage-stats", "getEntitlementSnapshot"]
+body: [{
+  "includeSubscription": true,
+  "preferredProviderId": "account:bigmodel-individual-coding-plan",
+  "accountAccess": {
+    "type": "zhipu-account",
+    "family": "bigmodel",
+    "planKind": "individual-coding-plan"
+  }
+}]
+```
+
+按 ID 顺序尝试, 第一个返回**无 unavailableReason 字段**的即成功:
+
+| # | preferredProviderId | accountAccess |
+|---|---------------------|---------------|
+| 1 | `account:bigmodel-individual-coding-plan` | `{type: "zhipu-account", family: "bigmodel", planKind: "individual-coding-plan"}` |
+| 2 | `account:zai-individual-coding-plan` | `{type: "zhipu-account", family: "zai", planKind: "individual-coding-plan"}` |
+
+> ⚠️ **accountAccess 必填**, 缺了返回 `not_configured` (实测)。
+> 实测对照: bigmodel individual → 成功; zai individual → not_configured; team 套餐 → 202 错误帧 (未支持)。
+
+**成功响应** (帧 type=201, body 实测样例 2026-10-01):
+```json
+{
+  "generatedAt": 1790854996569,
+  "authenticated": true,
+  "context": {"scope": "personal", "productId": "product-7fd668", "displayName": "GLM Coding Max"},
+  "provider": {"id": "account:bigmodel-individual-coding-plan", "name": "BigModel - Coding Plan"},
+  "remaining": {"count": 709, "isShow": true, "percentage": 82, "nextResetTime": 1790997210997},
+  "subscription": {
+    "identityType": "unknown", "identityMasked": null,
+    "details": [{"productId": "product-7fd668", "productName": "GLM Coding Max", "billingCycle": "annually", "renewTime": null, "expireTime": "2026-12-03T00:00:00.000Z", "purchaseTime": null, "beginTime": null}]
+  },
+  "quota": {
+    "level": "max",
+    "limits": [
+      {"type": "TIME_LIMIT", "unit": 5, "number": 1, "usage": 4000, "currentValue": 3291, "remaining": 709, "percentage": 82, "nextResetTime": 1790997210997, "usageDetails": [{"modelCode": "search-prime", "usage": 2344}, {"modelCode": "web-reader", "usage": 947}, {"modelCode": "zread", "usage": 0}]},
+      {"type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 10, "nextResetTime": 1790859608269, "usageDetails": []}
+    ]
+  },
+  "mcpQuota": null
+}
+```
+
+字段要点:
+- `quota.limits[]` 与 5.6 直调 API 的 `data.limits[]` **完全同构**, 解析直接复用
+  `GlmQuotaService.parseZhipuTokenTiers` / `parseZhipuMcpQuota`
+  (TOKENS_LIMIT unit:3 → 5小时窗, unit:6 → 周窗, TIME_LIMIT → MCP 月度)。
+- `nextResetTime` 为毫秒时间戳; `expireTime` 为 ISO 字符串。
+
+**失败形态** (同结构, 带 `unavailableReason`, 数据字段全 null):
+
+| unavailableReason | 语义 |
+|-------------------|------|
+| `not_configured` | 该账号无此路径凭据 |
+| `no_plan` | 账号无 coding plan 套餐 |
+| `unavailable` | 服务端暂不可用 |
+
+**错误帧**: 响应帧 type=202, body 为错误字符串 (如 `"Coding Plan entitlement refresh failed"`)。
+
 
 ## 六、Workspace 数据模型 (实测)
 

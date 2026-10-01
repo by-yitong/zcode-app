@@ -11,6 +11,7 @@ import '../core/relay/relay_client.dart';
 import '../core/relay/relay_protocol.dart';
 import '../core/services/device_info_service.dart';
 import '../core/services/glm_quota_service.dart';
+import '../core/services/session_usage_service.dart';
 import '../core/storage/secure_storage.dart';
 import '../data/models/glm_quota.dart';
 import '../data/models/workspace.dart';
@@ -885,35 +886,70 @@ class GlmCredentialNotifier extends StateNotifier<GlmCredential?> {
   }
 }
 
-/// GLM 余量查询状态。无凭据时不自动查询 (state 保持 null, 不显示 loading)。
+/// GLM 余量查询状态。无凭据且无会话时不自动查询 (state 保持 null, 不显示 loading)。
+///
+/// 查询优先级: 会话 RPC (SessionUsageService, 无需 API key, 数据含套餐名/到期)
+/// → API key 直调 (GlmQuotaService, 行为不变)。会话变化时 relayClientProvider
+/// 重建会触发本 provider 重建重查。
 final glmQuotaProvider =
     StateNotifierProvider<GlmQuotaNotifier, AsyncValue<GlmQuota?>>((ref) {
       final cred = ref.watch(glmCredentialProvider);
-      return GlmQuotaNotifier(cred, ref.watch(glmQuotaServiceProvider));
+      final relayClient = ref.watch(relayClientProvider);
+      return GlmQuotaNotifier(
+        cred,
+        ref.watch(glmQuotaServiceProvider),
+        relayClient,
+      );
     });
 
 class GlmQuotaNotifier extends StateNotifier<AsyncValue<GlmQuota?>> {
   final GlmCredential? _cred;
   final GlmQuotaService _service;
+  final RelayClient? _relayClient;
 
-  GlmQuotaNotifier(this._cred, this._service)
+  GlmQuotaNotifier(this._cred, this._service, this._relayClient)
     : super(const AsyncValue.data(null)) {
-    // 有凭据时启动即查一次, 给用户卡片立即可用的摘要
-    if (_cred != null && _cred.isValid) {
+    // 有凭据或有会话时启动即查一次, 给用户卡片立即可用的摘要
+    if ((_cred != null && _cred.isValid) || _relayClient != null) {
       Future.microtask(load);
     }
   }
 
   Future<void> load() async {
     final cred = _cred;
-    if (cred == null || !cred.isValid) {
+    final relay = _relayClient;
+    final credValid = cred != null && cred.isValid;
+
+    if (relay == null && !credValid) {
       state = const AsyncValue.data(null);
       return;
     }
     state = const AsyncValue.loading();
+
+    // 1. 会话 RPC 优先 (不主动开桥, RPC 未就绪/失败 → null 走兜底)
+    if (relay != null) {
+      try {
+        final sessionQuota = await SessionUsageService(relay).fetch();
+        if (sessionQuota != null) {
+          state = AsyncValue.data(sessionQuota);
+          appLog.d('[GLM] 会话 RPC 配额查询成功: ${sessionQuota.tiers.length} 个 tier');
+          return;
+        }
+        appLog.d('[GLM] 会话 RPC 不可用, 回退 API key 直调');
+      } catch (e, st) {
+        appLog.e('[GLM] 会话 RPC 查询异常, 回退 API key 直调', e, st);
+      }
+    }
+
+    // 2. 回退 API key 直调 (行为不变)
+    if (!credValid) {
+      state = const AsyncValue.data(null);
+      return;
+    }
     try {
       final quota = await _service.fetch(cred);
-      state = AsyncValue.data(quota);
+      // 成功结果标记来源 (service 本身不感知来源, 保持直调行为不变)
+      state = AsyncValue.data(quota.success ? quota.copyWith(source: 'api') : quota);
       if (quota.success) {
         appLog.d('[GLM] 配额查询成功: ${quota.tiers.length} 个 tier');
       } else {

@@ -453,10 +453,14 @@ class UsagePill extends StatelessWidget {
   final AsyncValue<glm.GlmQuota?> glmQuotaAsync;
   final VoidCallback? onRefreshQuota;
 
+  /// 详情表"压缩"按钮 (/compact 同款); null 时按钮隐藏
+  final VoidCallback? onCompact;
+
   const UsagePill({
     this.tokenUsage,
     required this.glmQuotaAsync,
     this.onRefreshQuota,
+    this.onCompact,
   });
 
   static String _fmtPct(double v) {
@@ -490,13 +494,14 @@ class UsagePill extends StatelessWidget {
 
     if (parts.isEmpty) return const SizedBox.shrink();
 
-    // 点击 → 用量详情底部表 (token 上下文 + GLM 两窗口 + MCP 月度)
+    // 点击 → 用量详情底部表 (token 上下文 + 压缩 + GLM 两窗口 + MCP 月度)
     return InkWell(
       onTap: () => UsageDetailSheet.show(
         context,
         tokenUsage: tokenUsage,
         quotaAsync: glmQuotaAsync,
         onRefresh: onRefreshQuota,
+        onCompact: onCompact,
       ),
       borderRadius: BorderRadius.circular(AppRadius.sm),
       child: Padding(
@@ -702,7 +707,18 @@ class ContextLengthIndicator extends StatelessWidget {
   /// 详情弹窗"压缩"按钮 (/compact 同款); null 时按钮隐藏
   final VoidCallback? onCompact;
 
-  const ContextLengthIndicator({this.usage, this.onCompact});
+  /// GLM 配额数据 (合并后的用量详情表需要); null 时表内 GLM 区块为空态
+  final AsyncValue<glm.GlmQuota?>? quotaAsync;
+
+  /// 详情弹窗刷新回调 (glmQuotaProvider.refresh)
+  final VoidCallback? onRefreshQuota;
+
+  const ContextLengthIndicator({
+    this.usage,
+    this.onCompact,
+    this.quotaAsync,
+    this.onRefreshQuota,
+  });
 
   static String _fmt(int n) {
     if (n < 1000) return '$n';
@@ -714,90 +730,15 @@ class ContextLengthIndicator extends StatelessWidget {
     return m >= 100 ? '${m.toStringAsFixed(0)}M' : '${m.toStringAsFixed(1)}M';
   }
 
-  /// 底部详情弹窗: 进度条 + 已用/容量 + 输出累计
+  /// 底部详情弹窗 — 与 UsagePill 同一张用量详情表 (上下文 + GLM + MCP)
   void _openDetails(BuildContext context) {
-    final theme = Theme.of(context);
-    final u = usage;
-    if (u == null) return;
-    final ratio = u.max > 0 ? (u.input / u.max).clamp(0.0, 1.0) : 0.0;
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      backgroundColor: Color.alphaBlend(
-        theme.colorScheme.surfaceContainerHigh,
-        theme.colorScheme.surfaceContainerLowest,
-      ),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('上下文用量', style: theme.textTheme.titleMedium),
-              const SizedBox(height: 16),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(AppRadius.pill),
-                child: LinearProgressIndicator(
-                  value: ratio,
-                  minHeight: 8,
-                  backgroundColor: theme.colorScheme.surfaceContainerHighest,
-                  color: ratio > 0.9
-                      ? AppColors.danger
-                      : ratio > 0.7
-                      ? AppColors.warning
-                      : theme.colorScheme.primary,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    '已用 ${_fmt(u.input)}',
-                    style: TextStyle(
-                      fontSize: AppTextSizes.bodySm,
-                      fontFamily: kMonoFont,
-                      color: theme.colorScheme.onSurface,
-                    ),
-                  ),
-                  Text(
-                    u.max > 0 ? '容量 ${_fmt(u.max)}' : '容量未知',
-                    style: TextStyle(
-                      fontSize: AppTextSizes.bodySm,
-                      fontFamily: kMonoFont,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                '累计输出 ↓${_fmt(u.output)} · 接近容量时将自动压缩历史',
-                style: TextStyle(
-                  fontSize: AppTextSizes.label,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-              // 手动压缩 (/compact 同款): 先关弹窗再执行
-              if (onCompact != null) ...[
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      onCompact!();
-                    },
-                    icon: const Icon(Icons.compress_rounded, size: 18),
-                    label: const Text('压缩'),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
+    if (usage == null) return;
+    UsageDetailSheet.show(
+      context,
+      tokenUsage: usage,
+      quotaAsync: quotaAsync ?? const AsyncValue.data(null),
+      onRefresh: onRefreshQuota,
+      onCompact: onCompact,
     );
   }
 

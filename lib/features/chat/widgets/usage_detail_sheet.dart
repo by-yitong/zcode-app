@@ -4,10 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../data/models/glm_quota.dart' as glm;
 import '../../../shared/theme/app_design_tokens.dart';
 
-/// 用量详情底部弹窗 — 顶栏 UsagePill 点击进入
+/// 用量详情底部弹窗 — 顶栏 UsagePill / 上下文环统一入口
 ///
 /// 三个区块:
-/// 1. 本会话 Token: 上下文占用进度条 + 累计输出
+/// 1. 本会话 Token: 上下文占用进度条 + 累计输出 (+ 压缩按钮, 原"上下文用量"弹窗并入)
 /// 2. GLM Coding Plan: 5 小时 / 每周窗口配额 (进度条 + 重置时间)
 /// 3. MCP 月度用量: 已用/总量 + 各 MCP 次数明细
 ///
@@ -17,10 +17,14 @@ class UsageDetailSheet extends StatelessWidget {
   final AsyncValue<glm.GlmQuota?> quotaAsync;
   final VoidCallback? onRefresh;
 
+  /// "压缩"按钮 (/compact 同款); null 时按钮隐藏 (原上下文弹窗并入项)
+  final VoidCallback? onCompact;
+
   const UsageDetailSheet({
     this.tokenUsage,
     required this.quotaAsync,
     this.onRefresh,
+    this.onCompact,
   });
 
   static Future<void> show(
@@ -28,6 +32,7 @@ class UsageDetailSheet extends StatelessWidget {
     ({int input, int output, int max})? tokenUsage,
     required AsyncValue<glm.GlmQuota?> quotaAsync,
     VoidCallback? onRefresh,
+    VoidCallback? onCompact,
   }) {
     final theme = Theme.of(context);
     return showModalBottomSheet<void>(
@@ -41,6 +46,7 @@ class UsageDetailSheet extends StatelessWidget {
         tokenUsage: tokenUsage,
         quotaAsync: quotaAsync,
         onRefresh: onRefresh,
+        onCompact: onCompact,
       ),
     );
   }
@@ -84,6 +90,29 @@ class UsageDetailSheet extends StatelessWidget {
     } catch (_) {
       return iso;
     }
+  }
+
+  /// ISO 日期 → yyyy-MM-dd (解析失败原样返回)
+  static String _fmtDate(String iso) {
+    try {
+      final d = DateTime.parse(iso);
+      String two(int n) => n.toString().padLeft(2, '0');
+      return '${d.year}-${two(d.month)}-${two(d.day)}';
+    } catch (_) {
+      return iso;
+    }
+  }
+
+  /// 订阅周期原文 → 中文 (未知值原样展示)
+  static String? _billingCycleCn(String? cycle) {
+    if (cycle == null || cycle.isEmpty) return null;
+    return switch (cycle) {
+      'annually' || 'yearly' => '年付',
+      'monthly' => '月付',
+      'quarterly' => '季付',
+      'weekly' => '周付',
+      _ => cycle,
+    };
   }
 
   static Color _utilColor(double utilization) {
@@ -166,6 +195,21 @@ class UsageDetailSheet extends StatelessWidget {
               color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
+          // 手动压缩 (/compact 同款, 原上下文弹窗并入): 先关弹窗再执行
+          if (onCompact != null) ...[
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: () {
+                  Navigator.pop(context);
+                  onCompact!();
+                },
+                icon: const Icon(Icons.compress_rounded, size: 18),
+                label: const Text('压缩'),
+              ),
+            ),
+          ],
         ],
       ],
     );
@@ -213,9 +257,51 @@ class UsageDetailSheet extends StatelessWidget {
             }
             final level = quota.credentialMessage;
             final mcp = quota.mcp;
+            final cycle = UsageDetailSheet._billingCycleCn(quota.planBillingCycle);
+            final planMeta = <String>[
+              if (quota.planExpireAt != null)
+                '到期 ${UsageDetailSheet._fmtDate(quota.planExpireAt!)}',
+              if (cycle != null) cycle,
+            ].join(' · ');
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // 套餐信息行 (会话 RPC 路径才有: 套餐名 + 到期日期 + 周期)
+                if (quota.planName != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            quota.planName!,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        if (planMeta.isNotEmpty)
+                          Text(
+                            planMeta,
+                            style: TextStyle(
+                              fontSize: AppTextSizes.label,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        // 来源标识: 会话 RPC = 桌面端账号登录态
+                        if (quota.source == 'session') ...[
+                          const SizedBox(width: 6),
+                          Text(
+                            '账号',
+                            style: TextStyle(
+                              fontSize: AppTextSizes.label,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
                 if (level != null && level.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 6),
