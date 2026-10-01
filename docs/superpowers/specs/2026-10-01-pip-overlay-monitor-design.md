@@ -107,6 +107,10 @@ TextPart / 旧路径 content），按行切分取尾部至多 60 行（缓冲常
 
 - **防白屏**：不再用 refresh 动作；主 App 在 showOverlay 成功后立即主动推一次
   快照，此后快照变化节流 500ms 推送。
+- **后台兜底轮询**：真机实测 app 后台化后 Riverpod 懒加载 Provider 不再重算
+  （listenManual 收不到通知），事件驱动推送在后台失效。因此悬浮窗打开期间
+  由 push scheduler 以 500ms 周期主动 `read` 快照（强制重算），内容有变化才推
+  （与上次推送 JSON 对比去重）。前台事件驱动路径保留作为快路径。
 
 主 App → 悬浮窗快照结构：
 

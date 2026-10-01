@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 
+import '../../core/logging/app_logger.dart';
 import '../../core/services/pip_service.dart';
 import '../theme/app_design_tokens.dart';
 import '../theme/app_theme.dart';
@@ -107,6 +108,7 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
   void _onMessage(dynamic raw) {
     final snap = PipSnapshot.decode(raw);
     if (snap == null || !mounted) return;
+    appLog.d('[Pip] ov recv pages=${snap.sessions.length} idx=${snap.index}');
     setState(() {
       final countChanged =
           _snapshot == null ||

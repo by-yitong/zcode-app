@@ -132,6 +132,13 @@ final pipPushSchedulerProvider = Provider<PipPushScheduler>((ref) {
     if (prev == next) return;
     unawaited(scheduler.onLinesChanged(next));
   });
+  // 悬浮窗开/关 → 启停后台轮询推送。真机实测: app 后台化后 Riverpod 懒加载
+  // Provider 不再重算 (listenManual 收不到通知), 事件驱动推送在后台失效;
+  // 轮询 read() 强制重算快照, 有变化才推, 保证后台持续刷新。
+  ref.listen(pipOverlayActiveProvider, (prev, next) {
+    scheduler.setPolling(next);
+    if (next) unawaited(scheduler.pushNow());
+  });
   ref.onDispose(scheduler.dispose);
   return scheduler;
 });
@@ -142,8 +149,13 @@ class PipPushScheduler {
   /// 节流窗口 (trailing): 窗口内多次快照更新合并为一次推送
   static const Duration _throttle = Duration(milliseconds: 500);
 
+  /// 后台兜底轮询间隔 (与节流同频, 事件驱动失效时由它接管)
+  static const Duration _pollInterval = Duration(milliseconds: 500);
+
   final Ref _ref;
   Timer? _timer;
+  Timer? _pollTimer;
+  String? _lastPushedJson;
   int _windowWidthPx = 0;
   double _devicePixelRatio = 1;
 
@@ -156,6 +168,19 @@ class PipPushScheduler {
     _devicePixelRatio = devicePixelRatio;
   }
 
+  /// 悬浮窗开/关 → 启停兜底轮询 (打开时立即首推防白屏)
+  void setPolling(bool active) {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    if (!active) return;
+    _pollTimer = Timer.periodic(_pollInterval, (_) => _pollOnce());
+  }
+
+  void _pollOnce() {
+    if (!_ref.read(pipOverlayActiveProvider)) return;
+    unawaited(pushNow(ifChangedSince: _lastPushedJson));
+  }
+
   /// 节流推送 (快照变化时由 ZcodeApp 的 listenManual 触发)
   void schedule() {
     if (_timer != null) return;
@@ -165,11 +190,22 @@ class PipPushScheduler {
     });
   }
 
-  /// 立即推送当前快照 (showOverlay 成功后首推防白屏 / resize 后)
-  Future<void> pushNow() async {
+  /// 立即推送当前快照 (showOverlay 成功后首推防白屏 / resize 后)。
+  /// [ifChangedSince] 非空时内容一致则跳过 (轮询去重, 避免无变化空推)。
+  Future<void> pushNow({String? ifChangedSince}) async {
     try {
       final snapshot = _ref.read(pipMonitorProvider);
-      await _ref.read(pipServiceProvider).send(jsonEncode(snapshot.toJson()));
+      final json = jsonEncode(snapshot.toJson());
+      if (ifChangedSince != null && json == ifChangedSince) return;
+      final totalLines = snapshot.sessions.fold<int>(
+        0,
+        (n, s) => n + s.lines.length,
+      );
+      appLog.d(
+        '[Pip] push sessions=${snapshot.sessions.length} lines=$totalLines',
+      );
+      await _ref.read(pipServiceProvider).send(json);
+      _lastPushedJson = json;
     } catch (e) {
       appLog.w('[Pip] 推送快照失败: $e');
     }
@@ -187,6 +223,8 @@ class PipPushScheduler {
   void dispose() {
     _timer?.cancel();
     _timer = null;
+    _pollTimer?.cancel();
+    _pollTimer = null;
   }
 }
 

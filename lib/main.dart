@@ -62,7 +62,8 @@ class _ZcodeAppState extends ConsumerState<ZcodeApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // 悬浮窗快照聚合变化 → 节流 500ms shareData 推送 (见 pipPushSchedulerProvider)
+    // 悬浮窗快照聚合变化 → 节流 500ms shareData 推送 (见 pipPushSchedulerProvider;
+    // 前台快路径, 后台由 scheduler 内置轮询兜底)
     ref.listenManual(pipMonitorProvider, (_, __) {
       ref.read(pipPushSchedulerProvider).schedule();
     });

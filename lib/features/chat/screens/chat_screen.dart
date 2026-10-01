@@ -385,12 +385,17 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
   /// 权限检查 → 钉住当前会话 + 置位 active (启动聚合推送) → showOverlay
   /// (失败回滚 active + SnackBar)
   Future<void> _openPipOverlay() async {
+    appLog.d('[Pip] tap → 打开流程开始');
     if (!Platform.isAndroid) return;
     final pip = ref.read(pipServiceProvider);
     // 幂等: 已打开则忽略
-    if (await pip.isActive()) return;
+    if (await pip.isActive()) {
+      appLog.d('[Pip] 已打开, 忽略本次点击');
+      return;
+    }
     // 未授权 → 跳系统设置, 引导开启后重试
     if (!await pip.isPermissionGranted()) {
+      appLog.d('[Pip] 无悬浮窗权限 → 跳系统设置');
       await pip.requestPermission();
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -425,8 +430,10 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
       ref.read(pipOverlayActiveProvider.notifier).state = true;
       await pip.show(widthPx: widthPx, heightPx: heightPx);
       // 防白屏 (IPC v2: 悬浮窗不再回传 refresh, 由主 App 主动首推快照)
+      appLog.d('[Pip] show 成功 → 首推快照');
       await ref.read(pipPushSchedulerProvider).pushNow();
     } catch (e) {
+      appLog.w('[Pip] showOverlay 失败: $e');
       ref.read(pipOverlayActiveProvider.notifier).state = false;
       if (!mounted) return;
       ScaffoldMessenger.of(context)
