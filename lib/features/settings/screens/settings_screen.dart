@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/relay/relay_protocol.dart';
+import '../../../core/services/display_service.dart';
 import '../../../core/services/glm_quota_service.dart';
 import '../../../core/services/pip_service.dart';
 import '../../../core/services/update_service.dart';
@@ -239,6 +240,15 @@ class SettingsScreen extends ConsumerWidget {
                 value: '${ref.watch(pipLinesProvider)} 行',
                 showChevron: true,
                 onTap: () => _showPipLinesPicker(context, ref),
+              ),
+              AppTile(
+                icon: Icons.brightness_high_outlined,
+                title: '屏幕常亮',
+                subtitle: '会话进行中不熄屏',
+                trailing: Switch(
+                  value: ref.watch(keepScreenOnProvider),
+                  onChanged: (v) => _applyKeepScreenOn(ref, v),
+                ),
               ),
             ],
           ),
@@ -573,6 +583,15 @@ class SettingsScreen extends ConsumerWidget {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(kPipLinesPrefKey, lines);
     if (sheetContext.mounted) Navigator.of(sheetContext).pop();
+  }
+
+  /// 应用屏幕常亮: 更新 provider 状态 + 持久化 + 同步原生
+  /// FLAG_KEEP_SCREEN_ON (重启后由 main() 恢复)。
+  Future<void> _applyKeepScreenOn(WidgetRef ref, bool enabled) async {
+    ref.read(keepScreenOnProvider.notifier).state = enabled;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(kKeepScreenOnPrefKey, enabled);
+    await DisplayService.setKeepScreenOn(enabled);
   }
 }
 

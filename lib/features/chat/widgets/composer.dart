@@ -699,7 +699,10 @@ class ComposerIconBtn extends StatelessWidget {
 class ContextLengthIndicator extends StatelessWidget {
   final ({int input, int output, int max})? usage;
 
-  const ContextLengthIndicator({this.usage});
+  /// 详情弹窗"压缩"按钮 (/compact 同款); null 时按钮隐藏
+  final VoidCallback? onCompact;
+
+  const ContextLengthIndicator({this.usage, this.onCompact});
 
   static String _fmt(int n) {
     if (n < 1000) return '$n';
@@ -776,6 +779,21 @@ class ContextLengthIndicator extends StatelessWidget {
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
+              // 手动压缩 (/compact 同款): 先关弹窗再执行
+              if (onCompact != null) ...[
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      onCompact!();
+                    },
+                    icon: const Icon(Icons.compress_rounded, size: 18),
+                    label: const Text('压缩'),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -799,7 +817,8 @@ class ContextLengthIndicator extends StatelessWidget {
       onTap: has ? () => _openDetails(context) : null,
       borderRadius: BorderRadius.circular(AppRadius.sm),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+        // 纵向收紧: 移入顶部 Header 胶囊后需与标题行同高 (64 内两行不溢出)
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -993,17 +1012,18 @@ class ThoughtLevelSelector extends StatelessWidget {
 
   const ThoughtLevelSelector({required this.level, required this.onChanged});
 
+  // 中文级别名对齐网页端官方文案 (zcode.z.ai zh-CN locale)
   static const _options = <(String, IconData, String, String)>[
-    ('max', Icons.psychology, 'max', '完整推理链'),
-    ('medium', Icons.lightbulb_outline, 'medium', '适度推理'),
-    ('nothink', Icons.flash_off_outlined, 'nothink', '直接回答'),
+    ('max', Icons.psychology, '最高', '完整推理链'),
+    ('medium', Icons.lightbulb_outline, '中', '适度推理'),
+    ('nothink', Icons.flash_off_outlined, '不思考', '直接回答'),
   ];
 
   (IconData, String) get _current {
     for (final o in _options) {
       if (o.$1 == level) return (o.$2, o.$3);
     }
-    return (Icons.psychology, 'max');
+    return (Icons.psychology, '最高');
   }
 
   void _open(BuildContext context) {
@@ -1048,12 +1068,36 @@ class ThoughtLevelSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 图标模式: 图标随级别变化, 点击弹选择菜单 (对齐网页端)
+    // 文本 chip 模式: 级别中文名 + 下拉箭头, 点击弹选择菜单 (对齐网页端)
+    final theme = Theme.of(context);
     final cur = _current;
-    return ComposerIconBtn(
-      icon: cur.$1,
-      tooltip: '思考级别: ${cur.$2}',
-      onTap: () => _open(context),
+    return Tooltip(
+      message: '思考级别: ${cur.$2}',
+      child: InkWell(
+        onTap: () => _open(context),
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                cur.$2,
+                style: TextStyle(
+                  fontSize: AppTextSizes.label,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(width: 2),
+              Icon(
+                Icons.keyboard_arrow_down_rounded,
+                size: 14,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1332,45 +1376,54 @@ class ModelSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // 图标模式: 芯片图标 + 加载/可用状态 (模型名见 tooltip 与选择菜单, 对齐网页端)
-    final Widget icon;
+    // 文本 chip 模式: 模型名 + 下拉箭头 (对齐网页端);
+    // 加载中转圈; 空列表非加载 → 灰色"默认" + 禁点
     if (isLoading) {
-      icon = SizedBox(
-        width: 16,
-        height: 16,
-        child: CircularProgressIndicator(
-          strokeWidth: 2,
-          color: theme.colorScheme.primary,
+      return const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(strokeWidth: 2),
         ),
       );
-    } else {
-      icon = Icon(
-        Icons.memory_rounded,
-        size: 18,
-        color: models.isEmpty
-            ? theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.4)
-            : theme.colorScheme.primary,
-      );
     }
-    return IconButton(
-      onPressed: (models.isEmpty && !isLoading)
-          ? null
-          : () => showModelPicker(
-              context,
-              models: models,
-              current: current,
-              onSelected: onSelected,
-              providerNames: providerNames,
-            ),
-      tooltip: models.isEmpty
-          ? (isLoading ? '正在加载模型...' : '模型列表未加载')
-          : '模型: $_label',
-      icon: icon,
-      style: IconButton.styleFrom(
-        foregroundColor: theme.colorScheme.onSurfaceVariant,
-        minimumSize: const Size(36, 36),
-        padding: const EdgeInsets.all(6),
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    final disabled = models.isEmpty;
+    final color = disabled
+        ? theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.4)
+        : theme.colorScheme.onSurfaceVariant;
+    return Tooltip(
+      message: disabled ? '模型列表未加载' : '模型: $_label',
+      child: InkWell(
+        onTap: disabled
+            ? null
+            : () => showModelPicker(
+                context,
+                models: models,
+                current: current,
+                onSelected: onSelected,
+                providerNames: providerNames,
+              ),
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 110),
+                child: Text(
+                  _label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: AppTextSizes.label, color: color),
+                ),
+              ),
+              const SizedBox(width: 2),
+              Icon(Icons.keyboard_arrow_down_rounded, size: 14, color: color),
+            ],
+          ),
+        ),
       ),
     );
   }

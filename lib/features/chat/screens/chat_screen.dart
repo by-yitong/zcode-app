@@ -27,11 +27,11 @@ import '../../../providers/pip_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/theme/app_router.dart';
 import '../../../shared/widgets/code_highlight.dart';
-import '../../../shared/widgets/glass_bars.dart';
 import '../../../shared/widgets/update_dialog.dart';
 import '../../../shared/widgets/app_empty_state.dart';
 import '../../../shared/widgets/app_section_header.dart';
 import '../../search/screens/search_screen.dart';
+import '../widgets/chat_floating_header.dart';
 import '../widgets/code_block.dart';
 import '../widgets/thought_block.dart';
 import '../widgets/approval_cards.dart';
@@ -793,57 +793,40 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
 
     return Scaffold(
       extendBodyBehindAppBar: true,
-      appBar: GlassAppBar(
-        // mainAxisSize.min: 无配额行时不撑满 56 高 (NavigationToolbar 松约束),
-        // 否则 Column 顶对齐会让标题看起来没有垂直居中
-        title: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              widget.title,
-              style: const TextStyle(fontSize: AppTextSizes.titleSm),
-            ),
-            // 状态行: 常驻用量统计 (AI 工作中状态在消息流里已有体现)
-            // 点击 → 用量详情底部表
-            UsagePill(
-              tokenUsage: state.tokenUsage,
-              glmQuotaAsync: ref.watch(glmQuotaProvider),
-              onRefreshQuota: () =>
-                  ref.read(glmQuotaProvider.notifier).refresh(),
-            ),
-          ],
+      // 三段式悬浮胶囊 Header: [返回=抽屉] [标题+状态行] [更多]
+      appBar: ChatFloatingHeader(
+        title: widget.title,
+        // 上下文环移入中间胶囊 (新对话还没有内容时不显示)
+        contextIndicator: state.messages.isNotEmpty
+            ? ContextLengthIndicator(
+                usage: state.tokenUsage,
+                onCompact: () =>
+                    ref.read(chatProvider(widget.chatRef).notifier).compact(),
+              )
+            : null,
+        // 状态行: 常驻用量统计 (AI 工作中状态在消息流里已有体现)
+        // 点击 → 用量详情底部表
+        usagePill: UsagePill(
+          tokenUsage: state.tokenUsage,
+          glmQuotaAsync: ref.watch(glmQuotaProvider),
+          onRefreshQuota: () => ref.read(glmQuotaProvider.notifier).refresh(),
         ),
-        leading: IconButton(
-          icon: const Icon(Icons.menu), // 汉堡菜单 (打开历史会话抽屉)
-          onPressed: widget.onMenuTap,
-        ),
-        actions: [
-          // 悬浮窗进度监视器 (画中画; flutter_overlay_window 仅 Android)
-          if (Platform.isAndroid)
-            IconButton(
-              icon: const Icon(Icons.picture_in_picture_alt_rounded, size: 20),
-              tooltip: '悬浮窗监视',
-              onPressed: _openPipOverlay,
-            ),
-          // 新对话 (+): 搜索右侧
-          IconButton(
-            icon: const Icon(Icons.add_rounded, size: 22),
-            tooltip: '新对话',
-            onPressed: () {
-              // 跳回不带 task 的聊天页 (replace: 原地替换, 保持返回栈)
-              context.replace(
-                '${AppRoutes.chat}?workspace=${Uri.encodeComponent(widget.workspacePath)}',
-              );
-            },
-          ),
-        ],
+        onMenuTap: widget.onMenuTap,
+        onNewChat: () {
+          // 跳回不带 task 的聊天页 (replace: 原地替换, 保持返回栈)
+          context.replace(
+            '${AppRoutes.chat}?workspace=${Uri.encodeComponent(widget.workspacePath)}',
+          );
+        },
+        // 悬浮窗进度监视器 (画中画; flutter_overlay_window 仅 Android)
+        onOpenPip: Platform.isAndroid ? _openPipOverlay : null,
+        onOpenSettings: () => context.push(AppRoutes.settings),
       ),
       body: Column(
         children: [
           // 占位: extendBodyBehindAppBar=true, body 从 y=0 开始,
-          // 需手动留出 状态栏+标题栏(56) 高度, 否则 PlanList 等被遮挡
-          SizedBox(height: MediaQuery.of(context).padding.top + 56),
+          // 需手动留出 状态栏+胶囊栏(64) 高度, 否则 PlanList 等被遮挡
+          SizedBox(height: MediaQuery.of(context).padding.top + 64),
           // 连接状态条 (非 ready 时显示)
           Consumer(
             builder: (context, ref, _) {
@@ -1475,7 +1458,7 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                 ],
               ),
               // 工具栏 (输入框内底部一行, 对齐网页端):
-              // 左: + 功能 | 执行模式        右: 上下文长度 | 思考级别 | 模型
+              // 左: + 功能 | 执行模式        右: 思考级别 | 模型
               Padding(
                 padding: const EdgeInsets.only(top: AppSpacing.xs),
                 child: Row(
@@ -1493,12 +1476,13 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                       onChanged: (m) => notifier.setMode(m),
                     ),
                     const Spacer(),
-                    // 上下文用量环 (新对话还没有内容时隐藏)
-                    if (widget.state.messages.isNotEmpty) ...[
-                      ContextLengthIndicator(usage: widget.state.tokenUsage),
-                      const SizedBox(width: AppSpacing.xs),
-                    ],
-                    // 模型选择器
+                    // 思考级别选择器 — 级别中文名 chip (上下文环已移至顶部 Header)
+                    ThoughtLevelSelector(
+                      level: widget.state.thoughtLevel,
+                      onChanged: (l) => notifier.setThoughtLevel(l),
+                    ),
+                    const SizedBox(width: AppSpacing.xs),
+                    // 模型选择器 — 模型名文本 chip
                     ModelSelector(
                       models:
                           ref.watch(modelListProvider).valueOrNull?.models ??
@@ -1514,12 +1498,6 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                           const <String, String>{},
                       isLoading: ref.watch(modelListProvider).isLoading,
                       onSelected: (m) => notifier.setModel(m),
-                    ),
-                    const SizedBox(width: AppSpacing.xs),
-                    // 思考级别选择器 — 图标随级别变化
-                    ThoughtLevelSelector(
-                      level: widget.state.thoughtLevel,
-                      onChanged: (l) => notifier.setThoughtLevel(l),
                     ),
                   ],
                 ),

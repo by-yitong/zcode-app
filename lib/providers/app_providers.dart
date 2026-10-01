@@ -73,6 +73,14 @@ final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.dark);
 /// SharedPreferences 中存储的主题字符串 key
 const kThemeModePrefKey = 'themeMode';
 
+/// 屏幕常亮开关 (会话进行中不熄屏)。默认关。
+/// 初始值在 main() 中根据 SharedPreferences 持久化数据 override;
+/// 切换时由设置页同步原生 FLAG_KEEP_SCREEN_ON (DisplayService)。
+final keepScreenOnProvider = StateProvider<bool>((ref) => false);
+
+/// SharedPreferences 中存储的屏幕常亮 bool key
+const kKeepScreenOnPrefKey = 'keepScreenOn';
+
 /// SharedPreferences 字符串 → ThemeMode。null / 未知值回退到深色。
 ThemeMode themeModeFromString(String? value) {
   switch (value) {

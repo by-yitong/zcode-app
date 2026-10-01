@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/logging/app_logger.dart';
 import 'core/notifications/notification_service.dart';
+import 'core/services/display_service.dart';
 import 'core/services/pip_service.dart';
 import 'providers/app_providers.dart';
 import 'providers/pip_providers.dart';
@@ -21,20 +24,26 @@ void main() async {
   );
   // 悬浮窗行数设置同步恢复 (空/损坏/越界在 pipLinesFromPref 内回落默认 4)
   final initialPipLines = pipLinesFromPref(prefs.get(kPipLinesPrefKey));
+  // 屏幕常亮设置同步恢复 (null → 默认关)
+  final initialKeepScreenOn = prefs.getBool(kKeepScreenOnPrefKey) ?? false;
   appLog.i(
     '[App] 启动完成, 主题=${themeModeLabel(initialThemeMode)}, '
-    '悬浮窗行数=$initialPipLines',
+    '悬浮窗行数=$initialPipLines, 屏幕常亮=$initialKeepScreenOn',
   );
 
   // 通知: 初始化 + 点击通知的深链路由 (goRouterProvider 是全局 GoRouter 实例)
   await NotificationService.init();
   NotificationService.onNavigate = goRouterProvider.go;
 
+  // 恢复原生屏幕常亮标志 (仿 pipLines 恢复模式; 仅 Android 生效)
+  unawaited(DisplayService.setKeepScreenOn(initialKeepScreenOn));
+
   runApp(
     ProviderScope(
       overrides: [
         themeModeProvider.overrideWith((ref) => initialThemeMode),
         pipLinesProvider.overrideWith((ref) => initialPipLines),
+        keepScreenOnProvider.overrideWith((ref) => initialKeepScreenOn),
       ],
       child: const ZcodeApp(),
     ),
