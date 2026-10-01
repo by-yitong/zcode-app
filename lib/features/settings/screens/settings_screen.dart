@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -11,17 +12,16 @@ import '../../../core/services/update_service.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../../../data/models/glm_quota.dart';
 import '../../../providers/app_providers.dart';
-import '../../../providers/connections_providers.dart';
 import '../../../providers/pip_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
-import '../../../shared/widgets/app_section_header.dart';
-import '../../../shared/widgets/app_tile_group.dart';
 import '../../../shared/widgets/update_dialog.dart';
 import '../../agent/screens/cap_pages.dart';
+import '../../agent/widgets/caps_page_chrome.dart';
 import 'connections_screen.dart';
 import 'remote_settings_screen.dart';
 
-/// 设置页
+/// 设置页 — 参考截图: 白色分组卡片 (无边框/无分隔线) + 描边图标单行 +
+/// 灰色分组标题 + 右侧灰值/箭头; 断开连接为底部独立红字卡。
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
@@ -35,320 +35,306 @@ class SettingsScreen extends ConsumerWidget {
     final userName = user?.deviceName ?? '未登录';
     final deviceId = user?.deviceSid ?? '—';
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('设置')),
-      body: ListView(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.lg,
-          vertical: AppSpacing.md,
-        ),
-        children: [
-          // 用户卡 — 深色面卡 (拒绝全宽蓝色渐变大卡)
-          Container(
-            padding: const EdgeInsets.all(AppSpacing.md),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surface,
-              borderRadius: BorderRadius.circular(AppRadius.md),
-              border: Border.all(color: theme.colorScheme.outlineVariant),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF8B5CF6), AppColors.accent],
-                        ),
-                        borderRadius: BorderRadius.circular(AppRadius.md),
-                      ),
-                      child: const Icon(
-                        Icons.person_rounded,
-                        color: Colors.white,
-                        size: 22,
-                      ),
-                    ),
-                    const SizedBox(width: AppSpacing.md),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            userName,
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          Text(
-                            'SID · $deviceId',
-                            style: AppText.mono(
-                              context,
-                              size: AppTextSizes.monoXs,
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.md),
-                // 连接状态 pill (mono)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.sm,
-                    vertical: AppSpacing.xs,
-                  ),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(AppRadius.sm),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.cloud_done_rounded,
-                        size: 14,
-                        color: connectionAsync.maybeWhen(
-                          data: (s) => s == RelayConnectionState.ready
-                              ? AppColors.success
-                              : AppColors.warning,
-                          orElse: () => AppColors.warning,
-                        ),
-                      ),
-                      const SizedBox(width: AppSpacing.xs),
-                      Text(
-                        connectionAsync.maybeWhen(
-                          data: (state) {
-                            final s = state;
-                            return switch (s) {
-                              RelayConnectionState.ready => '已连接到 ZCode',
-                              RelayConnectionState.connecting => '正在连接...',
-                              RelayConnectionState.reconnecting => '正在重连...',
-                              RelayConnectionState.disconnected => '未连接',
-                              _ => '—',
-                            };
-                          },
-                          orElse: () => '—',
-                        ),
-                        style: AppText.mono(
-                          context,
-                          size: AppTextSizes.monoXs,
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                _GlmQuotaInlineSummary(),
-              ],
-            ),
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: CapsPageHeader.overlayStyle(context),
+      child: Scaffold(
+        appBar: const CapsPageHeader(title: '设置', plain: true),
+        body: ListView(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            AppSpacing.xs,
+            AppSpacing.lg,
+            AppSpacing.xxl,
           ),
-
-          // GLM 用量分区
-          const AppSectionHeader(title: 'GLM 用量'),
-          _GlmQuotaCard(),
-
-          // Agent 设置 (六项独立页面)
-          const AppSectionHeader(title: 'Agent 能力'),
-          AppTileGroup(
-            tiles: [
-              AppTile(
-                icon: Icons.auto_awesome_outlined,
-                title: '技能',
-                subtitle: '技能启停 / 详情 / 新建 / 外部导入',
-                showChevron: true,
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => SkillsPage(
-                      onNewSkill: () {
-                        Navigator.of(
-                          context,
-                        ).popUntil((r) => r.isFirst || r is! MaterialPageRoute);
-                      },
-                    ),
-                  ),
-                ),
-              ),
-              AppTile(
-                icon: Icons.smart_toy_outlined,
-                title: '子智能体',
-                subtitle: '模型 / 思考级别 / 提示词 / 工具',
-                showChevron: true,
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const SubagentsPage()),
-                ),
-              ),
-              AppTile(
-                icon: Icons.dns_outlined,
-                title: 'MCP',
-                subtitle: '服务器管理 / 状态 / 授权',
-                showChevron: true,
-                onTap: () => Navigator.of(
-                  context,
-                ).push(MaterialPageRoute(builder: (_) => const McpPage())),
-              ),
-              AppTile(
-                icon: Icons.terminal_rounded,
-                title: '命令',
-                subtitle: '斜杠命令的新建与编辑',
-                showChevron: true,
-                onTap: () => Navigator.of(
-                  context,
-                ).push(MaterialPageRoute(builder: (_) => const CommandsPage())),
-              ),
-              AppTile(
-                icon: Icons.webhook_outlined,
-                title: '钩子',
-                subtitle: '事件触发的自定义命令',
-                showChevron: true,
-                onTap: () => Navigator.of(
-                  context,
-                ).push(MaterialPageRoute(builder: (_) => const HooksPage())),
-              ),
-              AppTile(
-                icon: Icons.extension_outlined,
-                title: '插件',
-                subtitle: '已装插件与市场安装',
-                showChevron: true,
-                onTap: () => Navigator.of(
-                  context,
-                ).push(MaterialPageRoute(builder: (_) => const PluginsPage())),
-              ),
-            ],
-          ),
-
-          // 外观
-          const AppSectionHeader(title: '外观'),
-          AppTileGroup(
-            tiles: [
-              AppTile(
-                icon: Icons.dark_mode_rounded,
-                title: '主题',
-                value: themeModeLabel(ref.watch(themeModeProvider)),
-                showChevron: true,
-                onTap: () => _showThemePicker(context, ref),
-              ),
-              AppTile(
-                icon: Icons.picture_in_picture_alt_rounded,
-                title: '悬浮窗行数',
-                value: '${ref.watch(pipLinesProvider)} 行',
-                showChevron: true,
-                onTap: () => _showPipLinesPicker(context, ref),
-              ),
-              AppTile(
-                icon: Icons.brightness_high_outlined,
-                title: '屏幕常亮',
-                subtitle: '会话进行中不熄屏',
-                trailing: Switch(
-                  value: ref.watch(keepScreenOnProvider),
-                  onChanged: (v) => _applyKeepScreenOn(ref, v),
-                ),
-              ),
-            ],
-          ),
-
-          // 桌面端设置 (只读查看)
-          const AppSectionHeader(title: '桌面端设置'),
-          AppTileGroup(
-            tiles: [
-              AppTile(
-                icon: Icons.settings_remote_rounded,
-                title: '远程设置',
-                subtitle: '查看 ZCode 桌面端的配置',
-                showChevron: true,
-                onTap: () {
-                  final ws = ref.read(workspaceListProvider).valueOrNull ?? [];
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => RemoteSettingsScreen(
-                        workspacePath: ws.isNotEmpty
-                            ? ws.first.workspacePath
-                            : '',
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ],
-          ),
-
-          // 关于
-          const AppSectionHeader(title: '关于'),
-          AppTileGroup(
-            tiles: [
-              FutureBuilder<String>(
-                future: UpdateService.localVersion(),
-                builder: (_, snap) => AppTile(
-                  icon: Icons.info_outline_rounded,
-                  title: '版本',
-                  value: 'v${snap.data ?? '…'}',
-                ),
-              ),
-              AppTile(
-                icon: Icons.system_update_alt_rounded,
-                title: '检查更新',
-                subtitle: 'GitHub Releases',
-                showChevron: true,
-                onTap: () => _checkUpdate(context),
-              ),
-              AppTile(
-                icon: Icons.code_rounded,
-                title: 'GitHub',
-                subtitle: 'github.com/by-yitong/zcode-app',
-                showChevron: true,
-                onTap: () => _openUrl('https://github.com/by-yitong/zcode-app'),
-              ),
-              AppTile(
-                icon: Icons.description_outlined,
-                title: '开源协议',
-                value: 'MIT',
-                showChevron: true,
-                onTap: () => _showLicenseDialog(context),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: AppSpacing.xl),
-
-          // 连接管理 — 远程连接 + 断开连接 融合为一组
-          AppTileGroup(
-            tiles: [
-              AppTile(
-                icon: Icons.devices_rounded,
-                title: '远程连接',
-                subtitle: _connectionSubtitle(ref),
-                showChevron: true,
+          children: [
+            // 用户卡 — 头像 + 设备名/SID + 连接状态; 整卡点击 → 远程连接管理
+            _SettingsCard(
+              child: InkWell(
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const ConnectionsScreen()),
                 ),
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 44,
+                            height: 44,
+                            decoration: const BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [
+                                  AppColors.accentHover,
+                                  AppColors.accent,
+                                ],
+                              ),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.person_rounded,
+                              color: Colors.white,
+                              size: 22,
+                            ),
+                          ),
+                          const SizedBox(width: AppSpacing.md),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  userName,
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                Text(
+                                  'SID · $deviceId',
+                                  style: AppText.mono(
+                                    context,
+                                    size: AppTextSizes.monoXs,
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          ),
+                          Icon(
+                            Icons.chevron_right_rounded,
+                            size: 22,
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                      // 连接状态 pill (mono)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.sm,
+                          vertical: AppSpacing.xs,
+                        ),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.cloud_done_rounded,
+                              size: 14,
+                              color: connectionAsync.maybeWhen(
+                                data: (s) => s == RelayConnectionState.ready
+                                    ? AppColors.success
+                                    : AppColors.warning,
+                                orElse: () => AppColors.warning,
+                              ),
+                            ),
+                            const SizedBox(width: AppSpacing.xs),
+                            Text(
+                              connectionAsync.maybeWhen(
+                                data: (state) {
+                                  final s = state;
+                                  return switch (s) {
+                                    RelayConnectionState.ready =>
+                                      '已连接到 ZCode',
+                                    RelayConnectionState.connecting =>
+                                      '正在连接...',
+                                    RelayConnectionState.reconnecting =>
+                                      '正在重连...',
+                                    RelayConnectionState.disconnected =>
+                                      '未连接',
+                                    _ => '—',
+                                  };
+                                },
+                                orElse: () => '—',
+                              ),
+                              style: AppText.mono(
+                                context,
+                                size: AppTextSizes.monoXs,
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      _GlmQuotaInlineSummary(),
+                    ],
+                  ),
+                ),
               ),
-              AppTile(
+            ),
+
+            _sectionLabel(context, 'GLM 用量'),
+            _GlmQuotaCard(),
+
+            _sectionLabel(context, 'Agent 能力'),
+            _SettingsCard(
+              child: Column(
+                children: [
+                  _SettingsRow(
+                    icon: Icons.auto_awesome_outlined,
+                    title: '技能',
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => SkillsPage(
+                          onNewSkill: () {
+                            Navigator.of(context).popUntil(
+                              (r) => r.isFirst || r is! MaterialPageRoute,
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                  _SettingsRow(
+                    icon: Icons.smart_toy_outlined,
+                    title: '子智能体',
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const SubagentsPage()),
+                    ),
+                  ),
+                  _SettingsRow(
+                    icon: Icons.dns_outlined,
+                    title: 'MCP',
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const McpPage()),
+                    ),
+                  ),
+                  _SettingsRow(
+                    icon: Icons.terminal_rounded,
+                    title: '命令',
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const CommandsPage()),
+                    ),
+                  ),
+                  _SettingsRow(
+                    icon: Icons.webhook_outlined,
+                    title: '钩子',
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const HooksPage()),
+                    ),
+                  ),
+                  _SettingsRow(
+                    icon: Icons.extension_outlined,
+                    title: '插件',
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const PluginsPage()),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            _sectionLabel(context, '通用'),
+            _SettingsCard(
+              child: Column(
+                children: [
+                  _SettingsRow(
+                    icon: Icons.dark_mode_outlined,
+                    title: '主题',
+                    value: themeModeLabel(ref.watch(themeModeProvider)),
+                    onTap: () => _showThemePicker(context, ref),
+                  ),
+                  _SettingsRow(
+                    icon: Icons.picture_in_picture_alt_rounded,
+                    title: '悬浮窗行数',
+                    value: '${ref.watch(pipLinesProvider)} 行',
+                    onTap: () => _showPipLinesPicker(context, ref),
+                  ),
+                  _SettingsRow(
+                    icon: Icons.brightness_high_outlined,
+                    title: '屏幕常亮',
+                    trailing: Switch(
+                      value: ref.watch(keepScreenOnProvider),
+                      onChanged: (v) => _applyKeepScreenOn(ref, v),
+                    ),
+                  ),
+                  _SettingsRow(
+                    icon: Icons.settings_remote_rounded,
+                    title: '远程设置',
+                    onTap: () {
+                      final ws =
+                          ref.read(workspaceListProvider).valueOrNull ?? [];
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => RemoteSettingsScreen(
+                            workspacePath: ws.isNotEmpty
+                                ? ws.first.workspacePath
+                                : '',
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+
+            _sectionLabel(context, '关于'),
+            _SettingsCard(
+              child: Column(
+                children: [
+                  FutureBuilder<String>(
+                    future: UpdateService.localVersion(),
+                    builder: (_, snap) => _SettingsRow(
+                      icon: Icons.info_outline_rounded,
+                      title: '版本',
+                      value: 'v${snap.data ?? '…'}',
+                    ),
+                  ),
+                  _SettingsRow(
+                    icon: Icons.system_update_alt_rounded,
+                    title: '检查更新',
+                    onTap: () => _checkUpdate(context),
+                  ),
+                  _SettingsRow(
+                    icon: Icons.code_rounded,
+                    title: 'GitHub',
+                    onTap: () =>
+                        _openUrl('https://github.com/by-yitong/zcode-app'),
+                  ),
+                  _SettingsRow(
+                    icon: Icons.description_outlined,
+                    title: '开源协议',
+                    value: 'MIT',
+                    onTap: () => _showLicenseDialog(context),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: AppSpacing.md),
+            // 断开连接 — 独立红字卡 (对齐截图退出登录样式)
+            _SettingsCard(
+              child: _SettingsRow(
                 icon: Icons.power_settings_new_rounded,
-                iconTint: AppColors.danger,
                 title: '断开连接',
-                subtitle: '仅断开当前会话, 已保存的设备不受影响',
-                showChevron: true,
+                color: AppColors.danger,
                 onTap: () => _logout(context, ref),
               ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.xxl),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  /// 远程连接副标题 (已保存设备数)
-  String _connectionSubtitle(WidgetRef ref) {
-    final conns = ref.watch(connectionsProvider).valueOrNull;
-    final n = conns?.length ?? 0;
-    return n <= 1 ? '管理与切换已保存的设备' : '已保存 $n 台设备, 点击切换';
+  /// 灰色分组标题 (参考截图: 常规字重, 无大写/无箭头)
+  Widget _sectionLabel(BuildContext context, String label) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(6, 24, 6, 10),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 15,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
+      ),
+    );
   }
 
   Future<void> _logout(BuildContext context, WidgetRef ref) async {
@@ -595,6 +581,88 @@ class SettingsScreen extends ConsumerWidget {
   }
 }
 
+/// 白色分组卡片 (无边框; 深色 darkSurfaceElevated), 圆角 20。
+/// 用 Material 而非 Container: 行内 InkWell 的水波纹才能透出。
+class _SettingsCard extends StatelessWidget {
+  final Widget child;
+  const _SettingsCard({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Material(
+      color: dark ? AppColors.darkSurfaceElevated : Colors.white,
+      borderRadius: BorderRadius.circular(AppRadius.xl),
+      clipBehavior: Clip.antiAlias,
+      child: child,
+    );
+  }
+}
+
+/// 设置行 — 描边图标 + 标题 + 右侧灰值/自定义尾部/箭头, 单行无分隔线
+class _SettingsRow extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String? value;
+  final Widget? trailing; // Switch 等, 给定后不再画箭头
+  final Color? color; // 断开连接红
+  final VoidCallback? onTap;
+
+  const _SettingsRow({
+    required this.icon,
+    required this.title,
+    this.value,
+    this.trailing,
+    this.color,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: 15,
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 22, color: color ?? cs.onSurface),
+            const SizedBox(width: AppSpacing.lg),
+            Expanded(
+              child: Text(
+                title,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                  color: color ?? cs.onSurface,
+                ),
+              ),
+            ),
+            if (value != null) ...[
+              const SizedBox(width: AppSpacing.sm),
+              Text(
+                value!,
+                style: TextStyle(fontSize: 15, color: cs.onSurfaceVariant),
+              ),
+            ],
+            if (trailing != null)
+              trailing!
+            else if (onTap != null)
+              Icon(
+                Icons.chevron_right_rounded,
+                size: 22,
+                color: cs.onSurfaceVariant,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // ================================================================
 // GLM 用量 widgets
 // ================================================================
@@ -641,7 +709,13 @@ class _GlmQuotaCard extends ConsumerWidget {
 
     final configured = cred != null && cred.isValid;
 
-    return Card(
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.brightness == Brightness.dark
+            ? AppColors.darkSurfaceElevated
+            : Colors.white,
+        borderRadius: BorderRadius.circular(AppRadius.xl),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(

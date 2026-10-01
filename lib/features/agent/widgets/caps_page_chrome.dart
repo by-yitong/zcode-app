@@ -30,11 +30,16 @@ class CapsPageHeader extends StatelessWidget implements PreferredSizeWidget {
   /// 返回回调, 默认 Navigator.maybePop
   final VoidCallback? onBack;
 
+  /// true = 朴素风格: 返回用裸箭头 (无白色圆底), 标题加大 (22px)。
+  /// 设置页等按参考截图使用; 默认 false = 白圆钮 + 标准标题。
+  final bool plain;
+
   const CapsPageHeader({
     super.key,
     required this.title,
     this.actions,
     this.onBack,
+    this.plain = false,
   });
 
   /// 自定义 header 后状态栏样式须页面自给: 暗色底亮图标 / 亮色底暗图标
@@ -68,17 +73,29 @@ class CapsPageHeader extends StatelessWidget implements PreferredSizeWidget {
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w600,
+                    fontSize: plain ? 22 : null,
                   ),
                 ),
               ),
             ),
             Positioned(
-              left: AppSpacing.md,
-              child: CapsCircleIconButton(
-                icon: Icons.arrow_back_rounded,
-                tooltip: '返回',
-                onTap: onBack ?? () => Navigator.maybePop(context),
-              ),
+              left: plain ? 4 : AppSpacing.md,
+              child: plain
+                  ? IconButton(
+                      icon: const Icon(Icons.chevron_left_rounded, size: 28),
+                      tooltip: '返回',
+                      onPressed: onBack ?? () => Navigator.maybePop(context),
+                      style: IconButton.styleFrom(
+                        minimumSize: const Size(44, 44),
+                        padding: EdgeInsets.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    )
+                  : CapsCircleIconButton(
+                      icon: Icons.arrow_back_rounded,
+                      tooltip: '返回',
+                      onTap: onBack ?? () => Navigator.maybePop(context),
+                    ),
             ),
             if (actionList.isNotEmpty)
               Positioned(
