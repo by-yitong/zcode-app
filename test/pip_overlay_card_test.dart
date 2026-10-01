@@ -520,6 +520,56 @@ void main() {
     expect(find.text('1/1'), findsOneWidget);
   });
 
+  testWidgets('拖动中冻结快照重建, 松手后一次性应用', (tester) async {
+    final pip = _FakePipService(const OverlayPosition(100, 200));
+    final controller = StreamController<dynamic>();
+    addTearDown(controller.close);
+
+    await _pumpCard(
+      tester,
+      controller: controller,
+      pip: pip,
+      size: Size(320, pipWindowHeight(4)),
+      sessions: <PipSessionSnapshot>[
+        _session(key: 'task-a', title: '任务Alpha', running: true, text: '旧内容v1'),
+      ],
+    );
+
+    // 按住标题栏拖动 (进入 _dragging, 冻结 rebuild)
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.text('任务Alpha')),
+    );
+    await gesture.moveBy(const Offset(20, 10));
+    await tester.pump();
+
+    // 拖动中推送新快照 → 挂起不应用 (旧内容仍在屏)
+    controller.add(
+      jsonEncode(
+        PipSnapshot(
+          v: 1,
+          index: 0,
+          sessions: [
+            _session(
+              key: 'task-a',
+              title: '任务Alpha',
+              running: true,
+              text: '新内容v2',
+            ),
+          ],
+        ).toJson(),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('旧内容v1'), findsOneWidget, reason: '拖动中快照被冻结');
+    expect(find.text('新内容v2'), findsNothing);
+
+    // 松手 → 冻结的快照一次性应用
+    await gesture.up();
+    await tester.pump();
+    expect(find.text('新内容v2'), findsOneWidget, reason: '松手后应用挂起快照');
+    expect(find.text('旧内容v1'), findsNothing);
+  });
+
   testWidgets('拖动 in-flight 串行节流: 在途时吞中间目标, 完成后补发最终位置', (tester) async {
     final pip = _FakePipService(const OverlayPosition(100, 200));
     final controller = StreamController<dynamic>();

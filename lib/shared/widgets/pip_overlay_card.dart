@@ -77,6 +77,8 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
   bool _dragTargetReady = false;
   bool _moveInFlight = false;
   bool _moveSendQueued = false;
+  bool _dragging = false;
+  PipSnapshot? _pendingSnapshot;
 
   late void Function(String json) _send;
   late Future<void> Function() _close;
@@ -117,6 +119,16 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
     final snap = PipSnapshot.decode(raw);
     if (snap == null || !mounted) return;
     appLog.d('[Pip] ov recv pages=${snap.sessions.length} idx=${snap.index}');
+    // 拖动中冻结快照重建: 流式推送每 500ms 触发整卡 rebuild (markdown 重新
+    // 解析+布局), 撞上拖动帧预算就会掉帧抖动; 挂起待松手后一次性应用。
+    if (_dragging) {
+      _pendingSnapshot = snap;
+      return;
+    }
+    _applySnapshot(snap);
+  }
+
+  void _applySnapshot(PipSnapshot snap) {
     setState(() {
       final countChanged =
           _snapshot == null ||
@@ -133,6 +145,7 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
   }
 
   void _onPanStart(DragStartDetails details) {
+    _dragging = true;
     _dragTargetReady = false;
     unawaited(() async {
       final pos = await _pip.getOverlayPosition();
@@ -150,6 +163,18 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
       _dragTarget.y + details.delta.dy,
     );
     _dispatchMove();
+  }
+
+  void _onPanEnd(DragEndDetails details) => _onDragFinished();
+
+  void _onPanCancel() => _onDragFinished();
+
+  void _onDragFinished() {
+    _dragging = false;
+    // 应用拖动期间挂起的快照 (若无可省一次 rebuild)
+    final pending = _pendingSnapshot;
+    _pendingSnapshot = null;
+    if (pending != null && mounted) _applySnapshot(pending);
   }
 
   /// 串行 + 帧对齐发送 moveOverlay:
@@ -214,6 +239,8 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
                         session: sessions[_index.clamp(0, sessions.length - 1)],
                         onPanStart: _onPanStart,
                         onPanUpdate: _onPanUpdate,
+                        onPanEnd: _onPanEnd,
+                        onPanCancel: _onPanCancel,
                         onClose: () => unawaited(_close()),
                       ),
                       Expanded(
@@ -289,12 +316,16 @@ class _Header extends StatelessWidget {
   final PipSessionSnapshot session;
   final void Function(DragStartDetails) onPanStart;
   final void Function(DragUpdateDetails) onPanUpdate;
+  final void Function(DragEndDetails) onPanEnd;
+  final VoidCallback onPanCancel;
   final VoidCallback onClose;
 
   const _Header({
     required this.session,
     required this.onPanStart,
     required this.onPanUpdate,
+    required this.onPanEnd,
+    required this.onPanCancel,
     required this.onClose,
   });
 
@@ -314,6 +345,8 @@ class _Header extends StatelessWidget {
               behavior: HitTestBehavior.opaque,
               onPanStart: onPanStart,
               onPanUpdate: onPanUpdate,
+              onPanEnd: onPanEnd,
+              onPanCancel: onPanCancel,
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
                 child: Row(
