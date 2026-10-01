@@ -135,43 +135,13 @@ class _PluginsBrowserPageState extends ConsumerState<PluginsBrowserPage> {
 
             return Column(
               children: [
-                // 搜索
+                // 公开 / 个人 (pill chips, 顶部筛选)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.lg,
+                    AppSpacing.xs,
                     AppSpacing.lg,
                     AppSpacing.sm,
-                    AppSpacing.lg,
-                    0,
-                  ),
-                  child: TextField(
-                    controller: _search,
-                    onChanged: (v) => setState(() => _query = v),
-                    style: theme.textTheme.bodyMedium,
-                    cursorColor: AppColors.accent,
-                    decoration: InputDecoration(
-                      hintText: '搜索插件…',
-                      prefixIcon: Icon(
-                        Icons.search_rounded,
-                        size: 20,
-                        color: cs.onSurfaceVariant,
-                      ),
-                      isDense: true,
-                      filled: true,
-                      fillColor: cs.surfaceContainerHigh,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(28),
-                        borderSide: BorderSide.none,
-                      ),
-                    ),
-                  ),
-                ),
-                // 公开 / 个人 (pill chips)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.lg,
-                    AppSpacing.md,
-                    AppSpacing.lg,
-                    0,
                   ),
                   child: Row(
                     children: [
@@ -181,8 +151,6 @@ class _PluginsBrowserPageState extends ConsumerState<PluginsBrowserPage> {
                     ],
                   ),
                 ),
-                const SizedBox(height: AppSpacing.sm),
-                const SizedBox(height: AppSpacing.xs),
                 Expanded(
                   child: available.isEmpty
                       ? AppEmptyState(
@@ -219,6 +187,39 @@ class _PluginsBrowserPageState extends ConsumerState<PluginsBrowserPage> {
                                   installedNames,
                                 ),
                         ),
+                ),
+                // 搜索 (对齐参考截图: 大圆角 pill 固定在页面底部)
+                SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.lg,
+                      AppSpacing.sm,
+                      AppSpacing.lg,
+                      AppSpacing.sm,
+                    ),
+                    child: TextField(
+                      controller: _search,
+                      onChanged: (v) => setState(() => _query = v),
+                      style: theme.textTheme.bodyMedium,
+                      cursorColor: AppColors.accent,
+                      decoration: InputDecoration(
+                        hintText: '搜索插件…',
+                        prefixIcon: Icon(
+                          Icons.search_rounded,
+                          size: 20,
+                          color: cs.onSurfaceVariant,
+                        ),
+                        isDense: true,
+                        filled: true,
+                        fillColor: cs.surfaceContainerHigh,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(28),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ],
             );
