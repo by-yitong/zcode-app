@@ -6,7 +6,7 @@ import 'package:zcode_app/main.dart';
 
 void main() {
   testWidgets('App launches smoke test', (WidgetTester tester) async {
-    // ZcodeApp 是 ConsumerStatefulWidget (initState 订阅悬浮窗动作流), 必须包 scope
+    // ZcodeApp 是 ConsumerStatefulWidget (build 激活悬浮窗轮询等 provider), 必须包 scope
     await tester.pumpWidget(const ProviderScope(child: ZcodeApp()));
 
     // 等待至少一帧

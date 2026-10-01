@@ -413,8 +413,8 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
       mq.devicePixelRatio,
     );
     try {
-      // 记录窗口尺寸 (行数设置变化 resize 用) + 钉住当前会话 + 置位 active。
-      // active 置位即启动 pipMonitorProvider 聚合推送, 悬浮窗启动即拉快照不白屏。
+      // 记录窗口尺寸 (行数设置变化 resize 用) + 钉住当前会话 + 置位 active
+      // (active 置位即启动 pipMonitorProvider 聚合)。
       ref
           .read(pipPushSchedulerProvider)
           .configure(
@@ -424,6 +424,8 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
       ref.read(pipPinnedTaskProvider.notifier).state = widget.chatRef.taskId;
       ref.read(pipOverlayActiveProvider.notifier).state = true;
       await pip.show(widthPx: widthPx, heightPx: heightPx);
+      // 防白屏 (IPC v2: 悬浮窗不再回传 refresh, 由主 App 主动首推快照)
+      await ref.read(pipPushSchedulerProvider).pushNow();
     } catch (e) {
       ref.read(pipOverlayActiveProvider.notifier).state = false;
       if (!mounted) return;

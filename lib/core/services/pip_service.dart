@@ -1,18 +1,22 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../logging/app_logger.dart';
 
 // ================================================================
 // 悬浮窗进度监视器 (画中画) — flutter_overlay_window 封装 + IPC 契约模型
 //
-// 契约冻结 (docs/superpowers/specs/2026-10-01-pip-overlay-monitor-design.md):
-//   主 App → 悬浮窗: {"v":1,"index":0,"sessions":[{key,title,running,error,lines[]}]}
-//   悬浮窗 → 主 App: {"action":"refresh"} | {"action":"open","key":"..."}
-// shareData 双向均传 JSON 字符串 (跨引擎 codec 兼容性最稳)。
+// 契约冻结 v2 (docs/superpowers/specs/2026-10-01-pip-overlay-monitor-design.md
+// 「IPC 契约（冻结，v2 — 真机联调修订）」):
+//   主 App → 悬浮窗: shareData(json) 推快照 (走原生 Java 转发器)。
+//     主 App 一律不得在 Dart 侧绑定 x-slayer/overlay_messenger 的 handler —
+//     那会抢掉通道的原生槽位, 导致推送回声到主引擎自身。
+//   悬浮窗 → 主 App: SharedPreferences 信箱, key pip.action, 取走即清空。
+//     动作只有 {"action":"open","key":"<taskId>"} (无 refresh, 防白屏改由
+//     主 App 在 show 成功后立即主动推一次快照)。
 // ================================================================
 
 /// IPC 快照协议版本
@@ -29,6 +33,10 @@ const String kPipLinesPrefKey = 'pip.lines';
 const int pipDefaultLines = 4;
 const int pipMinLines = 1;
 const int pipMaxLines = 10;
+
+/// 悬浮窗 → 主 App 动作信箱 SharedPreferences key
+/// (值为动作 JSON 字符串; 空串 = 无待处理动作)
+const String kPipActionPrefKey = 'pip.action';
 
 /// 悬浮窗正文单行行高 (逻辑 px)
 const double pipLineExtent = 20.0;
@@ -152,7 +160,7 @@ class PipSnapshot {
 }
 
 // ================================================================
-// IPC 契约模型 (悬浮窗 → 主 App 动作)
+// IPC 契约模型 (悬浮窗 → 主 App 动作, SharedPreferences 信箱承载)
 // ================================================================
 
 /// 悬浮窗动作
@@ -160,15 +168,21 @@ sealed class PipOverlayAction {
   const PipOverlayAction();
 }
 
-/// 悬浮窗启动时拉快照 (防白屏)
-class PipRefreshAction extends PipOverlayAction {
-  const PipRefreshAction();
-}
-
 /// 轻点某页 → 跳回对应会话
 class PipOpenAction extends PipOverlayAction {
   final String key;
   const PipOpenAction(this.key);
+}
+
+/// 编码悬浮窗动作 → 信箱 JSON 字符串 (契约: {"action":"open","key":"..."})
+String encodePipAction(PipOverlayAction action) {
+  final map = switch (action) {
+    PipOpenAction(:final key) => <String, dynamic>{
+      'action': 'open',
+      'key': key,
+    },
+  };
+  return json.encode(map);
 }
 
 /// 解码悬浮窗动作 (JSON 字符串或已解码 Map); 结构非法返回 null
@@ -179,8 +193,6 @@ PipOverlayAction? decodePipAction(dynamic raw) {
         : raw;
     if (decoded is! Map) return null;
     switch (decoded['action']) {
-      case 'refresh':
-        return const PipRefreshAction();
       case 'open':
         final dynamic key = decoded['key'];
         if (key is! String || key.isEmpty) return null;
@@ -284,7 +296,8 @@ class PipService {
     }
   }
 
-  /// 推送数据到对端引擎 (双向 JSON 字符串)
+  /// 推送数据到对端引擎 (主 App → 悬浮窗, 走原生 Java 转发器; JSON 字符串)。
+  /// 注意: 主 App 侧严禁绑定 messenger 通道 handler (会抢掉原生转发器槽位)。
   Future<void> send(String json) async {
     try {
       await FlutterOverlayWindow.shareData(json);
@@ -293,11 +306,29 @@ class PipService {
     }
   }
 
-  /// 对端推送的动作流 (主 App 侧只消费 PipOverlayAction; 单订阅, 只许绑定一次)
-  Stream<PipOverlayAction> get actions async* {
-    await for (final dynamic raw in FlutterOverlayWindow.overlayListener) {
-      final action = decodePipAction(raw);
-      if (action != null) yield action;
+  /// 悬浮窗侧写动作信箱 (契约 v2: SharedPreferences, key pip.action)。
+  /// 两引擎同进程共享同一 SharedPreferences 实例, 写后立即可见。
+  Future<void> writeActionMailbox(String json) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(kPipActionPrefKey, json);
+    } catch (e) {
+      appLog.w('[Pip] 写动作信箱失败: $e');
+    }
+  }
+
+  /// 主 App 侧取动作信箱: 读到非空值即清空 key (写回空串) 并解码返回;
+  /// 无动作 / 结构非法 / 异常返回 null。
+  Future<PipOverlayAction?> takeActionMailbox() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(kPipActionPrefKey);
+      if (raw == null || raw.isEmpty) return null;
+      await prefs.setString(kPipActionPrefKey, '');
+      return decodePipAction(raw);
+    } catch (e) {
+      appLog.w('[Pip] 读动作信箱失败: $e');
+      return null;
     }
   }
 

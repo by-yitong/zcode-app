@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -43,10 +42,11 @@ class PipOverlayCard extends StatefulWidget {
     this.pip,
   });
 
-  /// 快照流 (默认插件 overlayListener; 测试注入)
+  /// 快照流 (默认插件 overlayListener, 悬浮窗引擎侧占用该槽位收快照; 测试注入)
   final Stream<dynamic>? snapshotStream;
 
-  /// 悬浮窗 → 主 App 回传通道 (默认 shareData; 测试注入捕获)
+  /// 悬浮窗 → 主 App 回传通道 (默认写 SharedPreferences 信箱 pip.action;
+  /// 测试注入捕获)
   final void Function(String json)? onSend;
 
   /// 关闭悬浮窗 (默认 closeOverlay; 测试注入)
@@ -82,16 +82,13 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
     final stream =
         widget.snapshotStream ?? FlutterOverlayWindow.overlayListener;
     _sub = stream.listen(_onMessage);
-    // 启动即向主 App 拉一次快照 (防白屏)
-    _send(jsonEncodeIpcAction(const PipRefreshAction()));
+    // 防白屏 (v2): 不再回传 refresh, 主 App 在 show 成功后立即主动推快照
   }
 
-  static void _defaultSend(String json) {
-    // 引擎未就绪等场景静默 (主 App 会持续推快照);
-    // 异步异常用 onError 接住, try/catch 接不到 Future 内部抛错
-    unawaited(
-      FlutterOverlayWindow.shareData(json).then((_) {}, onError: (_) {}),
-    );
+  /// 默认回传通道: 写 SharedPreferences 信箱 (key pip.action), 主 App 在
+  /// 悬浮窗打开期间轮询取走。写失败在服务内吞掉落日志, 不炸悬浮窗。
+  void _defaultSend(String json) {
+    unawaited(_pip.writeActionMailbox(json));
   }
 
   static Future<void> _defaultClose() async {
@@ -182,9 +179,8 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
                             return _SessionBody(
                               key: ValueKey('pip-page-${session.key}'),
                               session: session,
-                              onOpen: (key) => _send(
-                                jsonEncodeIpcAction(PipOpenAction(key)),
-                              ),
+                              onOpen: (key) =>
+                                  _send(encodePipAction(PipOpenAction(key))),
                             );
                           },
                         ),
@@ -209,18 +205,6 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
       ),
     );
   }
-}
-
-/// IPC 动作 → JSON 字符串 (契约: 悬浮窗 → 主 App)
-String jsonEncodeIpcAction(PipOverlayAction action) {
-  final map = switch (action) {
-    PipRefreshAction() => <String, dynamic>{'action': 'refresh'},
-    PipOpenAction(:final key) => <String, dynamic>{
-      'action': 'open',
-      'key': key,
-    },
-  };
-  return json.encode(map);
 }
 
 /// 空态: 全部会话结束 / 无运行中会话 (悬浮窗保留, 用户手动关闭)

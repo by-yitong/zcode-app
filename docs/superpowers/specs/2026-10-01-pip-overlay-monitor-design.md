@@ -85,15 +85,30 @@ TextPart / 旧路径 content），按行切分取尾部至多 60 行（缓冲常
   （交互仿主题选择：点击弹底部表选 1–10，改后即时生效 → resizeOverlay + 重推）。
 - `lib/features/chat/screens/chat_screen.dart`：GlassAppBar actions 加画中画
   IconButton → 权限检查 → `pipOverlayActive` 置位 → showOverlay。
-- 主 App 侧监听 `overlayListener`：收到 `{"action":"open","key":...}` →
+- 主 App 侧轮询 `pip.action` 信箱（见 IPC 契约 v2）：收到 `{"action":"open","key":...}` →
   `app/pip` 通道 `bringToForeground` + `goRouter.go('${AppRoutes.chat}?workspace=...')`
   （与 history_drawer 跳会话同款）。
 
-### IPC 契约（冻结）
+### IPC 契约（冻结，v2 — 真机联调修订）
 
-`shareData` 双向均传 **JSON 字符串**（跨引擎 codec 兼容性最稳）。
+`flutter_overlay_window` 0.5.0 的 `x-slayer/overlay_messenger` 通道每个引擎只有
+一个 handler 槽位，且主引擎槽位被 Dart 侧 `overlayListener` 占用后，原生转发器
+失效（消息回声到本引擎，永远到不了对端）。因此双向通信机制改为：
 
-主 App → 悬浮窗（快照，节流 500ms / 集合变化即时）：
+- **主 App → 悬浮窗**：`FlutterOverlayWindow.shareData(json)`（走原生 Java 转发器）。
+  **主 App 一律不得访问 `overlayListener`**（会抢掉原生槽位导致推送失效）。
+- **悬浮窗 → 主 App**：SharedPreferences 信箱，key `pip.action`（JSON 字符串）。
+  两引擎同进程共享同一 SharedPreferences 实例，写后立即可见；主 App 仅在悬浮窗
+  打开期间以 300ms 轮询读取，取走即清空。动作只有一种：
+
+```json
+{"action": "open", "key": "task-uuid"}
+```
+
+- **防白屏**：不再用 refresh 动作；主 App 在 showOverlay 成功后立即主动推一次
+  快照，此后快照变化节流 500ms 推送。
+
+主 App → 悬浮窗快照结构：
 
 ```json
 {
@@ -111,16 +126,9 @@ TextPart / 旧路径 content），按行切分取尾部至多 60 行（缓冲常
 }
 ```
 
-`key` 语义（实现期定稿）：`Task.id`（路由跳会话需要 taskId）。悬浮窗把它当
-不透明串原样回传，主 App 收到 `open` 后经 `allTasksProvider` 反查 workspace；
-反查不到（如任务列表未加载完）则放弃跳转。
-
-悬浮窗 → 主 App：
-
-```json
-{"action": "refresh"}                      // 悬浮窗启动时拉一次最新快照 (防白屏)
-{"action": "open", "key": "task-uuid"}     // 轻点某页 (key=Task.id, 见上)
-```
+`key` 语义：`Task.id`（路由跳会话需要 taskId）。悬浮窗把它当不透明串原样回传，
+主 App 收到 `open` 后经 `allTasksProvider` 反查 workspace；反查不到（如任务列表
+未加载完）则放弃跳转。
 
 ## 数据模型
 

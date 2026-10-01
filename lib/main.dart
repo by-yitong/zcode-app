@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -60,19 +58,10 @@ class ZcodeApp extends ConsumerStatefulWidget {
 
 class _ZcodeAppState extends ConsumerState<ZcodeApp>
     with WidgetsBindingObserver {
-  /// 悬浮窗回传动作流订阅 (refresh / open)
-  StreamSubscription<Object>? _pipActionsSub;
-
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // 主 App 侧监听悬浮窗动作: refresh → 立即重推快照;
-    // open → bringToForeground + 跳对应会话 (见 pipActionHandlerProvider)
-    _pipActionsSub = ref
-        .read(pipServiceProvider)
-        .actions
-        .listen(ref.read(pipActionHandlerProvider));
     // 悬浮窗快照聚合变化 → 节流 500ms shareData 推送 (见 pipPushSchedulerProvider)
     ref.listenManual(pipMonitorProvider, (_, __) {
       ref.read(pipPushSchedulerProvider).schedule();
@@ -81,8 +70,6 @@ class _ZcodeAppState extends ConsumerState<ZcodeApp>
 
   @override
   void dispose() {
-    unawaited(_pipActionsSub?.cancel());
-    _pipActionsSub = null;
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -103,6 +90,9 @@ class _ZcodeAppState extends ConsumerState<ZcodeApp>
     ref.watch(keepAliveProvider);
     // 悬浮窗打开期间激活 X 关闭兜底轮询 (isActive 失败 → active 回滚)
     ref.watch(pipLivenessProvider);
+    // 悬浮窗打开期间激活动作信箱轮询 (open → bringToForeground + 跳会话;
+    // IPC v2: 反向不走 overlay_messenger, 主引擎槽位留给原生转发器)
+    ref.watch(pipActionPollerProvider);
     final themeMode = ref.watch(themeModeProvider);
     return MaterialApp.router(
       title: 'ZCode',

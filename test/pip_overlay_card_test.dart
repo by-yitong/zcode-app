@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:zcode_app/core/services/pip_service.dart';
 import 'package:zcode_app/shared/theme/app_design_tokens.dart';
@@ -10,7 +11,8 @@ import 'package:zcode_app/shared/widgets/pip_overlay_card.dart';
 
 // ================================================================
 // 悬浮窗进度监视器 widget 测试
-// 注入 snapshotStream / onSend / onClose, 不触碰插件平台通道。
+// 注入 snapshotStream / onSend / onClose, 不触碰插件平台通道
+// (信箱测试用 SharedPreferences mock; IPC 契约 v2, 无 refresh 动作)。
 // 注意: 运行中会话有呼吸动画 (无限), 全部用显式 pump, 不用 pumpAndSettle。
 // ================================================================
 
@@ -33,7 +35,7 @@ PipSessionSnapshot _session({
 Future<void> _pumpCard(
   WidgetTester tester, {
   required StreamController<dynamic> controller,
-  required void Function(String) onSend,
+  void Function(String)? onSend,
   required Size size,
   required List<PipSessionSnapshot> sessions,
   int index = 0,
@@ -54,7 +56,7 @@ Future<void> _pumpCard(
       ),
     ),
   );
-  await tester.pump(); // initState: 回传 refresh + 订阅
+  await tester.pump(); // initState: 订阅快照流
   controller.add(
     jsonEncode(PipSnapshot(v: 1, index: index, sessions: sessions).toJson()),
   );
@@ -74,7 +76,41 @@ void main() {
     expect(pipLinesFromPref('5'), 5);
   });
 
-  testWidgets('启动即回传 refresh 动作 (防白屏)', (tester) async {
+  testWidgets('轻点写入 SharedPreferences 信箱 (默认通道): pip.action = open JSON', (
+    tester,
+  ) async {
+    // 默认回传通道走 SharedPreferences 信箱 (IPC 契约 v2), 用 mock prefs 验证
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final controller = StreamController<dynamic>();
+    addTearDown(controller.close);
+
+    await _pumpCard(
+      tester,
+      controller: controller,
+      size: Size(320, pipWindowHeight(4)),
+      sessions: <PipSessionSnapshot>[
+        _session(
+          key: 'task-a',
+          title: '任务Alpha',
+          lines: <String>['alpha-line-1'],
+        ),
+      ],
+    );
+
+    // 轻点正文 → _defaultSend 写信箱
+    await tester.tap(find.text('alpha-line-1'));
+    await tester.pump();
+
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(kPipActionPrefKey);
+    expect(raw, isNotNull);
+    expect(jsonDecode(raw!) as Map<String, dynamic>, <String, dynamic>{
+      'action': 'open',
+      'key': 'task-a',
+    });
+  });
+
+  testWidgets('轻点某页回传 {"action":"open","key":...} JSON (注入通道)', (tester) async {
     final sent = <String>[];
     final controller = StreamController<dynamic>();
     addTearDown(controller.close);
@@ -84,11 +120,23 @@ void main() {
       controller: controller,
       onSend: sent.add,
       size: Size(320, pipWindowHeight(4)),
-      sessions: const <PipSessionSnapshot>[],
+      sessions: <PipSessionSnapshot>[
+        _session(
+          key: 'task-a',
+          title: '任务Alpha',
+          lines: <String>['alpha-line-1', 'alpha-line-2'],
+        ),
+        _session(key: 'task-b', title: '任务Beta'),
+      ],
     );
 
-    expect(sent, isNotEmpty);
-    expect(sent.first, jsonEncode(<String, dynamic>{'action': 'refresh'}));
+    // 轻点第 1 页正文 (非拖动/滑动)
+    await tester.tap(find.text('alpha-line-2'));
+    await tester.pump();
+
+    final last = jsonDecode(sent.last) as Map<String, dynamic>;
+    expect(last['action'], 'open');
+    expect(last['key'], 'task-a');
   });
 
   testWidgets('双会话快照渲染 + 左右滑动切换 + 页码指示', (tester) async {
@@ -224,35 +272,6 @@ void main() {
 
     expect(find.text('暂无进行中会话'), findsOneWidget);
     expect(find.byType(PageView), findsNothing);
-  });
-
-  testWidgets('轻点某页回传 {"action":"open","key":...} JSON', (tester) async {
-    final sent = <String>[];
-    final controller = StreamController<dynamic>();
-    addTearDown(controller.close);
-
-    await _pumpCard(
-      tester,
-      controller: controller,
-      onSend: sent.add,
-      size: Size(320, pipWindowHeight(4)),
-      sessions: <PipSessionSnapshot>[
-        _session(
-          key: 'task-a',
-          title: '任务Alpha',
-          lines: <String>['alpha-line-1', 'alpha-line-2'],
-        ),
-        _session(key: 'task-b', title: '任务Beta'),
-      ],
-    );
-
-    // 轻点第 1 页正文 (非拖动/滑动)
-    await tester.tap(find.text('alpha-line-2'));
-    await tester.pump();
-
-    final last = jsonDecode(sent.last) as Map<String, dynamic>;
-    expect(last['action'], 'open');
-    expect(last['key'], 'task-a');
   });
 
   testWidgets('集合变化: index 夹紧到合法范围 (2 页 → 1 页停在第 1 页)', (tester) async {

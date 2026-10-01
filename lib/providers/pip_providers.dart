@@ -23,7 +23,9 @@ import 'chat_provider.dart';
 //                         尾部缓冲, 输出 IPC 快照
 //   - pipPushSchedulerProvider: 节流 500ms shareData 推快照 + 行数变化 resize
 //   - pipLivenessProvider: 悬浮窗被 X 关闭后主引擎收不到通知, 轮询兜底回收
-//   - pipActionHandlerProvider: 处理悬浮窗回传动作 (refresh / open)
+//   - pipActionPollerProvider: 悬浮窗打开期间 300ms 轮询 SharedPreferences
+//                         动作信箱 (pip.action), 取走即清空 (IPC 契约 v2)
+//   - pipActionHandlerProvider: 处理悬浮窗 open 动作 (信箱轮询喂入)
 //
 // 保活链: ZcodeApp.listenManual(pipMonitorProvider) → 激活聚合;
 // 关闭时 pipOverlayActiveProvider=false → 页面集合清空 → 各 chatProvider
@@ -163,7 +165,7 @@ class PipPushScheduler {
     });
   }
 
-  /// 立即推送当前快照 (悬浮窗 refresh 动作 / resize 后)
+  /// 立即推送当前快照 (showOverlay 成功后首推防白屏 / resize 后)
   Future<void> pushNow() async {
     try {
       final snapshot = _ref.read(pipMonitorProvider);
@@ -213,22 +215,39 @@ final pipLivenessProvider = Provider<void>((ref) {
 });
 
 // ================================================================
-// 悬浮窗回传动作处理
+// 悬浮窗 → 主 App 动作: SharedPreferences 信箱轮询 (IPC 契约 v2)
+// (overlay_messenger 通道主引擎槽位必须留给原生转发器, 故反向不走 shareData)
 // ================================================================
 
-/// 悬浮窗回传动作处理 (main.dart 的 ZcodeApp 订阅 PipService.actions 后调用)
-final pipActionHandlerProvider = Provider<void Function(PipOverlayAction)>((
-  ref,
-) {
+/// 动作信箱轮询周期
+const Duration _pipActionPollInterval = Duration(milliseconds: 300);
+
+/// 悬浮窗打开期间 300ms 轮询动作信箱, 读到 open 动作交给
+/// pipActionHandlerProvider。由 ZcodeApp build watch 激活;
+/// active 变 false / provider dispose 时取消 Timer (不留 pending Timer)。
+final pipActionPollerProvider = Provider<void>((ref) {
+  final active = ref.watch(pipOverlayActiveProvider);
+  if (!active) return;
   final pip = ref.read(pipServiceProvider);
-  return (PipOverlayAction action) {
-    switch (action) {
-      case PipRefreshAction():
-        // 悬浮窗启动拉快照 (防白屏): 立即推一次
-        unawaited(ref.read(pipPushSchedulerProvider).pushNow());
-      case PipOpenAction(:final key):
-        unawaited(_openPipSession(ref, pip, key));
+  final timer = Timer.periodic(_pipActionPollInterval, (_) async {
+    if (!ref.read(pipOverlayActiveProvider)) return;
+    try {
+      final action = await pip.takeActionMailbox();
+      if (action is PipOpenAction) {
+        ref.read(pipActionHandlerProvider)(action);
+      }
+    } catch (e) {
+      appLog.w('[Pip] 动作信箱轮询失败: $e');
     }
+  });
+  ref.onDispose(timer.cancel);
+});
+
+/// 悬浮窗 open 动作处理 (pipActionPollerProvider 读到信箱动作后调用)
+final pipActionHandlerProvider = Provider<void Function(PipOpenAction)>((ref) {
+  final pip = ref.read(pipServiceProvider);
+  return (PipOpenAction action) {
+    unawaited(_openPipSession(ref, pip, action.key));
   };
 });
 
