@@ -332,6 +332,43 @@ class AskUserQuestion {
   const AskUserQuestion({required this.callId, this.questions = const []});
 }
 
+/// 从 pendingInteractions (快照或 patch) 提取 AskUserQuestion。
+///
+/// 快照与 patch 两条路径共用: 早期只解析快照, patch 帧到达时
+/// pendingQuestion 不更新 → 会话内 AI 提问不弹窗, 切走再切回
+/// (重新订阅触发全量快照) 才显示。
+AskUserQuestion? askQuestionFromInteractions(
+  List<V4PendingInteraction> interactions,
+) {
+  for (final pi in interactions) {
+    if (pi.kind != 'userInput') continue;
+    final u = pi.userInput;
+    if (u == null || u.questions.isEmpty) continue;
+    return AskUserQuestion(
+      callId: pi.interactionId,
+      questions: u.questions
+          .map(
+            (q) => QuestionItem(
+              question: q.question,
+              header: q.header,
+              multiSelect: q.multiSelect,
+              options: q.options
+                  .map(
+                    (o) => QuestionOption(
+                      value: o.value,
+                      label: o.label,
+                      description: o.description ?? '',
+                    ),
+                  )
+                  .toList(),
+            ),
+          )
+          .toList(),
+    );
+  }
+  return null;
+}
+
 /// 构造 resolveInteraction answer.content (网页端 Vat() 同构)。
 ///
 /// [selectedValues]/[customAnswers] 按题下标传值; 某题两者皆空则整题跳过。
@@ -1486,9 +1523,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
     final control = snap.control;
     final usage = snap.usage?.contextWindow;
 
-    // pendingInteractions → permissions + questions
+    // pendingInteractions → permissions (问题统一走 askQuestionFromInteractions)
     final perms = <PendingPermission>[];
-    V4PendingInteraction? question;
     for (final pi in snap.pendingInteractions) {
       if (pi.kind == 'permission' && pi.permission != null) {
         final p = pi.permission!;
@@ -1512,13 +1548,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
                 .toList(),
           ),
         );
-      } else if (pi.kind == 'userInput' && pi.userInput != null) {
-        final u = pi.userInput!;
-        if (u.questions.isNotEmpty) {
-          question = pi;
-        }
       }
     }
+    final question = askQuestionFromInteractions(snap.pendingInteractions);
 
     // plan
     final plan = snap.plan
@@ -1556,34 +1588,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
     );
 
     // 处理 AskUserQuestion (全部题一次给出, 弹窗逐题作答后一次性提交)
-    if (question != null && question.userInput != null) {
-      final u = question.userInput!;
-      if (u.questions.isNotEmpty) {
-        state = state.copyWith(
-          pendingQuestion: AskUserQuestion(
-            callId: question.interactionId,
-            questions: u.questions
-                .map(
-                  (q) => QuestionItem(
-                    question: q.question,
-                    header: q.header,
-                    multiSelect: q.multiSelect,
-                    options: q.options
-                        .map(
-                          (o) => QuestionOption(
-                            value: o.value,
-                            label: o.label,
-                            description: o.description ?? '',
-                          ),
-                        )
-                        .toList(),
-                  ),
-                )
-                .toList(),
-          ),
-          isResponding: false,
-        );
-      }
+    if (question != null) {
+      state = state.copyWith(pendingQuestion: question, isResponding: false);
+    } else if (state.pendingQuestion != null) {
+      // 快照里没有挂起问题 → 清空 (已被 resolve/decline)
+      state = state.copyWith(pendingQuestion: _clearPendingQuestion);
     }
 
     // 标题回调
@@ -1957,7 +1966,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
           );
         }
       }
-      state = state.copyWith(pendingPermissions: perms);
+      state = state.copyWith(
+        pendingPermissions: perms,
+        // ★ patch 是增量权威: 帧里带 userInput → 置 pendingQuestion (会话内
+        //   实时弹答题窗, 不必等切回会话触发全量快照); 帧里没有 → 清空。
+        //   copyWith 传 null 是"保留旧值", 清空必须走 _clearPendingQuestion。
+        pendingQuestion:
+            askQuestionFromInteractions(interactions) ?? _clearPendingQuestion,
+      );
     }
     if (patch.containsKey('plan')) {
       final planRaw = patch['plan'] as Map<String, dynamic>?;

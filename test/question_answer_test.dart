@@ -1,6 +1,9 @@
 // buildQuestionAnswerContent 纯函数测试
 // (构造规则逐字对齐网页端 asar renderer 的 Vat() 函数)。
+// askQuestionFromInteractions: 快照/patch 共用的提问提取 (回归: patch 帧
+// 曾经只解析 permissions, 会话内 AI 提问不显示, 切回会话才补弹)。
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zcode_app/core/relay/relay_events.dart';
 import 'package:zcode_app/providers/chat_provider.dart';
 
 QuestionItem _q(
@@ -191,6 +194,61 @@ void main() {
       expect(content['answer'], ['docker', 'bare']);
       expect(content['answers'], {'部署方式?': 'docker, bare'});
       expect((content['answer_0'] as List).contains('容器化部署'), isFalse);
+    });
+  });
+
+  group('askQuestionFromInteractions', () {
+    V4PendingInteraction perm(String id) => V4PendingInteraction(
+      interactionId: id,
+      kind: 'permission',
+      createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+      permission: V4PermissionPayload(toolCallId: 'tc', toolName: 'Bash'),
+    );
+
+    V4PendingInteraction input(String id, {int questions = 1}) =>
+        V4PendingInteraction(
+          interactionId: id,
+          kind: 'userInput',
+          createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+          userInput: V4UserInputPayload(
+            questions: List.generate(
+              questions,
+              (i) => V4Question(
+                question: '第${i + 1}题?',
+                header: '标题$i',
+                multiSelect: i.isOdd,
+                options: [
+                  V4QuestionOption(value: 'a', label: '选项A'),
+                  V4QuestionOption(value: 'b', label: '选项B', description: '说明'),
+                ],
+              ),
+            ),
+          ),
+        );
+
+    test('userInput 带题 → 提取 callId + 全部题与选项', () {
+      final q = askQuestionFromInteractions([
+        perm('perm_1'),
+        input('q_1', questions: 2),
+      ])!;
+      expect(q.callId, 'q_1');
+      expect(q.questions.length, 2);
+      expect(q.questions.first.question, '第1题?');
+      expect(q.questions.first.multiSelect, isFalse);
+      expect(q.questions[1].multiSelect, isTrue);
+      expect(q.questions.first.options[1].description, '说明');
+    });
+
+    test('只有 permission → null (无挂起提问)', () {
+      expect(askQuestionFromInteractions([perm('perm_1')]), isNull);
+    });
+
+    test('userInput 空 questions → null (不算挂起提问)', () {
+      expect(askQuestionFromInteractions([input('q_1', questions: 0)]), isNull);
+    });
+
+    test('空列表 → null', () {
+      expect(askQuestionFromInteractions(const []), isNull);
     });
   });
 }
