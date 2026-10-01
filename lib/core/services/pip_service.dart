@@ -108,16 +108,25 @@ class PipSnapshot {
   final int index;
   final List<PipSessionSnapshot> sessions;
 
+  /// 屏幕物理尺寸 px (v3.1; 悬浮窗松手钳制回屏用)。null = 主 App 未提供,
+  /// 悬浮窗跳过钳制 (向后兼容)。
+  final int? screenW;
+  final int? screenH;
+
   const PipSnapshot({
     required this.v,
     required this.index,
     required this.sessions,
+    this.screenW,
+    this.screenH,
   });
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     'v': v,
     'index': index,
     'sessions': <Map<String, dynamic>>[for (final s in sessions) s.toJson()],
+    if (screenW != null) 'sw': screenW,
+    if (screenH != null) 'sh': screenH,
   };
 
   /// 解码悬浮窗收到的快照 (JSON 字符串或已解码 Map); 结构非法返回 null
@@ -151,6 +160,8 @@ class PipSnapshot {
         v: v,
         index: decoded['index'] is int ? decoded['index'] as int : 0,
         sessions: sessions,
+        screenW: decoded['sw'] is int ? decoded['sw'] as int : null,
+        screenH: decoded['sh'] is int ? decoded['sh'] as int : null,
       );
     } catch (_) {
       return null;
@@ -244,17 +255,27 @@ class PipService {
     }
   }
 
-  /// 弹出悬浮窗 (禁用原生拖动 — 会抢内容手势; 松手吸附左右边缘)
-  Future<void> show({required int widthPx, required int heightPx}) async {
+  /// 弹出悬浮窗 (默认关原生拖动; 标题栏按下瞬时开关, 见 setNativeDrag)。
+  /// - alignment topLeft: 参数 = 屏幕绝对坐标 (TOP|LEFT 锚点)。CENTER 偏移
+  ///   语义在部分 ROM 上 relayout 时被重新解释, 真机表现为"一点就跳"。
+  /// - startPosition 传逻辑 dp (原生侧 dpToPx 换算一次, 语义正确)。
+  /// - positionGravity none: 关松手吸边动画 (与拖动开关并发互相干扰)。
+  Future<void> show({
+    required int widthPx,
+    required int heightPx,
+    int startX = 24,
+    int startY = 120,
+  }) async {
     await FlutterOverlayWindow.showOverlay(
       width: widthPx,
       height: heightPx,
       enableDrag: false,
-      positionGravity: PositionGravity.auto,
+      positionGravity: PositionGravity.none,
       flag: OverlayFlag.defaultFlag,
       overlayTitle: 'ZCode 进度监视器',
       overlayContent: '轻点小窗返回对应会话',
-      alignment: OverlayAlignment.center,
+      alignment: OverlayAlignment.topLeft,
+      startPosition: OverlayPosition(startX.toDouble(), startY.toDouble()),
     );
   }
 
@@ -285,10 +306,17 @@ class PipService {
     required int windowHeightDp,
   }) async {
     try {
+      final before = await FlutterOverlayWindow.getOverlayPosition();
       await FlutterOverlayWindow.resizeOverlay(
         windowWidthDp,
         windowHeightDp,
         enabled,
+      );
+      final after = await FlutterOverlayWindow.getOverlayPosition();
+      appLog.d(
+        '[Pip] drag=$enabled size ${windowWidthDp}x$windowHeightDp '
+        'pos ${before.x.toStringAsFixed(1)},${before.y.toStringAsFixed(1)}'
+        ' → ${after.x.toStringAsFixed(1)},${after.y.toStringAsFixed(1)}',
       );
     } catch (e) {
       appLog.w('[Pip] setNativeDrag($enabled) 失败: $e');

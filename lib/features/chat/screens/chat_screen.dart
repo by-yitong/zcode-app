@@ -426,9 +426,24 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
             windowWidthPx: widthPx,
             devicePixelRatio: mq.devicePixelRatio,
           );
+      // 屏幕物理尺寸随快照带给悬浮窗 (松手钳制回屏用; TOP|LEFT 锚点下
+      // 初始位置也按屏幕居中算)
+      ref.read(pipScreenPxProvider.notifier).state = (
+        w: (mq.size.width * mq.devicePixelRatio).round(),
+        h: (mq.size.height * mq.devicePixelRatio).round(),
+      );
       ref.read(pipPinnedTaskProvider.notifier).state = widget.chatRef.taskId;
       ref.read(pipOverlayActiveProvider.notifier).state = true;
-      await pip.show(widthPx: widthPx, heightPx: heightPx);
+      // 起始位置: 屏幕水平居中、垂直约 1/3 处 (逻辑 dp, TOP|LEFT 绝对坐标)
+      final startXdp = ((mq.size.width - widthPx / mq.devicePixelRatio) / 2)
+          .round();
+      final startYdp = (mq.size.height * 0.3).round();
+      await pip.show(
+        widthPx: widthPx,
+        heightPx: heightPx,
+        startX: startXdp,
+        startY: startYdp,
+      );
       // 防白屏 (IPC v2: 悬浮窗不再回传 refresh, 由主 App 主动首推快照)
       appLog.d('[Pip] show 成功 → 首推快照');
       await ref.read(pipPushSchedulerProvider).pushNow();

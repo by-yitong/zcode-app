@@ -186,11 +186,38 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
     final h = _dragWindowHeightDp;
     if (w != null && h != null) {
       unawaited(_pip.setNativeDrag(false, windowWidthDp: w, windowHeightDp: h));
+      unawaited(_clampIntoScreen(w, h));
     }
     // 应用拖动期间挂起的快照 (若无可省一次 rebuild)
     final pending = _pendingSnapshot;
     _pendingSnapshot = null;
     if (pending != null && mounted) _acceptSnapshot(pending);
+  }
+
+  /// 松手后把窗口钳制回屏幕内 (仅松手一次, 不与拖动过程打架)。
+  /// 原生拖动对参数无边界, 窗口可被甩出屏; 部分ROM对屏外参数存在
+  /// "钳制显示/真实摆放"两套解释, 参数出屏即触屏就跳 — 保持参数恒在
+  /// 屏内可根除。屏幕尺寸由快照 sw/sh 提供 (悬浮窗引擎拿不到真实屏宽),
+  /// 缺失时跳过。
+  Future<void> _clampIntoScreen(int windowWDp, int windowHDp) async {
+    final snap = _snapshot;
+    final sw = snap?.screenW;
+    final sh = snap?.screenH;
+    if (sw == null || sh == null) return;
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final screenWDp = sw / dpr;
+    final screenHDp = sh / dpr;
+    try {
+      final pos = await _pip.getOverlayPosition();
+      if (pos == null || !mounted) return;
+      final maxX = (screenWDp - windowWDp).clamp(0, screenWDp);
+      final maxY = (screenHDp - windowHDp).clamp(0, screenHDp);
+      final cx = pos.x.clamp(0, maxX).toDouble();
+      final cy = pos.y.clamp(0, maxY).toDouble();
+      if (cx == pos.x && cy == pos.y) return;
+      appLog.d('[Pip] 钳制回屏 (${pos.x},${pos.y}) → ($cx,$cy)');
+      await _pip.moveOverlay(OverlayPosition(cx, cy));
+    } catch (_) {}
   }
 
   @override

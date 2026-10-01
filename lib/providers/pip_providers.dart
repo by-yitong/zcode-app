@@ -113,12 +113,20 @@ final pipMonitorProvider = Provider<PipSnapshot>((ref) {
   final pinnedIdx = pages.indexWhere(
     (t) => t.id == ref.watch(pipPinnedTaskProvider),
   );
+  // 屏幕物理尺寸 (打开悬浮窗时由 ChatScreen 记录, 悬浮窗松手钳制回屏用)
+  final screen = ref.watch(pipScreenPxProvider);
   return PipSnapshot(
     v: kPipSnapshotVersion,
     index: pinnedIdx > 0 ? pinnedIdx : 0,
     sessions: sessions,
+    screenW: screen?.w,
+    screenH: screen?.h,
   );
 });
+
+/// 屏幕物理尺寸 px (主 App 侧打开悬浮窗时写入; 悬浮窗引擎拿不到真实屏幕
+/// 大小 — 它的 MediaQuery 是悬浮窗自身窗口 — 经快照带给它做松手钳制)
+final pipScreenPxProvider = StateProvider<({int w, int h})?>((ref) => null);
 
 // ================================================================
 // 推送调度: 节流 500ms + 行数变化 resize
