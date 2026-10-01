@@ -75,6 +75,7 @@ class ChatFloatingHeader extends StatelessWidget
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 // 左胶囊: 菜单 (= 打开会话列表抽屉)
@@ -95,8 +96,9 @@ class ChatFloatingHeader extends StatelessWidget
                   ),
                 ),
                 const SizedBox(width: 12),
-                // 中间胶囊: 会话信息卡片 (标题 + 上下文/用量状态行)
-                Expanded(
+                // 中间胶囊: 会话信息卡片 (标题 + 上下文/用量状态行)。
+                // Flexible(loose) 适配内容宽度, 不占满; 超长标题在剩余空间内省略。
+                Flexible(
                   child: _GlassPill(
                     key: const ValueKey('chatHeaderPillCenter'),
                     bg: bg,
