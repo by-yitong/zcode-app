@@ -480,6 +480,63 @@ void main() {
 
     expect(find.text('暂无进行中会话'), findsOneWidget);
     expect(find.byType(PageView), findsNothing);
+    // 空态必须保留标题栏 (拖动手柄 + X 关闭 + 中性灰点), 不能整树替换
+    expect(find.text('ZCode'), findsOneWidget, reason: '空态标题栏标题');
+    expect(find.byTooltip('关闭悬浮窗'), findsOneWidget, reason: '空态 X 关闭在');
+    expect(find.byKey(const ValueKey('pip-dot-empty')), findsOneWidget);
+    expect(find.text('1/1'), findsNothing, reason: '空态无页码指示');
+  });
+
+  testWidgets('内容→空 防抖: 1.5s 内来新内容不闪空态, 超时才真正切空', (tester) async {
+    final controller = StreamController<dynamic>();
+    addTearDown(controller.close);
+
+    await _pumpCard(
+      tester,
+      controller: controller,
+      size: Size(320, pipWindowHeight(4)),
+      sessions: <PipSessionSnapshot>[
+        _session(key: 'task-a', title: '任务Alpha', running: true, text: 'v1'),
+      ],
+    );
+    expect(find.text('任务Alpha'), findsOneWidget);
+
+    // 推空快照 → 防抖挂起, 内容仍在
+    controller.add(
+      jsonEncode(PipSnapshot(v: 1, index: 0, sessions: const []).toJson()),
+    );
+    await tester.pump();
+    expect(find.text('任务Alpha'), findsOneWidget, reason: '防抖期内不切空态');
+
+    // 防抖期内新内容到达 → 取消防抖, 立即应用 (会话状态翻转不闪空)
+    controller.add(
+      jsonEncode(
+        PipSnapshot(
+          v: 1,
+          index: 0,
+          sessions: [
+            _session(
+              key: 'task-a',
+              title: '任务Alpha',
+              running: true,
+              text: 'v2',
+            ),
+          ],
+        ).toJson(),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('v2'), findsOneWidget, reason: '新内容立即应用, 防抖取消');
+
+    // 再次推空 → 1.5s 内不切, 超时后真正进入空态
+    controller.add(
+      jsonEncode(PipSnapshot(v: 1, index: 0, sessions: const []).toJson()),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 700));
+    expect(find.text('任务Alpha'), findsOneWidget, reason: '防抖窗口内维持内容');
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('暂无进行中会话'), findsOneWidget, reason: '超时后切空态');
   });
 
   testWidgets('集合变化: index 夹紧到合法范围 (2 页 → 1 页停在第 1 页)', (tester) async {

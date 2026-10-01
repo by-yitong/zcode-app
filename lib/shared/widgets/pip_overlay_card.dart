@@ -79,6 +79,7 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
   bool _moveSendQueued = false;
   bool _dragging = false;
   PipSnapshot? _pendingSnapshot;
+  Timer? _emptyDebounce;
 
   late void Function(String json) _send;
   late Future<void> Function() _close;
@@ -110,6 +111,8 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
 
   @override
   void dispose() {
+    _emptyDebounce?.cancel();
+    _emptyDebounce = null;
     unawaited(_sub?.cancel());
     _sub = null;
     super.dispose();
@@ -125,6 +128,22 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
       _pendingSnapshot = snap;
       return;
     }
+    _acceptSnapshot(snap);
+  }
+
+  /// 快照准入: 内容→空 延迟 1.5s 应用 (会话状态在 running/complete 间短暂
+  /// 翻动时, 空态若立即上屏会反复闪烁"抖动"); 期间来新内容立即取消防抖。
+  void _acceptSnapshot(PipSnapshot snap) {
+    final hadContent = (_snapshot?.sessions.isNotEmpty ?? false);
+    if (hadContent && snap.sessions.isEmpty) {
+      _emptyDebounce?.cancel();
+      _emptyDebounce = Timer(const Duration(milliseconds: 1500), () {
+        _emptyDebounce = null;
+        if (mounted) _applySnapshot(snap);
+      });
+      return;
+    }
+    _emptyDebounce?.cancel();
     _applySnapshot(snap);
   }
 
@@ -174,7 +193,7 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
     // 应用拖动期间挂起的快照 (若无可省一次 rebuild)
     final pending = _pendingSnapshot;
     _pendingSnapshot = null;
-    if (pending != null && mounted) _applySnapshot(pending);
+    if (pending != null && mounted) _acceptSnapshot(pending);
   }
 
   /// 串行 + 帧对齐发送 moveOverlay:
@@ -231,20 +250,24 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
               border: Border.all(color: AppColors.darkBorder),
               borderRadius: BorderRadius.circular(AppRadius.lg),
             ),
-            child: sessions.isEmpty
-                ? const _EmptyBody()
-                : Column(
-                    children: [
-                      _Header(
-                        session: sessions[_index.clamp(0, sessions.length - 1)],
-                        onPanStart: _onPanStart,
-                        onPanUpdate: _onPanUpdate,
-                        onPanEnd: _onPanEnd,
-                        onPanCancel: _onPanCancel,
-                        onClose: () => unawaited(_close()),
-                      ),
-                      Expanded(
-                        child: PageView.builder(
+            // 空态也保留标题栏: 拖动手柄与 X 关闭不能因无会话而失效
+            // (曾因整树替换成 _EmptyBody 导致空态既不能拖也不能关)。
+            child: Column(
+              children: [
+                _Header(
+                  session: sessions.isEmpty
+                      ? null
+                      : sessions[_index.clamp(0, sessions.length - 1)],
+                  onPanStart: _onPanStart,
+                  onPanUpdate: _onPanUpdate,
+                  onPanEnd: _onPanEnd,
+                  onPanCancel: _onPanCancel,
+                  onClose: () => unawaited(_close()),
+                ),
+                Expanded(
+                  child: sessions.isEmpty
+                      ? const _EmptyBody()
+                      : PageView.builder(
                           itemCount: sessions.length,
                           onPageChanged: (value) =>
                               setState(() => _index = value),
@@ -258,22 +281,24 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
                             );
                           },
                         ),
-                      ),
-                      SizedBox(
-                        height: 24,
-                        child: Center(
-                          child: Text(
-                            '${_index + 1}/${sessions.length}',
-                            style: const TextStyle(
-                              fontFamily: kMonoFont,
-                              fontSize: 10,
-                              color: AppColors.darkInkMuted,
-                            ),
-                          ),
+                ),
+                // 页码指示 (空态无页, 隐藏)
+                if (sessions.isNotEmpty)
+                  SizedBox(
+                    height: 24,
+                    child: Center(
+                      child: Text(
+                        '${_index + 1}/${sessions.length}',
+                        style: const TextStyle(
+                          fontFamily: kMonoFont,
+                          fontSize: 10,
+                          color: AppColors.darkInkMuted,
                         ),
                       ),
-                    ],
+                    ),
                   ),
+              ],
+            ),
           ),
         ),
       ),
@@ -313,7 +338,8 @@ class _EmptyBody extends StatelessWidget {
 /// 标题栏: 状态点 + 标题 + X; 同时是拖动手柄 (onPanUpdate 累积位移 → moveOverlay
 /// 经 in-flight 串行节流发送, 见 _dispatchMove)
 class _Header extends StatelessWidget {
-  final PipSessionSnapshot session;
+  /// null = 空态 (无会话): 中性灰点 + "ZCode" 标题, 手柄与关闭按钮照常可用
+  final PipSessionSnapshot? session;
   final void Function(DragStartDetails) onPanStart;
   final void Function(DragUpdateDetails) onPanUpdate;
   final void Function(DragEndDetails) onPanEnd;
@@ -355,7 +381,7 @@ class _Header extends StatelessWidget {
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
-                        session.title,
+                        session?.title ?? 'ZCode',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -390,23 +416,36 @@ class _Header extends StatelessWidget {
 
 /// 运行状态点: 运行中呼吸点 (accent) / 完成绿点 / 出错红点
 class _StatusDot extends StatelessWidget {
-  final PipSessionSnapshot session;
+  /// null = 空态: 中性灰点 (无呼吸)
+  final PipSessionSnapshot? session;
   const _StatusDot({required this.session});
 
   @override
   Widget build(BuildContext context) {
-    final color = session.running
+    if (session == null) {
+      return Container(
+        key: const ValueKey('pip-dot-empty'),
+        width: 8,
+        height: 8,
+        decoration: const BoxDecoration(
+          color: AppColors.darkInkMuted,
+          shape: BoxShape.circle,
+        ),
+      );
+    }
+    final s = session!;
+    final color = s.running
         ? AppColors.accent
-        : session.error
+        : s.error
         ? AppColors.danger
         : AppColors.success;
     final dot = Container(
-      key: ValueKey('pip-dot-${session.key}'),
+      key: ValueKey('pip-dot-${s.key}'),
       width: 8,
       height: 8,
       decoration: BoxDecoration(color: color, shape: BoxShape.circle),
     );
-    if (!session.running) return dot;
+    if (!s.running) return dot;
     return _Breathing(child: dot);
   }
 }
