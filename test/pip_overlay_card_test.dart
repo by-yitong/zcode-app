@@ -626,7 +626,7 @@ void main() {
     expect(find.text('旧内容v1'), findsNothing);
   });
 
-  testWidgets('标题栏拖动走原生 enableDrag: 按下开, 松手关, 同尺寸不变形', (tester) async {
+  testWidgets('标题栏拖动走原生 enableDrag: 按下开, 松手关', (tester) async {
     final pip = _FakePipService();
     final controller = StreamController<dynamic>();
     addTearDown(controller.close);
@@ -641,44 +641,32 @@ void main() {
       ],
     );
 
-    // 从标题栏起手拖动 → onPanStart: 同尺寸 resizeOverlay 切 enableDrag=true
+    // 从标题栏起手拖动 → onPanStart: 原生拖动开关打开 (不触发 relayout)
     final gesture = await tester.startGesture(
       tester.getCenter(find.text('任务Alpha')),
     );
     await gesture.moveBy(const Offset(40, 0));
     await tester.pump();
-    expect(pip.dragToggles.length, 1, reason: '按下开启原生拖动');
-    expect(pip.dragToggles.first.$1, true);
-    expect(pip.dragToggles.first.$2, 320, reason: '宽度保持窗口当前尺寸');
-    expect(
-      pip.dragToggles.first.$3,
-      pipWindowHeight(4).round(),
-      reason: '高度保持窗口当前尺寸',
-    );
+    expect(pip.dragToggles, [true], reason: '按下开启原生拖动');
 
     // 继续拖动不产生额外开关 (原生层自己搬窗口, Dart 不参与)
     await gesture.moveBy(const Offset(40, 0));
     await gesture.moveBy(const Offset(40, 0));
-    expect(pip.dragToggles.length, 1);
+    expect(pip.dragToggles, [true]);
 
     // 松手 → 关回 enableDrag=false (正文手势不被原生拖动抢)
     await gesture.up();
     await tester.pump();
-    expect(pip.dragToggles.length, 2);
-    expect(pip.dragToggles.last.$1, false);
+    expect(pip.dragToggles, [true, false]);
   });
 }
 
-/// 假 PipService: 记录 setNativeDrag 开关 (enabled, widthDp, heightDp)
+/// 假 PipService: 记录 setNativeDrag 开关
 class _FakePipService extends PipService {
-  final List<(bool, int, int)> dragToggles = <(bool, int, int)>[];
+  final List<bool> dragToggles = <bool>[];
 
   @override
-  Future<void> setNativeDrag(
-    bool enabled, {
-    required int windowWidthDp,
-    required int windowHeightDp,
-  }) async {
-    dragToggles.add((enabled, windowWidthDp, windowHeightDp));
+  Future<void> setNativeDrag(bool enabled) async {
+    dragToggles.add(enabled);
   }
 }

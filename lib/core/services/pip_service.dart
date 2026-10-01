@@ -297,27 +297,12 @@ class PipService {
     }
   }
 
-  /// 标题栏拖动开关: 按下时开原生拖动 (插件 onTouch 在原生层直接搬窗口,
-  /// 零通道往返 = 官方例子的丝滑路径), 松手关掉 (正文 PageView/滚动不受影响)。
-  /// 尺寸传当前窗口值 (dp), 原生侧同尺寸 relayout 无视觉变化。
-  Future<void> setNativeDrag(
-    bool enabled, {
-    required int windowWidthDp,
-    required int windowHeightDp,
-  }) async {
+  /// 标题栏拖动开关: 按下开原生拖动 (插件 onTouch 在原生层直接搬窗口,
+  /// 零通道往返 = 官方例子的丝滑路径), 松手关掉 (正文手势不被原生拖动抢)。
+  /// 走本地补丁的 setDragEnabled 通道 — 只翻标志, 不 relayout。
+  Future<void> setNativeDrag(bool enabled) async {
     try {
-      final before = await FlutterOverlayWindow.getOverlayPosition();
-      await FlutterOverlayWindow.resizeOverlay(
-        windowWidthDp,
-        windowHeightDp,
-        enabled,
-      );
-      final after = await FlutterOverlayWindow.getOverlayPosition();
-      appLog.d(
-        '[Pip] drag=$enabled size ${windowWidthDp}x$windowHeightDp '
-        'pos ${before.x.toStringAsFixed(1)},${before.y.toStringAsFixed(1)}'
-        ' → ${after.x.toStringAsFixed(1)},${after.y.toStringAsFixed(1)}',
-      );
+      await FlutterOverlayWindow.setDragEnabled(enabled);
     } catch (e) {
       appLog.w('[Pip] setNativeDrag($enabled) 失败: $e');
     }

@@ -68,12 +68,9 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
 
   // 拖动手柄: 插件原生拖动 (onTouch 在原生层直接搬窗口, 零通道往返 =
   // 官方例子的丝滑路径)。默认关 (原生监听挂在整窗上, 开着会抢正文手势);
-  // 按下标题栏瞬间 resizeOverlay 同尺寸切 enableDrag=true, 松手切回 false。
-  // 曾用 Dart 侧 moveOverlay 逐帧搬窗 (帧对齐+串行+整数量化), 通道延迟使
-  // 窗口落后手指一帧再追帧, 真机表现为抖动 — 已废弃整条路径。
+  // 按下标题栏瞬间 setDragEnabled(true) (本地补丁: 只翻标志不 relayout),
+  // 松手关回。曾用 Dart 侧 moveOverlay 逐帧搬窗, 通道延迟致抖动 — 已废弃。
   bool _dragging = false;
-  int? _dragWindowWidthDp;
-  int? _dragWindowHeightDp;
   PipSnapshot? _pendingSnapshot;
   Timer? _emptyDebounce;
 
@@ -161,19 +158,8 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
 
   void _onPanStart(DragStartDetails details) {
     _dragging = true;
-    // 记录当前窗口尺寸 (dp, 取卡片 RenderBox = 生产环境即悬浮窗窗口尺寸),
-    // 同尺寸 resizeOverlay 仅切换 enableDrag — 原生层拖动接管, 跟手零延迟
-    final size = context.size;
-    if (size == null) return;
-    _dragWindowWidthDp = size.width.round();
-    _dragWindowHeightDp = size.height.round();
-    unawaited(
-      _pip.setNativeDrag(
-        true,
-        windowWidthDp: _dragWindowWidthDp!,
-        windowHeightDp: _dragWindowHeightDp!,
-      ),
-    );
+    // 原生层拖动接管, 跟手零延迟 (开关不触发 relayout)
+    unawaited(_pip.setNativeDrag(true));
   }
 
   void _onPanEnd(DragEndDetails details) => _onDragFinished();
@@ -182,16 +168,16 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
 
   void _onDragFinished() {
     _dragging = false;
-    final w = _dragWindowWidthDp;
-    final h = _dragWindowHeightDp;
-    if (w != null && h != null) {
-      unawaited(_pip.setNativeDrag(false, windowWidthDp: w, windowHeightDp: h));
-      unawaited(_clampIntoScreen(w, h));
-    }
+    unawaited(_pip.setNativeDrag(false));
     // 应用拖动期间挂起的快照 (若无可省一次 rebuild)
     final pending = _pendingSnapshot;
     _pendingSnapshot = null;
     if (pending != null && mounted) _acceptSnapshot(pending);
+    // 钳制回屏 (原生拖动对参数无边界, 窗口可被甩出屏)
+    final size = context.size;
+    if (size != null) {
+      unawaited(_clampIntoScreen(size.width, size.height));
+    }
   }
 
   /// 松手后把窗口钳制回屏幕内 (仅松手一次, 不与拖动过程打架)。
@@ -199,7 +185,7 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
   /// "钳制显示/真实摆放"两套解释, 参数出屏即触屏就跳 — 保持参数恒在
   /// 屏内可根除。屏幕尺寸由快照 sw/sh 提供 (悬浮窗引擎拿不到真实屏宽),
   /// 缺失时跳过。
-  Future<void> _clampIntoScreen(int windowWDp, int windowHDp) async {
+  Future<void> _clampIntoScreen(double windowWDp, double windowHDp) async {
     final snap = _snapshot;
     final sw = snap?.screenW;
     final sh = snap?.screenH;

@@ -95,3 +95,10 @@ flutter:
         - asset: assets/fonts/JetBrainsMono-Regular.ttf
         - asset: assets/fonts/JetBrainsMono-Bold.ttf
           weight: 700
+
+# 悬浮窗插件本地补丁版 (原版 0.5.0 两个病根: setFitsSystemWindows(true) 导致
+# 部分 ROM relayout 时窗口被系统栏顶偏; resizeOverlay 换拖动开关会触发
+# relayout)。补丁见 third_party/flutter_overlay_window (标记 "ZCode 补丁")
+dependency_overrides:
+  flutter_overlay_window:
+    path: third_party/flutter_overlay_window
