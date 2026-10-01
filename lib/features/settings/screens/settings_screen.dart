@@ -18,8 +18,11 @@ import '../../agent/widgets/caps_page_chrome.dart';
 import 'connections_screen.dart';
 import 'remote_settings_screen.dart';
 
-/// 设置页 — 参考截图: 白色分组卡片 (无边框/无分隔线) + 描边图标单行 +
-/// 灰色分组标题 + 右侧灰值/箭头; 断开连接为底部独立红字卡。
+/// 设置页 — DNA 提取自参考截图 (hallmark study):
+/// - 页面底: 浅紫灰分组底 #F2F2F7 (仅浅色), 白卡无边框/无阴影, 圆角 20
+/// - 分组标题: 斜体灰字, 左缘与行内图标对齐
+/// - 行: 描边图标 24 + 标题 17 + 右灰值/细箭头 20, 行高 ~56
+/// - 底部独立操作卡 (断开连接): 黑字 + logout 图标, 无箭头 (同截图退出登录)
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
@@ -36,6 +39,10 @@ class SettingsScreen extends ConsumerWidget {
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: CapsPageHeader.overlayStyle(context),
       child: Scaffold(
+        // 浅色换参考截图的紫灰分组底; 深色沿用全局主题
+        backgroundColor: theme.brightness == Brightness.light
+            ? const Color(0xFFF2F2F7)
+            : null,
         appBar: const CapsPageHeader(title: '设置', plain: true),
         body: ListView(
           padding: const EdgeInsets.fromLTRB(
@@ -101,8 +108,8 @@ class SettingsScreen extends ConsumerWidget {
                             ),
                           ),
                           Icon(
-                            Icons.chevron_right_rounded,
-                            size: 22,
+                            Icons.chevron_right,
+                            size: 20,
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
                         ],
@@ -310,13 +317,13 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ),
 
-            const SizedBox(height: AppSpacing.md),
-            // 断开连接 — 独立红字卡 (对齐截图退出登录样式)
+            const SizedBox(height: AppSpacing.xl),
+            // 断开连接 — 底部独立操作卡 (对齐截图退出登录: 黑字 logout, 无箭头)
             _SettingsCard(
               child: _SettingsRow(
-                icon: Icons.power_settings_new_rounded,
+                icon: Icons.logout,
                 title: '断开连接',
-                color: AppColors.danger,
+                showChevron: false,
                 onTap: () => _logout(context, ref),
               ),
             ),
@@ -326,14 +333,20 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
-  /// 灰色分组标题 (参考截图: 常规字重, 无大写/无箭头)
+  /// 分组标题 (参考截图: 斜体灰字, 左缘与行内图标对齐, 无大写/无箭头)
   Widget _sectionLabel(BuildContext context, String label) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(6, 24, 6, 10),
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.xl,
+        AppSpacing.lg,
+        AppSpacing.sm,
+      ),
       child: Text(
         label,
         style: TextStyle(
           fontSize: 15,
+          fontStyle: FontStyle.italic,
           color: Theme.of(context).colorScheme.onSurfaceVariant,
         ),
       ),
@@ -602,13 +615,16 @@ class _SettingsCard extends StatelessWidget {
   }
 }
 
-/// 设置行 — 描边图标 + 标题 + 右侧灰值/自定义尾部/箭头, 单行无分隔线
+/// 设置行 — 描边图标 + 标题 + 右侧灰值/自定义尾部/箭头, 单行无分隔线。
+/// 行高 ~56 (图标 24 + 上下 16), 与参考截图的舒展节奏一致。
 class _SettingsRow extends StatelessWidget {
   final IconData icon;
   final String title;
   final String? value;
   final Widget? trailing; // Switch 等, 给定后不再画箭头
-  final Color? color; // 断开连接红
+
+  /// null = 跟随 onTap (可点才画); false = 强制不画 (如断开连接)
+  final bool? showChevron;
   final VoidCallback? onTap;
 
   const _SettingsRow({
@@ -616,7 +632,7 @@ class _SettingsRow extends StatelessWidget {
     required this.title,
     this.value,
     this.trailing,
-    this.color,
+    this.showChevron,
     this.onTap,
   });
 
@@ -628,19 +644,19 @@ class _SettingsRow extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.lg,
-          vertical: 15,
+          vertical: 16,
         ),
         child: Row(
           children: [
-            Icon(icon, size: 22, color: color ?? cs.onSurface),
-            const SizedBox(width: AppSpacing.lg),
+            Icon(icon, size: 24, color: cs.onSurface),
+            const SizedBox(width: AppSpacing.md),
             Expanded(
               child: Text(
                 title,
                 style: TextStyle(
-                  fontSize: 16,
+                  fontSize: 17,
                   fontWeight: FontWeight.w500,
-                  color: color ?? cs.onSurface,
+                  color: cs.onSurface,
                 ),
               ),
             ),
@@ -651,14 +667,17 @@ class _SettingsRow extends StatelessWidget {
                 style: TextStyle(fontSize: 15, color: cs.onSurfaceVariant),
               ),
             ],
-            if (trailing != null)
-              trailing!
-            else if (onTap != null)
+            if (trailing != null) ...[
+              const SizedBox(width: AppSpacing.sm),
+              trailing!,
+            ] else if (onTap != null && (showChevron ?? true)) ...[
+              const SizedBox(width: AppSpacing.sm),
               Icon(
-                Icons.chevron_right_rounded,
-                size: 22,
+                Icons.chevron_right,
+                size: 20,
                 color: cs.onSurfaceVariant,
               ),
+            ],
           ],
         ),
       ),

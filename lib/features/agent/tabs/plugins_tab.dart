@@ -1,4 +1,4 @@
-/// 插件 Tab — 已安装 (图标/组件/启停/更新) + 插件市场管理
+/// 插件 Tab — 已安装 (行列表/启停/更新/卸载) + 插件市场管理
 library;
 
 import 'package:flutter/material.dart';
@@ -55,27 +55,29 @@ class PluginsTabState extends ConsumerState<PluginsTab>
             children: [
               const CapsSectionHeader('已安装'),
               if (installed.isNotEmpty)
-                // 横向一排大图标 (无文字标签), 点击弹详情
-                SizedBox(
-                  height: 64,
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        for (var i = 0; i < installed.length; i++)
-                          Padding(
-                            padding: EdgeInsets.only(
-                              right: i == installed.length - 1 ? 0 : 16,
-                            ),
-                            child: _installedIcon(
-                              installed[i],
-                              iconOf['${installed[i].marketplace}/${installed[i].name}'],
-                            ),
-                          ),
-                      ],
+                // 行列表 (对齐网页端): 图标 + 名称/版本 + 启停开关, 点击弹详情
+                for (final p in installed)
+                  CapsPlainTile(
+                    leading: PluginIconBox(
+                      icon: iconOf['${p.marketplace}/${p.name}'],
+                      name: p.label,
+                      size: 44,
                     ),
-                  ),
-                )
+                    title: p.label,
+                    subtitle: p.hasUpdate
+                        ? '有更新 · v${p.latestVersion ?? '?'}'
+                        : (p.version?.isNotEmpty == true
+                              ? 'v${p.version}'
+                              : null),
+                    trailing: CapsSwitch(
+                      value: p.enabled,
+                      onChanged: (v) => _run(
+                        () =>
+                            ref.read(pluginsProvider.notifier).setEnabled(p, v),
+                      ),
+                    ),
+                    onTap: () => _pluginActions(context, p),
+                  )
               else
                 CapsPlainTile(
                   leading: Container(
@@ -83,7 +85,7 @@ class PluginsTabState extends ConsumerState<PluginsTab>
                     height: 44,
                     decoration: BoxDecoration(
                       color: cs.surfaceContainerHigh,
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(AppRadius.md),
                     ),
                     child: Icon(
                       Icons.storefront_outlined,
@@ -95,18 +97,28 @@ class PluginsTabState extends ConsumerState<PluginsTab>
                 ),
               const CapsSectionHeader('插件市场'),
               for (final m in data.marketplaces) _marketRow(cs, m),
+              // 添加市场入口行
+              CapsPlainTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: cs.surfaceContainerHigh,
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                  ),
+                  child: const Icon(
+                    Icons.add_rounded,
+                    size: 20,
+                    color: AppColors.accent,
+                  ),
+                ),
+                title: '添加插件市场',
+                onTap: _addMarketSheet,
+              ),
             ],
           ),
         );
       },
-    );
-  }
-
-  /// 已装插件横向图标 (64px 圆角方块), 点击弹详情
-  Widget _installedIcon(PluginEntry p, String? icon) {
-    return GestureDetector(
-      onTap: () => _pluginActions(context, p),
-      child: PluginIconBox(icon: icon, name: p.label, size: 64),
     );
   }
 
@@ -120,7 +132,7 @@ class PluginsTabState extends ConsumerState<PluginsTab>
           color: m.isOfficial
               ? AppColors.accentContainer
               : cs.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(AppRadius.md),
         ),
         child: Icon(
           m.isOfficial ? Icons.verified_outlined : Icons.storefront_outlined,
@@ -237,12 +249,15 @@ class PluginsTabState extends ConsumerState<PluginsTab>
             ListTile(
               contentPadding: EdgeInsets.zero,
               dense: true,
-              leading: Icon(
+              leading: const Icon(
                 Icons.delete_outline_rounded,
                 size: 20,
                 color: AppColors.danger,
               ),
-              title: Text('卸载', style: TextStyle(color: AppColors.danger)),
+              title: const Text(
+                '卸载',
+                style: TextStyle(color: AppColors.danger),
+              ),
               subtitle: Text(
                 '其提供的技能/命令将一并移除',
                 style: TextStyle(
@@ -250,22 +265,188 @@ class PluginsTabState extends ConsumerState<PluginsTab>
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
-              onTap: () async {
+              onTap: () {
                 Navigator.pop(context);
-                final ok = await capsConfirm(
-                  context,
-                  title: '卸载插件',
-                  message: '确定卸载「${p.label}」？其提供的技能/命令将一并移除。',
-                  confirmLabel: '卸载',
-                );
-                if (!ok) return;
-                _run(() => ref.read(pluginsProvider.notifier).uninstall(p));
+                _uninstallConfirm(context, p);
               },
             ),
           ],
         ),
       ),
     );
+  }
+
+  /// 卸载二级确认 sheet: 可选同时清除插件缓存, 危险按钮执行
+  void _uninstallConfirm(BuildContext context, PluginEntry p) {
+    final theme = Theme.of(context);
+    var removeCache = false;
+    capsSheet(
+      context,
+      child: StatefulBuilder(
+        builder: (context, setSheetState) => Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            0,
+            AppSpacing.lg,
+            AppSpacing.lg,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '卸载插件',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.xs + 2),
+              Text(
+                '其提供的技能/命令将一并移除',
+                style: TextStyle(
+                  fontSize: AppTextSizes.bodySm,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              _sheetActionRow(
+                theme,
+                icon: Icons.delete_sweep_rounded,
+                label: '卸载后同时清除插件缓存',
+                trailing: CapsSwitch(
+                  value: removeCache,
+                  onChanged: (v) => setSheetState(() => removeCache = v),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _run(
+                      () => ref
+                          .read(pluginsProvider.notifier)
+                          .uninstall(p, removeCache: removeCache),
+                    );
+                  },
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.danger,
+                  ),
+                  icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                  label: const Text('卸载'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 添加插件市场 sheet: source 输入 + 取消/添加
+  void _addMarketSheet() {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final controller = TextEditingController();
+    capsSheet(
+      context,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.lg,
+          0,
+          AppSpacing.lg,
+          AppSpacing.lg,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '添加插件市场',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              style: theme.textTheme.bodyMedium,
+              cursorColor: AppColors.accent,
+              decoration: InputDecoration(
+                hintText: '市场 source(GitHub 仓库 或 .json/.yaml 地址)',
+                hintStyle: TextStyle(
+                  fontSize: AppTextSizes.bodySm,
+                  color: cs.onSurfaceVariant,
+                ),
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.md,
+                  vertical: AppSpacing.sm + 2,
+                ),
+                filled: true,
+                fillColor: cs.surfaceContainerHigh,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  borderSide: BorderSide(color: cs.outlineVariant),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  borderSide: BorderSide(
+                    color: cs.outlineVariant.withValues(alpha: 0.5),
+                  ),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  borderSide: BorderSide(
+                    color: AppColors.accent.withValues(alpha: 0.6),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('取消'),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () => _submitMarket(controller),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.accent,
+                    ),
+                    child: const Text('添加'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ).whenComplete(controller.dispose);
+  }
+
+  Future<void> _submitMarket(TextEditingController controller) async {
+    final source = controller.text.trim();
+    if (source.isEmpty) {
+      _snack('请输入市场 source');
+      return;
+    }
+    Navigator.pop(context);
+    try {
+      // addMarketplace 内部成功后自带 load() 刷新
+      await ref.read(pluginsProvider.notifier).addMarketplace(source);
+      _snack('已添加市场');
+    } catch (e) {
+      appLog.w('[PluginsTab] 添加市场失败: $e');
+      _snack('添加失败: $e');
+    }
   }
 
   /// 弹窗内动作行 (图标 + 标签 + 尾部控件), 与 skills 详情弹窗同风格
@@ -316,12 +497,15 @@ class PluginsTabState extends ConsumerState<PluginsTab>
             ListTile(
               contentPadding: EdgeInsets.zero,
               dense: true,
-              leading: Icon(
+              leading: const Icon(
                 Icons.delete_outline_rounded,
                 size: 20,
                 color: AppColors.danger,
               ),
-              title: Text('移除市场', style: TextStyle(color: AppColors.danger)),
+              title: const Text(
+                '移除市场',
+                style: TextStyle(color: AppColors.danger),
+              ),
               onTap: () async {
                 Navigator.pop(context);
                 final ok = await capsConfirm(

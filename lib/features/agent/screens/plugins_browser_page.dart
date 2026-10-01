@@ -1,7 +1,8 @@
-/// 插件市场 — 公开/个人 + 分类筛选 + 精选 + 图标卡片 + 安装
+/// 插件市场 — 公开/个人 + 分组导航 + 已安装速览 + 直装 + 底部假搜索 pill
 ///
 /// 数据: pluginsProvider.available (overview 的 availablePlugins, 含 listing
 /// 元数据 icon/category/author); overview 空时兜底 getPluginReferenceCatalog。
+/// 实时搜索移至 PluginSearchPage, 本页底部为纯展示 pill 入口。
 library;
 
 import 'package:flutter/material.dart';
@@ -17,6 +18,10 @@ import '../models/capability_models.dart';
 import '../providers/agent_caps_providers.dart';
 import '../widgets/caps_page_chrome.dart';
 import '../widgets/caps_widgets.dart';
+import '../widgets/plugin_list_tile.dart';
+import 'cap_pages.dart';
+import 'plugin_group_page.dart';
+import 'plugin_search_page.dart';
 
 class PluginsBrowserPage extends ConsumerStatefulWidget {
   const PluginsBrowserPage({super.key});
@@ -26,8 +31,6 @@ class PluginsBrowserPage extends ConsumerStatefulWidget {
 }
 
 class _PluginsBrowserPageState extends ConsumerState<PluginsBrowserPage> {
-  final _search = TextEditingController();
-  String _query = '';
   String _segment = 'public'; // public | personal
   bool _fallbackLoaded = false;
 
@@ -39,12 +42,6 @@ class _PluginsBrowserPageState extends ConsumerState<PluginsBrowserPage> {
     if (st == null || st.available.isEmpty) {
       ref.read(pluginsProvider.notifier).load();
     }
-  }
-
-  @override
-  void dispose() {
-    _search.dispose();
-    super.dispose();
   }
 
   /// available 为空时用 catalog 兜底 (无 listing 元数据但有基本字段)
@@ -116,18 +113,15 @@ class _PluginsBrowserPageState extends ConsumerState<PluginsBrowserPage> {
             // 筛选 (标准与网页端一致):
             //   公开 = zcode 官方市场 (zcode-plugins-official)
             //   个人 = 其余市场 (claude-plugins-official / 自建)
-            final q = _query.trim().toLowerCase();
-            final list = available.where((p) {
-              final isPublic = p.marketplace == kOfficialMarketplace;
-              final wantPublic = _segment == 'public';
-              if (wantPublic != isPublic) return false;
-              if (q.isNotEmpty &&
-                  !p.label.toLowerCase().contains(q) &&
-                  !p.description.toLowerCase().contains(q)) {
-                return false;
-              }
-              return true;
-            }).toList()..sort((a, b) => a.label.compareTo(b.label));
+            final list =
+                available
+                    .where(
+                      (p) =>
+                          (p.marketplace == kOfficialMarketplace) ==
+                          (_segment == 'public'),
+                    )
+                    .toList()
+                  ..sort((a, b) => a.label.compareTo(b.label));
 
             final installedNames = state.installed
                 .map((p) => '${p.marketplace}/${p.name}')
@@ -153,7 +147,7 @@ class _PluginsBrowserPageState extends ConsumerState<PluginsBrowserPage> {
                 ),
                 Expanded(
                   child: available.isEmpty
-                      ? AppEmptyState(
+                      ? const AppEmptyState(
                           icon: Icons.storefront_outlined,
                           title: '目录为空',
                           subtitle: '先在「插件」页添加插件市场后下拉刷新',
@@ -179,16 +173,32 @@ class _PluginsBrowserPageState extends ConsumerState<PluginsBrowserPage> {
                                     ),
                                   ],
                                 )
-                              : _segment == 'public'
-                              ? _publicList(list, featured, installedNames)
-                              : _personalList(
-                                  list,
-                                  marketplaces,
-                                  installedNames,
+                              : ListView(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    AppSpacing.lg,
+                                    0,
+                                    AppSpacing.lg,
+                                    AppSpacing.xxl,
+                                  ),
+                                  children: [
+                                    ..._installedSection(state, installedNames),
+                                    if (_segment == 'public')
+                                      ..._publicChildren(
+                                        list,
+                                        featured,
+                                        installedNames,
+                                      )
+                                    else
+                                      ..._personalChildren(
+                                        list,
+                                        marketplaces,
+                                        installedNames,
+                                      ),
+                                  ],
                                 ),
                         ),
                 ),
-                // 搜索 (对齐参考截图: 大圆角 pill 固定在页面底部)
+                // 底部假搜索 pill: 点击进搜索页, 不在本页弹键盘
                 SafeArea(
                   top: false,
                   child: Padding(
@@ -198,24 +208,33 @@ class _PluginsBrowserPageState extends ConsumerState<PluginsBrowserPage> {
                       AppSpacing.lg,
                       AppSpacing.sm,
                     ),
-                    child: TextField(
-                      controller: _search,
-                      onChanged: (v) => setState(() => _query = v),
-                      style: theme.textTheme.bodyMedium,
-                      cursorColor: AppColors.accent,
-                      decoration: InputDecoration(
-                        hintText: '搜索插件…',
-                        prefixIcon: Icon(
-                          Icons.search_rounded,
-                          size: 20,
-                          color: cs.onSurfaceVariant,
+                    child: GestureDetector(
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const PluginSearchPage(),
                         ),
-                        isDense: true,
-                        filled: true,
-                        fillColor: cs.surfaceContainerHigh,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(28),
-                          borderSide: BorderSide.none,
+                      ),
+                      child: IgnorePointer(
+                        child: TextField(
+                          readOnly: true,
+                          enableInteractiveSelection: false,
+                          showCursor: false,
+                          style: theme.textTheme.bodyMedium,
+                          decoration: InputDecoration(
+                            hintText: '搜索插件…',
+                            prefixIcon: Icon(
+                              Icons.search_rounded,
+                              size: 20,
+                              color: cs.onSurfaceVariant,
+                            ),
+                            isDense: true,
+                            filled: true,
+                            fillColor: cs.surfaceContainerHigh,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(28),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -229,8 +248,35 @@ class _PluginsBrowserPageState extends ConsumerState<PluginsBrowserPage> {
     );
   }
 
-  /// 公开段: Featured (官方市场 featured 名单) 置顶, 其余按分类分组 (other 最后)
-  Widget _publicList(
+  /// 顶部「已安装」速览: 最多 3 行; 标题始终可点进插件管理页,
+  /// 箭头只在 > 3 个时显示 (≤3 时全量已在眼前, 箭头会误导); 0 个隐藏
+  List<Widget> _installedSection(
+    PluginsState state,
+    Set<String> installedNames,
+  ) {
+    final installed = state.installed;
+    if (installed.isEmpty) return const [];
+    return [
+      CapsSectionHeader(
+        '已安装',
+        onTap: () => Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const PluginsPage())),
+        showChevron: installed.length > 3,
+      ),
+      for (final p in installed.take(3))
+        PluginListTile(
+          plugin: p,
+          installedNames: installedNames,
+          onTap: () => _openDetail(p),
+        ),
+      const SizedBox(height: AppSpacing.md),
+    ];
+  }
+
+  /// 公开段 children: Featured (官方市场 featured 名单) 置顶, 其余按分类分组
+  /// (other 最后)。每组标题 > 3 个时可点进分组页, 正文只渲染前 3 个。
+  List<Widget> _publicChildren(
     List<PluginEntry> list,
     Set<String> featured,
     Set<String> installedNames,
@@ -250,31 +296,37 @@ class _PluginsBrowserPageState extends ConsumerState<PluginsBrowserPage> {
         if (b == 'other') return -1;
         return pluginCategoryLabel(a).compareTo(pluginCategoryLabel(b));
       });
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.lg,
-        0,
-        AppSpacing.lg,
-        AppSpacing.xxl,
-      ),
-      children: [
-        if (featuredVisible.isNotEmpty) ...[
-          const CapsSectionHeader('Featured'),
-          _cards(featuredVisible, installedNames),
-          const SizedBox(height: AppSpacing.md),
-        ],
-        for (final k in catKeys) ...[
-          CapsSectionHeader(pluginCategoryLabel(k)),
-          _cards(byCategory[k]!, installedNames),
-          const SizedBox(height: AppSpacing.md),
-        ],
+    return [
+      if (featuredVisible.isNotEmpty) ...[
+        CapsSectionHeader(
+          'Featured',
+          onTap: featuredVisible.length > 3
+              ? () => _openGroup('Featured', featuredVisible, installedNames)
+              : null,
+        ),
+        _cards(featuredVisible.take(3), installedNames),
+        const SizedBox(height: AppSpacing.md),
       ],
-    );
+      for (final k in catKeys) ...[
+        CapsSectionHeader(
+          pluginCategoryLabel(k),
+          onTap: byCategory[k]!.length > 3
+              ? () => _openGroup(
+                  pluginCategoryLabel(k),
+                  byCategory[k]!,
+                  installedNames,
+                )
+              : null,
+        ),
+        _cards(byCategory[k]!.take(3), installedNames),
+        const SizedBox(height: AppSpacing.md),
+      ],
+    ];
   }
 
-  /// 个人段: 「推荐」(固定名单顺序) + 按市场分组 (claude-plugins-official
-  /// 显示为「Claude Code 插件」, 其余用市场名; 组按标题排序)
-  Widget _personalList(
+  /// 个人段 children: 「推荐」(固定名单顺序) + 按市场分组 (claude-plugins-official
+  /// 显示为「Claude Code 插件」, 其余用市场名; 组按标题排序)。同公开段截前 3 个。
+  List<Widget> _personalChildren(
     List<PluginEntry> list,
     List<MarketplaceEntry> marketplaces,
     Set<String> installedNames,
@@ -300,25 +352,44 @@ class _PluginsBrowserPageState extends ConsumerState<PluginsBrowserPage> {
               : market);
     final groups = byMarket.entries.toList()
       ..sort((a, b) => groupTitle(a.key).compareTo(groupTitle(b.key)));
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.lg,
-        0,
-        AppSpacing.lg,
-        AppSpacing.xxl,
-      ),
-      children: [
-        if (recommended.isNotEmpty) ...[
-          const CapsSectionHeader('推荐'),
-          _cards(recommended, installedNames),
-          const SizedBox(height: AppSpacing.md),
-        ],
-        for (final g in groups) ...[
-          CapsSectionHeader(groupTitle(g.key)),
-          _cards(g.value, installedNames),
-          const SizedBox(height: AppSpacing.md),
-        ],
+    return [
+      if (recommended.isNotEmpty) ...[
+        CapsSectionHeader(
+          '推荐',
+          onTap: recommended.length > 3
+              ? () => _openGroup('推荐', recommended, installedNames)
+              : null,
+        ),
+        _cards(recommended.take(3), installedNames),
+        const SizedBox(height: AppSpacing.md),
       ],
+      for (final g in groups) ...[
+        CapsSectionHeader(
+          groupTitle(g.key),
+          onTap: g.value.length > 3
+              ? () => _openGroup(groupTitle(g.key), g.value, installedNames)
+              : null,
+        ),
+        _cards(g.value.take(3), installedNames),
+        const SizedBox(height: AppSpacing.md),
+      ],
+    ];
+  }
+
+  /// 分组标题 → 分组全量列表页
+  void _openGroup(
+    String title,
+    List<PluginEntry> plugins,
+    Set<String> installedNames,
+  ) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PluginGroupPage(
+          title: title,
+          plugins: plugins,
+          installedNames: installedNames,
+        ),
+      ),
     );
   }
 
@@ -346,56 +417,22 @@ class _PluginsBrowserPageState extends ConsumerState<PluginsBrowserPage> {
     );
   }
 
-  Widget _cards(List<PluginEntry> plugins, Set<String> installedNames) {
+  Widget _cards(Iterable<PluginEntry> plugins, Set<String> installedNames) {
     return Column(
       children: [
         for (final p in plugins)
-          CapsPlainTile(
-            leading: PluginIconBox(icon: p.icon, name: p.label, size: 44),
-            title: p.label,
-            subtitle: p.description.isNotEmpty ? p.description : null,
-            trailing: _trailing(p, installedNames),
+          PluginListTile(
+            plugin: p,
+            installedNames: installedNames,
             onTap: () => _openDetail(p),
+            onInstall: _install,
           ),
       ],
     );
   }
 
-  /// 行尾动作: 已安装 = 绿容器对勾 (纯展示); 未安装 = accent 圆形 + 号直装
-  Widget _trailing(PluginEntry p, Set<String> installedNames) {
-    final installed =
-        p.installed || installedNames.contains('${p.marketplace}/${p.name}');
-    if (installed) {
-      return Container(
-        width: 28,
-        height: 28,
-        decoration: const BoxDecoration(
-          color: AppColors.successContainer,
-          shape: BoxShape.circle,
-        ),
-        child: const Icon(
-          Icons.check_rounded,
-          size: 16,
-          color: AppColors.success,
-        ),
-      );
-    }
-    return GestureDetector(
-      onTap: () => _install(p),
-      child: Container(
-        width: 28,
-        height: 28,
-        decoration: const BoxDecoration(
-          color: AppColors.accentContainer,
-          shape: BoxShape.circle,
-        ),
-        child: const Icon(Icons.add_rounded, size: 18, color: AppColors.accent),
-      ),
-    );
-  }
-
   void _openDetail(PluginEntry p) {
-    capsSheet(context, child: _PluginDetailSheet(plugin: p));
+    capsSheet(context, child: PluginDetailSheet(plugin: p));
   }
 
   Future<void> _install(PluginEntry p) async {
@@ -424,15 +461,17 @@ class _PluginsBrowserPageState extends ConsumerState<PluginsBrowserPage> {
 }
 
 /// 插件详情: 图标 + 作者/分类/主页 + 组件清单 + 安装
-class _PluginDetailSheet extends ConsumerStatefulWidget {
+///
+/// 市场页 / 分组页 / 搜索页共用 (公开类)。
+class PluginDetailSheet extends ConsumerStatefulWidget {
   final PluginEntry plugin;
-  const _PluginDetailSheet({required this.plugin});
+  const PluginDetailSheet({super.key, required this.plugin});
 
   @override
-  ConsumerState<_PluginDetailSheet> createState() => _PluginDetailSheetState();
+  ConsumerState<PluginDetailSheet> createState() => _PluginDetailSheetState();
 }
 
-class _PluginDetailSheetState extends ConsumerState<_PluginDetailSheet> {
+class _PluginDetailSheetState extends ConsumerState<PluginDetailSheet> {
   bool _installing = false;
 
   @override
@@ -523,7 +562,7 @@ class _PluginDetailSheetState extends ConsumerState<_PluginDetailSheet> {
               },
               child: Row(
                 children: [
-                  Icon(
+                  const Icon(
                     Icons.open_in_new_rounded,
                     size: 16,
                     color: AppColors.accent,
@@ -534,7 +573,7 @@ class _PluginDetailSheetState extends ConsumerState<_PluginDetailSheet> {
                       p.homepage!,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: AppTextSizes.bodySm,
                         color: AppColors.accent,
                       ),

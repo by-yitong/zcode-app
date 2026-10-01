@@ -175,15 +175,30 @@ class CapsCircleIconButton extends StatelessWidget {
 }
 
 /// 分组标题 — 灰色中字号常规字重 + 右侧小箭头 (非大写 mono 小字)
+///
+/// [onTap] 非空: 外包 InkWell (圆角 8) 可点; 为空: 纯展示。
+/// 箭头默认跟随 onTap (可点才画); [showChevron] 可独立覆盖 —
+/// 用于"始终可点但箭头只在有更多内容时显示"的场景 (如市场页已安装)。
 class CapsSectionHeader extends StatelessWidget {
   final String title;
 
-  const CapsSectionHeader(this.title, {super.key});
+  /// 点击回调
+  final VoidCallback? onTap;
+
+  /// null = 跟随 onTap; true/false = 强制显示/隐藏箭头
+  final bool? showChevron;
+
+  const CapsSectionHeader(
+    this.title, {
+    super.key,
+    this.onTap,
+    this.showChevron,
+  });
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Padding(
+    final row = Padding(
       padding: const EdgeInsets.fromLTRB(4, 24, 4, 12),
       child: Row(
         children: [
@@ -195,15 +210,25 @@ class CapsSectionHeader extends StatelessWidget {
               color: cs.onSurfaceVariant,
             ),
           ),
-          const SizedBox(width: 6),
-          Icon(
-            Icons.chevron_right_rounded,
-            size: 18,
-            color: cs.onSurfaceVariant,
-          ),
+          if (showChevron ?? onTap != null) ...[
+            const SizedBox(width: 6),
+            Icon(
+              Icons.chevron_right_rounded,
+              size: 18,
+              color: cs.onSurfaceVariant,
+            ),
+          ],
         ],
       ),
     );
+    if (onTap != null) {
+      return InkWell(
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        onTap: onTap,
+        child: row,
+      );
+    }
+    return row;
   }
 }
 
