@@ -67,6 +67,10 @@ public class OverlayService extends Service implements View.OnTouchListener {
     private float lastX, lastY;
     private int lastYPosition;
     private boolean dragging;
+    // ZCode 补丁: 拖动开关在手指已按下后才打开 (标题栏手势识别 ~18px 后)。
+    // 原版此时 lastX/lastY 还是上一会话的旧值, 首个 MOVE 用旧基准算差值,
+    // 窗口瞬移一大截 (固定错位的来源)。开关打开后的首个 MOVE 只重置基准。
+    private boolean dragBaselinePending = true;
     private static final float MAXIMUM_OPACITY_ALLOWED_FOR_S_AND_HIGHER = 0.8f;
     private Point szWindow = new Point();
     private Timer mTrayAnimationTimer;
@@ -149,6 +153,8 @@ public class OverlayService extends Service implements View.OnTouchListener {
                 // 系统栏边距导致窗口跳位
                 boolean enabled = Boolean.TRUE.equals(call.argument("enabled"));
                 WindowSetup.enableDrag = enabled;
+                // 开关在手指按下后才打开: 下一个 MOVE 先重置触点基准
+                dragBaselinePending = enabled;
                 result.success(true);
             }
         });
@@ -386,15 +392,30 @@ public class OverlayService extends Service implements View.OnTouchListener {
 
     @Override
     public boolean onTouch(View view, MotionEvent event) {
+        // ZCode 补丁: 无论拖动开关状态, DOWN 时都记录触点基准。
+        // 原版 enableDrag=false 时整个 onTouch 直接跳过, 开关在手指已移动后
+        // 才打开 → 首个 MOVE 拿旧基准算差值 → 窗口瞬移 (拖动起跳)。
+        if (event.getAction() == MotionEvent.ACTION_DOWN) {
+            lastX = event.getRawX();
+            lastY = event.getRawY();
+            dragging = false;
+        }
         if (windowManager != null && WindowSetup.enableDrag) {
             WindowManager.LayoutParams params = (WindowManager.LayoutParams) flutterView.getLayoutParams();
             switch (event.getAction()) {
                 case MotionEvent.ACTION_DOWN:
                     dragging = false;
-                    lastX = event.getRawX();
-                    lastY = event.getRawY();
+                    dragBaselinePending = false; // DOWN 已重置基准
                     break;
                 case MotionEvent.ACTION_MOVE:
+                    // ZCode 补丁: 开关中途打开时首个 MOVE 只重置基准, 不套用
+                    // 相对旧触点的大差值
+                    if (dragBaselinePending) {
+                        dragBaselinePending = false;
+                        lastX = event.getRawX();
+                        lastY = event.getRawY();
+                        return false;
+                    }
                     float dx = event.getRawX() - lastX;
                     float dy = event.getRawY() - lastY;
                     if (!dragging && dx * dx + dy * dy < 25) {
