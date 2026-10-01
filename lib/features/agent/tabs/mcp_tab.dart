@@ -52,7 +52,11 @@ class McpTabState extends ConsumerState<McpTab>
       emptySubtitle: '点击下方添加，或从外部 Agent 导入',
       header: Padding(
         padding: const EdgeInsets.fromLTRB(
-            AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, AppSpacing.sm),
+          AppSpacing.lg,
+          AppSpacing.sm,
+          AppSpacing.lg,
+          AppSpacing.sm,
+        ),
         child: TextField(
           controller: _search,
           onChanged: (v) => setState(() => _query = v),
@@ -60,14 +64,18 @@ class McpTabState extends ConsumerState<McpTab>
           cursorColor: AppColors.accent,
           decoration: InputDecoration(
             hintText: '搜索服务器…',
-            prefixIcon:
-                Icon(Icons.search_rounded, size: 20, color: cs.onSurfaceVariant),
+            prefixIcon: Icon(
+              Icons.search_rounded,
+              size: 20,
+              color: cs.onSurfaceVariant,
+            ),
             isDense: true,
             filled: true,
             fillColor: cs.surfaceContainerHigh,
             border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(AppRadius.lg),
-                borderSide: BorderSide.none),
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+              borderSide: BorderSide.none,
+            ),
           ),
         ),
       ),
@@ -76,9 +84,11 @@ class McpTabState extends ConsumerState<McpTab>
         var servers = data.servers;
         if (q.isNotEmpty) {
           servers = servers
-              .where((s) =>
-                  s.name.toLowerCase().contains(q) ||
-                  s.endpointLabel.toLowerCase().contains(q))
+              .where(
+                (s) =>
+                    s.name.toLowerCase().contains(q) ||
+                    s.endpointLabel.toLowerCase().contains(q),
+              )
               .toList();
         }
         final user = servers.where((s) => s.scope != 'workspace').toList();
@@ -87,32 +97,46 @@ class McpTabState extends ConsumerState<McpTab>
           onRefresh: () => ref.read(mcpProvider.notifier).load(),
           child: ListView(
             padding: const EdgeInsets.fromLTRB(
-              AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.xxl),
-            children: [
-                  if (user.isNotEmpty) ...[
-                    const AppSectionHeader(title: '用户'),
-                    AppTileGroup(tiles: [for (final s in user) _tile(theme, cs, s, data)]),
-                  ],
-                  if (workspace.isNotEmpty) ...[
-                    const SizedBox(height: AppSpacing.md),
-                    const AppSectionHeader(title: '工作区'),
-                    AppTileGroup(
-                        tiles: [for (final s in workspace) _tile(theme, cs, s, data)]),
-                  ],
-              ],
+              AppSpacing.lg,
+              0,
+              AppSpacing.lg,
+              AppSpacing.xxl,
             ),
+            children: [
+              if (user.isNotEmpty) ...[
+                const AppSectionHeader(title: '用户'),
+                AppTileGroup(
+                  tiles: [for (final s in user) _tile(theme, cs, s, data)],
+                ),
+              ],
+              if (workspace.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.md),
+                const AppSectionHeader(title: '工作区'),
+                AppTileGroup(
+                  tiles: [for (final s in workspace) _tile(theme, cs, s, data)],
+                ),
+              ],
+            ],
+          ),
         );
       },
     );
   }
 
-  AppTile _tile(ThemeData theme, ColorScheme cs, McpServerEntry s, McpState data) {
+  AppTile _tile(
+    ThemeData theme,
+    ColorScheme cs,
+    McpServerEntry s,
+    McpState data,
+  ) {
     final status = data.statuses[s.name];
     String? statusLabel;
     Color? statusColor;
     if (status != null) {
       if (status.isConnected) {
-        statusLabel = status.toolCount != null ? '${status.toolCount} 工具' : '已连接';
+        statusLabel = status.toolCount != null
+            ? '${status.toolCount} 工具'
+            : '已连接';
         statusColor = AppColors.success;
       } else if (status.status == 'connecting') {
         statusLabel = '连接中';
@@ -153,65 +177,87 @@ class McpTabState extends ConsumerState<McpTab>
       appLog.w('[McpTab] 启停失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-                content: Text('操作失败: $e'),
-                behavior: SnackBarBehavior.floating));
+          SnackBar(
+            content: Text('操作失败: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
       }
     }
   }
 
-  void _openDetail(BuildContext context, McpServerEntry s, McpServerStatus? status) {
+  void _openDetail(
+    BuildContext context,
+    McpServerEntry s,
+    McpServerStatus? status,
+  ) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     capsSheet(
       context,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
-            AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
+          AppSpacing.lg,
+          0,
+          AppSpacing.lg,
+          AppSpacing.lg,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(children: [
-              Expanded(
-                child: Text(s.name,
-                    style: theme.textTheme.titleMedium
-                        ?.copyWith(fontWeight: FontWeight.w600)),
-              ),
-              CapsBadge(s.scope == 'workspace' ? '工作区' : '用户'),
-              const SizedBox(width: AppSpacing.sm),
-              CapsBadge(s.typeLabel),
-            ]),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    s.name,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                CapsBadge(s.scope == 'workspace' ? '工作区' : '用户'),
+                const SizedBox(width: AppSpacing.sm),
+                CapsBadge(s.typeLabel),
+              ],
+            ),
             if (status != null) ...[
               const SizedBox(height: AppSpacing.sm),
-              Row(children: [
-                Icon(
-                  status.isConnected
-                      ? Icons.check_circle_rounded
-                      : Icons.cancel_rounded,
-                  size: 16,
-                  color: status.isConnected
-                      ? AppColors.success
-                      : cs.onSurfaceVariant,
-                ),
-                const SizedBox(width: AppSpacing.xs + 2),
-                Text(
-                  status.isConnected
-                      ? '已连接${status.toolCount != null ? ' · ${status.toolCount} 个工具' : ''}'
-                      : '未连接',
-                  style: TextStyle(
-                      fontSize: AppTextSizes.bodySm, color: cs.onSurfaceVariant),
-                ),
-              ]),
+              Row(
+                children: [
+                  Icon(
+                    status.isConnected
+                        ? Icons.check_circle_rounded
+                        : Icons.cancel_rounded,
+                    size: 16,
+                    color: status.isConnected
+                        ? AppColors.success
+                        : cs.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: AppSpacing.xs + 2),
+                  Text(
+                    status.isConnected
+                        ? '已连接${status.toolCount != null ? ' · ${status.toolCount} 个工具' : ''}'
+                        : '未连接',
+                    style: TextStyle(
+                      fontSize: AppTextSizes.bodySm,
+                      color: cs.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
               if (status.error != null && status.error!.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: AppSpacing.xs),
-                  child: Text(status.error!,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          fontSize: AppTextSizes.caption,
-                          color: AppColors.danger)),
+                  child: Text(
+                    status.error!,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: AppTextSizes.caption,
+                      color: AppColors.danger,
+                    ),
+                  ),
                 ),
             ],
             const SizedBox(height: AppSpacing.md),
@@ -226,67 +272,81 @@ class McpTabState extends ConsumerState<McpTab>
               child: SingleChildScrollView(
                 child: Text(
                   const JsonEncoder.withIndent('  ').convert(s.rawConfig),
-                  style: AppText.mono(context,
-                      size: AppTextSizes.monoSm, color: cs.onSurface),
+                  style: AppText.mono(
+                    context,
+                    size: AppTextSizes.monoSm,
+                    color: cs.onSurface,
+                  ),
                 ),
               ),
             ),
             if (s.filePath != null) ...[
               const SizedBox(height: AppSpacing.xs),
-              Text(s.filePath!,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppText.mono(context,
-                      size: AppTextSizes.monoXs,
-                      color: cs.onSurfaceVariant.withValues(alpha: 0.6))),
+              Text(
+                s.filePath!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppText.mono(
+                  context,
+                  size: AppTextSizes.monoXs,
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+                ),
+              ),
             ],
             if (status?.authorizationUrl != null) ...[
               const SizedBox(height: AppSpacing.md),
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
-                  onPressed: () => _openAuthorization(status!.authorizationUrl!),
+                  onPressed: () =>
+                      _openAuthorization(status!.authorizationUrl!),
                   style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.accent),
+                    backgroundColor: AppColors.accent,
+                  ),
                   icon: const Icon(Icons.key_rounded, size: 18),
                   label: const Text('打开授权'),
                 ),
               ),
             ],
             const SizedBox(height: AppSpacing.md),
-            Row(children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    _openEditor(context, existing: s);
-                  },
-                  icon: const Icon(Icons.edit_rounded, size: 18),
-                  label: const Text('编辑'),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _openEditor(context, existing: s);
+                    },
+                    icon: const Icon(Icons.edit_rounded, size: 18),
+                    label: const Text('编辑'),
+                  ),
                 ),
-              ),
-              const SizedBox(width: AppSpacing.md),
-              Expanded(
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.danger),
-                  onPressed: () async {
-                    Navigator.pop(context);
-                    final ok = await capsConfirm(context,
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.danger,
+                    ),
+                    onPressed: () async {
+                      Navigator.pop(context);
+                      final ok = await capsConfirm(
+                        context,
                         title: '删除 MCP 服务器',
-                        message: '确定删除「${s.name}」？');
-                    if (!ok) return;
-                    try {
-                      await ref.read(mcpProvider.notifier).delete(s);
-                    } catch (e) {
-                      _snack('删除失败: $e');
-                    }
-                  },
-                  icon: const Icon(Icons.delete_outline_rounded, size: 18),
-                  label: const Text('删除'),
+                        message: '确定删除「${s.name}」？',
+                      );
+                      if (!ok) return;
+                      try {
+                        await ref.read(mcpProvider.notifier).delete(s);
+                      } catch (e) {
+                        _snack('删除失败: $e');
+                      }
+                    },
+                    icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                    label: const Text('删除'),
+                  ),
                 ),
-              ),
-            ]),
+              ],
+            ),
           ],
         ),
       ),
@@ -321,7 +381,8 @@ class McpTabState extends ConsumerState<McpTab>
   void _snack(String msg) {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating));
+        SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
+      );
     }
   }
 }
@@ -364,11 +425,15 @@ class _McpEditorState extends ConsumerState<_McpEditor> {
     _url = TextEditingController(text: e?.url ?? '');
     _args = TextEditingController(text: e?.args.join('\n') ?? '');
     _env = TextEditingController(
-        text: e?.env.entries.map((x) => '${x.key}=${x.value}').join('\n') ?? '');
+      text: e?.env.entries.map((x) => '${x.key}=${x.value}').join('\n') ?? '',
+    );
     _headers = TextEditingController(
-        text: e?.headers.entries.map((x) => '${x.key}=${x.value}').join('\n') ?? '');
+      text:
+          e?.headers.entries.map((x) => '${x.key}=${x.value}').join('\n') ?? '',
+    );
     _timeout = TextEditingController(
-        text: e?.timeoutMs != null ? '${e!.timeoutMs}' : '');
+      text: e?.timeoutMs != null ? '${e!.timeoutMs}' : '',
+    );
     if (e != null) {
       _type = e.type == McpServerType.unknown ? McpServerType.stdio : e.type;
       _scope = e.scope == 'workspace' ? 'workspace' : 'user';
@@ -378,7 +443,14 @@ class _McpEditorState extends ConsumerState<_McpEditor> {
   @override
   void dispose() {
     for (final c in [
-      _name, _command, _url, _args, _env, _headers, _timeout, _jsonPaste
+      _name,
+      _command,
+      _url,
+      _args,
+      _env,
+      _headers,
+      _timeout,
+      _jsonPaste,
     ]) {
       c.dispose();
     }
@@ -412,9 +484,7 @@ class _McpEditorState extends ConsumerState<_McpEditor> {
             : '';
         final env = m['env'];
         if (env is Map) {
-          _env.text = env.entries
-              .map((e) => '${e.key}=${e.value}')
-              .join('\n');
+          _env.text = env.entries.map((e) => '${e.key}=${e.value}').join('\n');
         }
         final headers = m['headers'];
         if (headers is Map) {
@@ -426,9 +496,12 @@ class _McpEditorState extends ConsumerState<_McpEditor> {
       });
       Navigator.pop(context);
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
           content: Text('JSON 解析失败: $e'),
-          behavior: SnackBarBehavior.floating));
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
   }
 
@@ -443,7 +516,8 @@ class _McpEditorState extends ConsumerState<_McpEditor> {
       return;
     }
     if (_type != McpServerType.stdio &&
-        (_url.text.trim().isEmpty || !Uri.tryParse(_url.text.trim())!.hasScheme)) {
+        (_url.text.trim().isEmpty ||
+            !Uri.tryParse(_url.text.trim())!.hasScheme)) {
       _snack('请填写合法的 URL');
       return;
     }
@@ -464,8 +538,7 @@ class _McpEditorState extends ConsumerState<_McpEditor> {
       headers: _parsePairs(_headers.text),
       timeoutMs: int.tryParse(_timeout.text.trim()),
       enabled: widget.existing?.enabled ?? true,
-      projectPath:
-          _scope == 'workspace' ? widget.workspacePath : null,
+      projectPath: _scope == 'workspace' ? widget.workspacePath : null,
     );
     try {
       await ref.read(mcpProvider.notifier).upsert(entry);
@@ -480,7 +553,8 @@ class _McpEditorState extends ConsumerState<_McpEditor> {
 
   void _snack(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating));
+      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
+    );
   }
 
   @override
@@ -491,63 +565,81 @@ class _McpEditorState extends ConsumerState<_McpEditor> {
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(
-          AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
+        AppSpacing.lg,
+        0,
+        AppSpacing.lg,
+        AppSpacing.lg,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(isEdit ? '编辑 MCP 服务器' : '添加 MCP 服务器',
-              style: theme.textTheme.titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w600)),
+          Text(
+            isEdit ? '编辑 MCP 服务器' : '添加 MCP 服务器',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
           const SizedBox(height: AppSpacing.md),
           CapsField(controller: _name, label: '名称', hint: '如 context7'),
           const SizedBox(height: AppSpacing.md),
           // 类型 + 作用域
-          Row(children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('类型',
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '类型',
                       style: TextStyle(
-                          fontSize: AppTextSizes.label,
-                          fontWeight: FontWeight.w600,
-                          color: cs.onSurfaceVariant)),
-                  const SizedBox(height: AppSpacing.xs + 2),
-                  SegmentedButton<String>(
-                    segments: const [
-                      ButtonSegment(value: 'stdio', label: Text('stdio')),
-                      ButtonSegment(value: 'sse', label: Text('SSE')),
-                      ButtonSegment(value: 'http', label: Text('HTTP')),
-                    ],
-                    selected: {_type.name},
-                    onSelectionChanged: (s) => setState(() => _type =
-                        McpServerType.values
-                            .firstWhere((e) => e.name == s.first)),
-                    showSelectedIcon: false,
-                  ),
-                ],
+                        fontSize: AppTextSizes.label,
+                        fontWeight: FontWeight.w600,
+                        color: cs.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.xs + 2),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(value: 'stdio', label: Text('stdio')),
+                        ButtonSegment(value: 'sse', label: Text('SSE')),
+                        ButtonSegment(value: 'http', label: Text('HTTP')),
+                      ],
+                      selected: {_type.name},
+                      onSelectionChanged: (s) => setState(
+                        () => _type = McpServerType.values.firstWhere(
+                          (e) => e.name == s.first,
+                        ),
+                      ),
+                      showSelectedIcon: false,
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ]),
+            ],
+          ),
           if (!isEdit) ...[
             const SizedBox(height: AppSpacing.md),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('作用域',
-                    style: TextStyle(
-                        fontSize: AppTextSizes.label,
-                        fontWeight: FontWeight.w600,
-                        color: cs.onSurfaceVariant)),
+                Text(
+                  '作用域',
+                  style: TextStyle(
+                    fontSize: AppTextSizes.label,
+                    fontWeight: FontWeight.w600,
+                    color: cs.onSurfaceVariant,
+                  ),
+                ),
                 const SizedBox(height: AppSpacing.xs + 2),
                 SegmentedButton<String>(
                   segments: [
                     const ButtonSegment(value: 'user', label: Text('用户')),
                     ButtonSegment(
-                        value: 'workspace',
-                        label: const Text('工作区'),
-                        enabled: widget.workspacePath != null),
+                      value: 'workspace',
+                      label: const Text('工作区'),
+                      enabled: widget.workspacePath != null,
+                    ),
                   ],
                   selected: {_scope},
                   onSelectionChanged: (s) => setState(() => _scope = s.first),
@@ -559,53 +651,67 @@ class _McpEditorState extends ConsumerState<_McpEditor> {
           const SizedBox(height: AppSpacing.md),
           if (_type == McpServerType.stdio) ...[
             CapsField(
-                controller: _command,
-                label: '启动命令',
-                hint: '如 npx -y @upstash/context7-mcp',
-                mono: true),
+              controller: _command,
+              label: '启动命令',
+              hint: '如 npx -y @upstash/context7-mcp',
+              mono: true,
+            ),
             const SizedBox(height: AppSpacing.md),
             CapsField(
-                controller: _args,
-                label: '参数 (每行一个, 可选)',
-                maxLines: 3,
-                mono: true),
+              controller: _args,
+              label: '参数 (每行一个, 可选)',
+              maxLines: 3,
+              mono: true,
+            ),
             const SizedBox(height: AppSpacing.md),
             CapsField(
-                controller: _env,
-                label: '环境变量 KEY=value (每行一个, 可选)',
-                maxLines: 3,
-                mono: true),
+              controller: _env,
+              label: '环境变量 KEY=value (每行一个, 可选)',
+              maxLines: 3,
+              mono: true,
+            ),
           ] else ...[
-            CapsField(controller: _url, label: 'URL', hint: 'https://…', mono: true),
+            CapsField(
+              controller: _url,
+              label: 'URL',
+              hint: 'https://…',
+              mono: true,
+            ),
             const SizedBox(height: AppSpacing.md),
             CapsField(
-                controller: _headers,
-                label: '请求头 KEY=value (每行一个, 可选)',
-                maxLines: 3,
-                mono: true),
+              controller: _headers,
+              label: '请求头 KEY=value (每行一个, 可选)',
+              maxLines: 3,
+              mono: true,
+            ),
           ],
           const SizedBox(height: AppSpacing.md),
           CapsField(
-              controller: _timeout,
-              label: '超时毫秒 (可选)',
-              hint: '如 30000',
-              keyboardType: TextInputType.number),
+            controller: _timeout,
+            label: '超时毫秒 (可选)',
+            hint: '如 30000',
+            keyboardType: TextInputType.number,
+          ),
           const SizedBox(height: AppSpacing.md),
           // JSON 粘贴
           ExpansionTile(
             tilePadding: EdgeInsets.zero,
             dense: true,
-            title: Text('粘贴 JSON 配置 (可选)',
-                style: TextStyle(
-                    fontSize: AppTextSizes.bodySm,
-                    color: cs.onSurfaceVariant)),
+            title: Text(
+              '粘贴 JSON 配置 (可选)',
+              style: TextStyle(
+                fontSize: AppTextSizes.bodySm,
+                color: cs.onSurfaceVariant,
+              ),
+            ),
             children: [
               CapsField(
-                  controller: _jsonPaste,
-                  label: '配置 JSON',
-                  hint: '{"type":"stdio","command":"…"}',
-                  maxLines: 5,
-                  mono: true),
+                controller: _jsonPaste,
+                label: '配置 JSON',
+                hint: '{"type":"stdio","command":"…"}',
+                maxLines: 5,
+                mono: true,
+              ),
               const SizedBox(height: AppSpacing.sm),
               Align(
                 alignment: Alignment.centerRight,
@@ -627,7 +733,10 @@ class _McpEditorState extends ConsumerState<_McpEditor> {
                       width: 16,
                       height: 16,
                       child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white))
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
                   : const Text('保存'),
             ),
           ),

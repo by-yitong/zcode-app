@@ -132,7 +132,9 @@ class AppTile extends StatelessWidget {
               child: Icon(
                 Icons.chevron_right_rounded,
                 size: 18,
-                color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+                color: theme.colorScheme.onSurfaceVariant.withValues(
+                  alpha: 0.4,
+                ),
               ),
             ),
         ],

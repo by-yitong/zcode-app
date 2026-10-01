@@ -267,12 +267,31 @@ class PipService {
     }
   }
 
-  /// 调整窗口尺寸 (行数设置变化时)
+  /// 调整窗口尺寸 (行数设置变化时; enableDrag 保持关, 正文手势不被原生拖动抢)
   Future<void> resize(int widthPx, int heightPx) async {
     try {
       await FlutterOverlayWindow.resizeOverlay(widthPx, heightPx, false);
     } catch (e) {
       appLog.w('[Pip] resize 失败: $e');
+    }
+  }
+
+  /// 标题栏拖动开关: 按下时开原生拖动 (插件 onTouch 在原生层直接搬窗口,
+  /// 零通道往返 = 官方例子的丝滑路径), 松手关掉 (正文 PageView/滚动不受影响)。
+  /// 尺寸传当前窗口值 (dp), 原生侧同尺寸 relayout 无视觉变化。
+  Future<void> setNativeDrag(
+    bool enabled, {
+    required int windowWidthDp,
+    required int windowHeightDp,
+  }) async {
+    try {
+      await FlutterOverlayWindow.resizeOverlay(
+        windowWidthDp,
+        windowHeightDp,
+        enabled,
+      );
+    } catch (e) {
+      appLog.w('[Pip] setNativeDrag($enabled) 失败: $e');
     }
   }
 

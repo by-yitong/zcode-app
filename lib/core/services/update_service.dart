@@ -51,10 +51,12 @@ class UpdateService {
   static Future<UpdateInfo?> check() async {
     try {
       final local = await localVersion();
-      final dio = Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 10),
-        receiveTimeout: const Duration(seconds: 15),
-      ));
+      final dio = Dio(
+        BaseOptions(
+          connectTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 15),
+        ),
+      );
       final resp = await dio.get<Map<String, dynamic>>(
         'https://api.github.com/repos/$repo/releases/latest',
         options: Options(headers: {'Accept': 'application/vnd.github+json'}),
@@ -80,7 +82,8 @@ class UpdateService {
         version: version,
         notes: data['body'] as String? ?? '',
         apkUrl: apkUrl,
-        htmlUrl: data['html_url'] as String? ?? 'https://github.com/$repo/releases',
+        htmlUrl:
+            data['html_url'] as String? ?? 'https://github.com/$repo/releases',
         apkSize: apkSize,
       );
     } catch (e) {
@@ -103,10 +106,12 @@ class UpdateService {
       if (f is File) f.deleteSync();
     }
     final file = File('${updateDir.path}/zcode-app-${info.version}.apk');
-    final dio = Dio(BaseOptions(
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(minutes: 10),
-    ));
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(minutes: 10),
+      ),
+    );
     await dio.download(
       info.apkUrl,
       file.path,
@@ -145,8 +150,7 @@ class UpdateService {
 
   static Future<void> markChecked() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(
-        _keyLastCheck, DateTime.now().millisecondsSinceEpoch);
+    await prefs.setInt(_keyLastCheck, DateTime.now().millisecondsSinceEpoch);
   }
 
   static Future<bool> isDismissed(String tag) async {

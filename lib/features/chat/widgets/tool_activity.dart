@@ -510,8 +510,8 @@ class ToolActivityRow extends StatelessWidget {
       final label = isMcp
           ? 'Arguments'
           : isBash
-              ? '命令'
-              : (isFileEdit ? '文件' : '参数');
+          ? '命令'
+          : (isFileEdit ? '文件' : '参数');
       children.add(
         Text(
           label,

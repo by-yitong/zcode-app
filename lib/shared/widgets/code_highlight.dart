@@ -92,11 +92,17 @@ class CodeHighlightView extends StatelessWidget {
 // 深色代码主题 (GitHub Dark 调色, 和 APP 深色底搭配)
 // ================================================================
 const _darkTheme = {
-  'root': TextStyle(color: Color(0xFFE8EAED), backgroundColor: Colors.transparent),
+  'root': TextStyle(
+    color: Color(0xFFE8EAED),
+    backgroundColor: Colors.transparent,
+  ),
   'comment': TextStyle(color: Color(0xFF8B949E), fontStyle: FontStyle.italic),
   'quote': TextStyle(color: Color(0xFF8B949E), fontStyle: FontStyle.italic),
   'keyword': TextStyle(color: Color(0xFFFF7B72), fontWeight: FontWeight.w600),
-  'selector-tag': TextStyle(color: Color(0xFFFF7B72), fontWeight: FontWeight.w600),
+  'selector-tag': TextStyle(
+    color: Color(0xFFFF7B72),
+    fontWeight: FontWeight.w600,
+  ),
   'literal': TextStyle(color: Color(0xFF79C0FF)),
   'number': TextStyle(color: Color(0xFF79C0FF)),
   'string': TextStyle(color: Color(0xFFA5D6FF)),
@@ -110,7 +116,10 @@ const _darkTheme = {
   'built_in': TextStyle(color: Color(0xFFFFA657)),
   'symbol': TextStyle(color: Color(0xFF79C0FF)),
   'bullet': TextStyle(color: Color(0xFF79C0FF)),
-  'link': TextStyle(color: Color(0xFFA5D6FF), decoration: TextDecoration.underline),
+  'link': TextStyle(
+    color: Color(0xFFA5D6FF),
+    decoration: TextDecoration.underline,
+  ),
   'emphasis': TextStyle(fontStyle: FontStyle.italic),
   'strong': TextStyle(fontWeight: FontWeight.w700),
   'addition': TextStyle(color: Color(0xFF7EE787)),
@@ -119,8 +128,14 @@ const _darkTheme = {
   'params': TextStyle(color: Color(0xFFE8EAED)),
   'regexp': TextStyle(color: Color(0xFFA5D6FF)),
   'tag': TextStyle(color: Color(0xFF7EE787)),
-  'title.function': TextStyle(color: Color(0xFFD2A8FF), fontWeight: FontWeight.w600),
-  'title.class': TextStyle(color: Color(0xFFFFA657), fontWeight: FontWeight.w600),
+  'title.function': TextStyle(
+    color: Color(0xFFD2A8FF),
+    fontWeight: FontWeight.w600,
+  ),
+  'title.class': TextStyle(
+    color: Color(0xFFFFA657),
+    fontWeight: FontWeight.w600,
+  ),
   'property': TextStyle(color: Color(0xFF79C0FF)),
   'operator': TextStyle(color: Color(0xFFFF7B72)),
   'punctuation': TextStyle(color: Color(0xFFC9D1D9)),
@@ -130,11 +145,17 @@ const _darkTheme = {
 // 浅色代码主题 (GitHub Light 调色)
 // ================================================================
 const _lightTheme = {
-  'root': TextStyle(color: Color(0xFF24292F), backgroundColor: Colors.transparent),
+  'root': TextStyle(
+    color: Color(0xFF24292F),
+    backgroundColor: Colors.transparent,
+  ),
   'comment': TextStyle(color: Color(0xFF6E7781), fontStyle: FontStyle.italic),
   'quote': TextStyle(color: Color(0xFF6E7781), fontStyle: FontStyle.italic),
   'keyword': TextStyle(color: Color(0xFFCF222E), fontWeight: FontWeight.w600),
-  'selector-tag': TextStyle(color: Color(0xFFCF222E), fontWeight: FontWeight.w600),
+  'selector-tag': TextStyle(
+    color: Color(0xFFCF222E),
+    fontWeight: FontWeight.w600,
+  ),
   'literal': TextStyle(color: Color(0xFF0550AE)),
   'number': TextStyle(color: Color(0xFF0550AE)),
   'string': TextStyle(color: Color(0xFF0A3069)),
@@ -148,7 +169,10 @@ const _lightTheme = {
   'built_in': TextStyle(color: Color(0xFF953800)),
   'symbol': TextStyle(color: Color(0xFF0550AE)),
   'bullet': TextStyle(color: Color(0xFF0550AE)),
-  'link': TextStyle(color: Color(0xFF0969DA), decoration: TextDecoration.underline),
+  'link': TextStyle(
+    color: Color(0xFF0969DA),
+    decoration: TextDecoration.underline,
+  ),
   'emphasis': TextStyle(fontStyle: FontStyle.italic),
   'strong': TextStyle(fontWeight: FontWeight.w700),
   'addition': TextStyle(color: Color(0xFF116329)),
@@ -157,8 +181,14 @@ const _lightTheme = {
   'params': TextStyle(color: Color(0xFF24292F)),
   'regexp': TextStyle(color: Color(0xFF0A3069)),
   'tag': TextStyle(color: Color(0xFF116329)),
-  'title.function': TextStyle(color: Color(0xFF8250DF), fontWeight: FontWeight.w600),
-  'title.class': TextStyle(color: Color(0xFF953800), fontWeight: FontWeight.w600),
+  'title.function': TextStyle(
+    color: Color(0xFF8250DF),
+    fontWeight: FontWeight.w600,
+  ),
+  'title.class': TextStyle(
+    color: Color(0xFF953800),
+    fontWeight: FontWeight.w600,
+  ),
   'property': TextStyle(color: Color(0xFF0550AE)),
   'operator': TextStyle(color: Color(0xFF0550AE)),
   'punctuation': TextStyle(color: Color(0xFF24292F)),

@@ -10,8 +10,10 @@ import 'app_providers.dart';
 
 /// 已保存连接列表
 final connectionsProvider =
-    StateNotifierProvider<ConnectionsNotifier, AsyncValue<List<SavedConnection>>>(
-        (ref) => ConnectionsNotifier(ref));
+    StateNotifierProvider<
+      ConnectionsNotifier,
+      AsyncValue<List<SavedConnection>>
+    >((ref) => ConnectionsNotifier(ref));
 
 class ConnectionsNotifier
     extends StateNotifier<AsyncValue<List<SavedConnection>>> {
@@ -53,7 +55,10 @@ class ConnectionsNotifier
 
 /// 登录成功后登记连接 (loginFromUrl 之后调用)
 Future<void> registerLogin(
-    WidgetRef ref, String loginUrl, ZcodeSession session) async {
+  WidgetRef ref,
+  String loginUrl,
+  ZcodeSession session,
+) async {
   try {
     await ref.read(authRepositoryProvider).addConnection(loginUrl, session);
     ref.read(connectionsProvider.notifier).load();

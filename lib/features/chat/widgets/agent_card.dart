@@ -18,7 +18,7 @@ class AgentCard extends StatefulWidget {
 
   /// 子会话懒加载器 (chat_screen 从 chatProvider 注入; null = 无下钻能力)
   final Future<List<MessagePart>> Function(String childSessionId)?
-      onLoadChildren;
+  onLoadChildren;
   final int depth; // 嵌套深度 (0 = 顶层)
 
   const AgentCard({
@@ -216,11 +216,11 @@ class _AgentCardState extends State<AgentCard> {
   }
 
   IconData _statusIcon() => switch (widget.part.status) {
-        'success' => Icons.check_circle_outline,
-        'failed' => Icons.cancel_outlined,
-        'cancelled' => Icons.block_outlined,
-        _ => Icons.check_circle_outline,
-      };
+    'success' => Icons.check_circle_outline,
+    'failed' => Icons.cancel_outlined,
+    'cancelled' => Icons.block_outlined,
+    _ => Icons.check_circle_outline,
+  };
 }
 
 /// 子代理 children 的轻量投影渲染 (不复用主列表的合并卡, 保持克制)
@@ -241,9 +241,7 @@ class _ChildPartsView extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (final p in parts) _buildPart(p),
-      ],
+      children: [for (final p in parts) _buildPart(p)],
     );
   }
 
@@ -251,47 +249,47 @@ class _ChildPartsView extends StatelessWidget {
     final theme = this.theme;
     return switch (p) {
       SubagentPart() => AgentCard(
-          part: p,
-          theme: theme,
-          onLoadChildren: loader,
-          depth: depth,
-        ),
+        part: p,
+        theme: theme,
+        onLoadChildren: loader,
+        depth: depth,
+      ),
       ToolPart() => _ChildToolRow(activity: p.activity, theme: theme),
       ThoughtPart() => Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2),
-          child: Row(
-            children: [
-              Icon(
-                Icons.psychology_outlined,
-                size: 13,
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          children: [
+            Icon(
+              Icons.psychology_outlined,
+              size: 13,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              p.durationMs != null
+                  ? '思考 ${formatWorkDuration(p.durationMs!)}'
+                  : '思考过程',
+              style: TextStyle(
+                fontSize: AppTextSizes.label,
                 color: theme.colorScheme.onSurfaceVariant,
               ),
-              const SizedBox(width: 4),
-              Text(
-                p.durationMs != null
-                    ? '思考 ${formatWorkDuration(p.durationMs!)}'
-                    : '思考过程',
-                style: TextStyle(
-                  fontSize: AppTextSizes.label,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-        ),
-      TextPart() => Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2),
-          child: Text(
-            p.text,
-            maxLines: 8,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: AppTextSizes.bodySm,
-              height: 1.5,
-              color: theme.colorScheme.onSurface,
             ),
+          ],
+        ),
+      ),
+      TextPart() => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Text(
+          p.text,
+          maxLines: 8,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: AppTextSizes.bodySm,
+            height: 1.5,
+            color: theme.colorScheme.onSurface,
           ),
         ),
+      ),
       StepPart() => const SizedBox.shrink(),
     };
   }
@@ -312,8 +310,8 @@ class _ChildToolRow extends StatelessWidget {
     final color = failed
         ? AppColors.danger
         : running
-            ? AppColors.accent
-            : AppColors.success;
+        ? AppColors.accent
+        : AppColors.success;
     final target = toolTarget(activity);
 
     return Padding(

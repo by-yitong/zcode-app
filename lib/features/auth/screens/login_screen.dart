@@ -80,9 +80,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _scanQr() async {
-    final result = await Navigator.of(context).push<String>(
-      MaterialPageRoute(builder: (_) => const ScannerScreen()),
-    );
+    final result = await Navigator.of(
+      context,
+    ).push<String>(MaterialPageRoute(builder: (_) => const ScannerScreen()));
     if (result != null && result.isNotEmpty && mounted) {
       setState(() {
         _urlController.text = result;
@@ -111,17 +111,26 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   color: theme.colorScheme.primaryContainer,
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: Icon(Icons.terminal,
-                    size: 32, color: theme.colorScheme.primary),
+                child: Icon(
+                  Icons.terminal,
+                  size: 32,
+                  color: theme.colorScheme.primary,
+                ),
               ),
               const SizedBox(height: 20),
-              Text('连接 ZCode',
-                  style: theme.textTheme.headlineSmall
-                      ?.copyWith(fontWeight: FontWeight.bold)),
+              Text(
+                '连接 ZCode',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               const SizedBox(height: 8),
-              Text('扫码后自动连接, 也可以粘贴连接地址',
-                  style: theme.textTheme.bodyMedium
-                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+              Text(
+                '扫码后自动连接, 也可以粘贴连接地址',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
 
               const SizedBox(height: 24),
 
@@ -168,11 +177,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white))
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
                     : const Icon(Icons.login),
                 label: Text(_isLoading ? '连接中...' : '连接'),
                 style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
               ),
 
               const SizedBox(height: 24),
@@ -189,12 +202,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(children: [
-                      Icon(Icons.help_outline,
-                          size: 18, color: theme.colorScheme.primary),
-                      const SizedBox(width: 8),
-                      Text('如何获取连接地址', style: theme.textTheme.titleSmall),
-                    ]),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.help_outline,
+                          size: 18,
+                          color: theme.colorScheme.primary,
+                        ),
+                        const SizedBox(width: 8),
+                        Text('如何获取连接地址', style: theme.textTheme.titleSmall),
+                      ],
+                    ),
                     const SizedBox(height: 12),
                     _step('1', '在电脑上打开 ZCode 桌面端'),
                     _step('2', '点击「移动端」或「远程连接」显示二维码'),
@@ -225,11 +243,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               shape: BoxShape.circle,
             ),
             child: Center(
-              child: Text(num,
-                  style: TextStyle(
-                      fontSize: AppTextSizes.caption,
-                      fontWeight: FontWeight.bold,
-                      color: theme.colorScheme.primary)),
+              child: Text(
+                num,
+                style: TextStyle(
+                  fontSize: AppTextSizes.caption,
+                  fontWeight: FontWeight.bold,
+                  color: theme.colorScheme.primary,
+                ),
+              ),
             ),
           ),
           const SizedBox(width: 10),

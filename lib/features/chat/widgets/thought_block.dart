@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import '../../../core/logging/app_logger.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 
-
 String formatWorkDuration(int ms) {
   final s = (ms / 1000).round();
   if (s < 1) return '1 秒';
@@ -22,7 +21,6 @@ String formatWorkDuration(int ms) {
   if (sec > 0 || units.isEmpty) units.add('$sec 秒');
   return units.take(2).join(' ');
 }
-
 
 class ThoughtBlock extends StatefulWidget {
   final String thought;

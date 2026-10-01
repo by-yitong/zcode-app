@@ -10,7 +10,8 @@ void main() {
     tester.view.devicePixelRatio = 3.0;
     addTearDown(tester.view.reset);
 
-    const table = '| 订单号 | 下单时间 | 客户姓名 | 商品名称 | 数量 | 单价(元) | 总金额(元) | 支付方式 | 配送方式 | 订单状态 |\n'
+    const table =
+        '| 订单号 | 下单时间 | 客户姓名 | 商品名称 | 数量 | 单价(元) | 总金额(元) | 支付方式 | 配送方式 | 订单状态 |\n'
         '|--------|----------|----------|----------|------|-----------|-------------|----------|----------|----------|\n'
         '| A001 | 09:15 | 张三 | 机械键盘 | 1 | 399 | 399 | 微信 | 顺丰 | 已发货 |\n'
         '| A002 | 10:32 | 李四 | 显示器 | 2 | 1299 | 2598 | 支付宝 | 京东 | 待发货 |\n';
@@ -23,33 +24,35 @@ void main() {
     );
 
     const centerKey = Key('center');
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: CustomScrollView(
-          reverse: true,
-          center: centerKey,
-          controller: ScrollController(initialScrollOffset: 0),
-          slivers: [
-            const SliverToBoxAdapter(child: SizedBox(height: 8)),
-            SliverPadding(
-              key: centerKey,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) => MessageBubble(
-                    message: msg,
-                    theme: ThemeData.light(),
-                    isLastUserMessage: false,
-                    isResponding: false,
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CustomScrollView(
+            reverse: true,
+            center: centerKey,
+            controller: ScrollController(initialScrollOffset: 0),
+            slivers: [
+              const SliverToBoxAdapter(child: SizedBox(height: 8)),
+              SliverPadding(
+                key: centerKey,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) => MessageBubble(
+                      message: msg,
+                      theme: ThemeData.light(),
+                      isLastUserMessage: false,
+                      isResponding: false,
+                    ),
+                    childCount: 1,
                   ),
-                  childCount: 1,
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
-    ));
+    );
     await tester.pumpAndSettle();
 
     // 我的外层 HSV (含表格的那个)
@@ -61,13 +64,21 @@ void main() {
     final hStates = tester
         .widgetList<SingleChildScrollView>(find.byType(SingleChildScrollView))
         .where((w) => w.scrollDirection == Axis.horizontal)
-        .map((w) => tester.state<ScrollableState>(find.descendant(
-              of: find.byWidget(w),
-              matching: find.byType(Scrollable),
-            ).first))
+        .map(
+          (w) => tester.state<ScrollableState>(
+            find
+                .descendant(
+                  of: find.byWidget(w),
+                  matching: find.byType(Scrollable),
+                )
+                .first,
+          ),
+        )
         .toList();
     for (final st in hStates) {
-      debugPrint('=== HSV extent=${st.position.maxScrollExtent} viewport=${st.position.viewportDimension}');
+      debugPrint(
+        '=== HSV extent=${st.position.maxScrollExtent} viewport=${st.position.viewportDimension}',
+      );
     }
     final target = hStates.firstWhere((s) => s.position.maxScrollExtent > 0);
     final before = target.position.pixels;

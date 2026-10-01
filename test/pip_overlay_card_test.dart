@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -503,7 +502,7 @@ void main() {
 
     // 推空快照 → 防抖挂起, 内容仍在
     controller.add(
-      jsonEncode(PipSnapshot(v: 1, index: 0, sessions: const []).toJson()),
+      jsonEncode(const PipSnapshot(v: 1, index: 0, sessions: []).toJson()),
     );
     await tester.pump();
     expect(find.text('任务Alpha'), findsOneWidget, reason: '防抖期内不切空态');
@@ -530,7 +529,7 @@ void main() {
 
     // 再次推空 → 1.5s 内不切, 超时后真正进入空态
     controller.add(
-      jsonEncode(PipSnapshot(v: 1, index: 0, sessions: const []).toJson()),
+      jsonEncode(const PipSnapshot(v: 1, index: 0, sessions: []).toJson()),
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 700));
@@ -578,7 +577,7 @@ void main() {
   });
 
   testWidgets('拖动中冻结快照重建, 松手后一次性应用', (tester) async {
-    final pip = _FakePipService(const OverlayPosition(100, 200));
+    final pip = _FakePipService();
     final controller = StreamController<dynamic>();
     addTearDown(controller.close);
 
@@ -627,8 +626,8 @@ void main() {
     expect(find.text('旧内容v1'), findsNothing);
   });
 
-  testWidgets('拖动 in-flight 串行节流: 在途时吞中间目标, 完成后补发最终位置', (tester) async {
-    final pip = _FakePipService(const OverlayPosition(100, 200));
+  testWidgets('标题栏拖动走原生 enableDrag: 按下开, 松手关, 同尺寸不变形', (tester) async {
+    final pip = _FakePipService();
     final controller = StreamController<dynamic>();
     addTearDown(controller.close);
 
@@ -642,56 +641,44 @@ void main() {
       ],
     );
 
-    // 从标题栏起手 → onPanStart 拉基准位置 (异步微任务)
+    // 从标题栏起手拖动 → onPanStart: 同尺寸 resizeOverlay 切 enableDrag=true
     final gesture = await tester.startGesture(
       tester.getCenter(find.text('任务Alpha')),
     );
-    await tester.pump(); // 基准就绪
-
-    // 第一发 moveOverlay 被闸门挂起 (模拟 MethodChannel 在途);
-    // 发送发生在下一帧的 postFrameCallback 里, 先 pump 出帧
-    pip.gate = Completer<void>();
     await gesture.moveBy(const Offset(40, 0));
     await tester.pump();
-    expect(pip.moves.length, 1, reason: '首目标立即发出');
-    final firstX = pip.moves.first.x;
+    expect(pip.dragToggles.length, 1, reason: '按下开启原生拖动');
+    expect(pip.dragToggles.first.$1, true);
+    expect(pip.dragToggles.first.$2, 320, reason: '宽度保持窗口当前尺寸');
+    expect(
+      pip.dragToggles.first.$3,
+      pipWindowHeight(4).round(),
+      reason: '高度保持窗口当前尺寸',
+    );
 
-    // 在途期间继续移动: 只更新目标, 不再发 (吞中间帧)
+    // 继续拖动不产生额外开关 (原生层自己搬窗口, Dart 不参与)
     await gesture.moveBy(const Offset(40, 0));
     await gesture.moveBy(const Offset(40, 0));
-    expect(pip.moves.length, 1, reason: '在途时中间目标被节流吞掉');
+    expect(pip.dragToggles.length, 1);
 
-    // 松手 → 闸门放行 → 完成回调回查 → 下一帧补发最终目标 (不丢尾帧)。
-    // 两次被吞的位移 (40*2) 全部并入最终目标
+    // 松手 → 关回 enableDrag=false (正文手势不被原生拖动抢)
     await gesture.up();
-    pip.gate!.complete();
-    // 两帧: 第一帧让闸门 Future 完成 → 完成回调回查排队, 第二帧帧回调发送
     await tester.pump();
-    await tester.pump();
-    expect(pip.moves.length, 2, reason: '完成后补发最新目标');
-    expect(pip.moves.last.x, moreOrLessEquals(firstX + 80));
-    expect(pip.moves.last.y, pip.moves.first.y);
-    await tester.pump();
-    expect(pip.moves.length, 2, reason: '目标收敛后不再空发');
+    expect(pip.dragToggles.length, 2);
+    expect(pip.dragToggles.last.$1, false);
   });
 }
 
-/// 假 PipService: 记录 moveOverlay 调用; [gate] 未完成时模拟通道在途
+/// 假 PipService: 记录 setNativeDrag 开关 (enabled, widthDp, heightDp)
 class _FakePipService extends PipService {
-  _FakePipService(this.origin);
-
-  final OverlayPosition origin;
-  final List<OverlayPosition> moves = <OverlayPosition>[];
-  Completer<void>? gate;
+  final List<(bool, int, int)> dragToggles = <(bool, int, int)>[];
 
   @override
-  Future<OverlayPosition?> getOverlayPosition() async => origin;
-
-  @override
-  Future<void> moveOverlay(OverlayPosition position) {
-    moves.add(position);
-    final gate = this.gate;
-    if (gate != null) return gate.future;
-    return Future<void>.value();
+  Future<void> setNativeDrag(
+    bool enabled, {
+    required int windowWidthDp,
+    required int windowHeightDp,
+  }) async {
+    dragToggles.add((enabled, windowWidthDp, windowHeightDp));
   }
 }

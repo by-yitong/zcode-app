@@ -74,10 +74,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
       body: Stack(
         children: [
           // 扫码视图
-          MobileScanner(
-            controller: _controller,
-            onDetect: _onDetect,
-          ),
+          MobileScanner(controller: _controller, onDetect: _onDetect),
           // 扫码框遮罩
           CustomPaint(
             painter: _ScannerOverlayPainter(),
@@ -91,8 +88,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
             child: Column(
               children: [
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 12,
+                  ),
                   margin: const EdgeInsets.symmetric(horizontal: 40),
                   decoration: BoxDecoration(
                     color: Colors.black54,
@@ -100,7 +99,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
                   ),
                   child: const Text(
                     '将 ZCode 桌面端的二维码对准框内',
-                    style: TextStyle(color: Colors.white, fontSize: AppTextSizes.bodyMd),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: AppTextSizes.bodyMd,
+                    ),
                     textAlign: TextAlign.center,
                   ),
                 ),
@@ -134,7 +136,9 @@ class _ScannerOverlayPainter extends CustomPainter {
     canvas.drawRect(Rect.fromLTRB(0, top, left, top + boxSize), paint);
     // 右
     canvas.drawRect(
-        Rect.fromLTRB(left + boxSize, top, w, top + boxSize), paint);
+      Rect.fromLTRB(left + boxSize, top, w, top + boxSize),
+      paint,
+    );
 
     // 框边角
     final cornerPaint = Paint()
@@ -143,17 +147,49 @@ class _ScannerOverlayPainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
     const cornerLen = 24.0;
     // 左上
-    canvas.drawLine(Offset(left, top), Offset(left + cornerLen, top), cornerPaint);
-    canvas.drawLine(Offset(left, top), Offset(left, top + cornerLen), cornerPaint);
+    canvas.drawLine(
+      Offset(left, top),
+      Offset(left + cornerLen, top),
+      cornerPaint,
+    );
+    canvas.drawLine(
+      Offset(left, top),
+      Offset(left, top + cornerLen),
+      cornerPaint,
+    );
     // 右上
-    canvas.drawLine(Offset(left + boxSize, top), Offset(left + boxSize - cornerLen, top), cornerPaint);
-    canvas.drawLine(Offset(left + boxSize, top), Offset(left + boxSize, top + cornerLen), cornerPaint);
+    canvas.drawLine(
+      Offset(left + boxSize, top),
+      Offset(left + boxSize - cornerLen, top),
+      cornerPaint,
+    );
+    canvas.drawLine(
+      Offset(left + boxSize, top),
+      Offset(left + boxSize, top + cornerLen),
+      cornerPaint,
+    );
     // 左下
-    canvas.drawLine(Offset(left, top + boxSize), Offset(left + cornerLen, top + boxSize), cornerPaint);
-    canvas.drawLine(Offset(left, top + boxSize), Offset(left, top + boxSize - cornerLen), cornerPaint);
+    canvas.drawLine(
+      Offset(left, top + boxSize),
+      Offset(left + cornerLen, top + boxSize),
+      cornerPaint,
+    );
+    canvas.drawLine(
+      Offset(left, top + boxSize),
+      Offset(left, top + boxSize - cornerLen),
+      cornerPaint,
+    );
     // 右下
-    canvas.drawLine(Offset(left + boxSize, top + boxSize), Offset(left + boxSize - cornerLen, top + boxSize), cornerPaint);
-    canvas.drawLine(Offset(left + boxSize, top + boxSize), Offset(left + boxSize, top + boxSize - cornerLen), cornerPaint);
+    canvas.drawLine(
+      Offset(left + boxSize, top + boxSize),
+      Offset(left + boxSize - cornerLen, top + boxSize),
+      cornerPaint,
+    );
+    canvas.drawLine(
+      Offset(left + boxSize, top + boxSize),
+      Offset(left + boxSize, top + boxSize - cornerLen),
+      cornerPaint,
+    );
   }
 
   @override

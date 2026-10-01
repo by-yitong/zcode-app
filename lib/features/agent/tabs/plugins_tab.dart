@@ -48,15 +48,23 @@ class PluginsTabState extends ConsumerState<PluginsTab>
           onRefresh: () => ref.read(pluginsProvider.notifier).load(),
           child: ListView(
             padding: const EdgeInsets.fromLTRB(
-                AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.xxl),
+              AppSpacing.lg,
+              0,
+              AppSpacing.lg,
+              AppSpacing.xxl,
+            ),
             children: [
               AppSectionHeader(title: '已安装 (${data.installed.length})'),
               if (data.installed.isNotEmpty)
                 AppTileGroup(
                   tiles: [
                     for (final p in data.installed)
-                      _pluginTile(theme, cs, p,
-                          icon: iconOf['${p.marketplace}/${p.name}']),
+                      _pluginTile(
+                        theme,
+                        cs,
+                        p,
+                        icon: iconOf['${p.marketplace}/${p.name}'],
+                      ),
                   ],
                 ),
               const SizedBox(height: AppSpacing.md),
@@ -64,7 +72,8 @@ class PluginsTabState extends ConsumerState<PluginsTab>
               if (data.marketplaces.isNotEmpty)
                 AppTileGroup(
                   tiles: [
-                    for (final m in data.marketplaces) _marketTile(theme, cs, m),
+                    for (final m in data.marketplaces)
+                      _marketTile(theme, cs, m),
                   ],
                 ),
             ],
@@ -74,8 +83,12 @@ class PluginsTabState extends ConsumerState<PluginsTab>
     );
   }
 
-  AppTile _pluginTile(ThemeData theme, ColorScheme cs, PluginEntry p,
-      {String? icon}) {
+  AppTile _pluginTile(
+    ThemeData theme,
+    ColorScheme cs,
+    PluginEntry p, {
+    String? icon,
+  }) {
     final compLabel = p.componentTypes.isEmpty
         ? null
         : p.componentTypes.map(pluginComponentLabel).join(' · ');
@@ -88,7 +101,9 @@ class PluginsTabState extends ConsumerState<PluginsTab>
       title: p.hasUpdate ? '${p.label} · 有更新' : p.label,
       subtitle: subtitle.isNotEmpty ? subtitle : null,
       subtitleMaxLines: 2,
-      value: p.version != null && p.version!.isNotEmpty ? 'v${p.version}' : null,
+      value: p.version != null && p.version!.isNotEmpty
+          ? 'v${p.version}'
+          : null,
       showChevron: true,
       onTap: () => _pluginActions(context, p),
       trailing: CapsSwitch(
@@ -117,37 +132,52 @@ class PluginsTabState extends ConsumerState<PluginsTab>
       context,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
-            AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
+          AppSpacing.lg,
+          0,
+          AppSpacing.lg,
+          AppSpacing.lg,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(children: [
-              PluginIconBox(icon: p.icon, name: p.label, size: 40),
-              const SizedBox(width: AppSpacing.md),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(p.label,
-                        style: theme.textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w600)),
-                    if (p.version != null && p.version!.isNotEmpty)
+            Row(
+              children: [
+                PluginIconBox(icon: p.icon, name: p.label, size: 40),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       Text(
+                        p.label,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (p.version != null && p.version!.isNotEmpty)
+                        Text(
                           'v${p.version}${p.hasUpdate ? ' → v${p.latestVersion ?? '?'}' : ''}',
-                          style: AppText.mono(context,
-                              size: AppTextSizes.monoXs,
-                              color: theme.colorScheme.onSurfaceVariant)),
-                  ],
+                          style: AppText.mono(
+                            context,
+                            size: AppTextSizes.monoXs,
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
-              ),
-            ]),
+              ],
+            ),
             if (p.description.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.md),
-              Text(p.description,
-                  style: TextStyle(
-                      fontSize: AppTextSizes.bodySm,
-                      color: theme.colorScheme.onSurfaceVariant)),
+              Text(
+                p.description,
+                style: TextStyle(
+                  fontSize: AppTextSizes.bodySm,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
             ],
             if (p.componentTypes.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.sm),
@@ -165,9 +195,9 @@ class PluginsTabState extends ConsumerState<PluginsTab>
               contentPadding: EdgeInsets.zero,
               dense: true,
               leading: const Icon(Icons.refresh_rounded, size: 20),
-              title: Text(p.hasUpdate
-                  ? '更新 (v${p.latestVersion ?? '?'})'
-                  : '检查更新并刷新'),
+              title: Text(
+                p.hasUpdate ? '更新 (v${p.latestVersion ?? '?'})' : '检查更新并刷新',
+              ),
               onTap: () {
                 Navigator.pop(context);
                 _run(() => ref.read(pluginsProvider.notifier).update(p));
@@ -176,19 +206,27 @@ class PluginsTabState extends ConsumerState<PluginsTab>
             ListTile(
               contentPadding: EdgeInsets.zero,
               dense: true,
-              leading: Icon(Icons.delete_outline_rounded,
-                  size: 20, color: AppColors.danger),
+              leading: Icon(
+                Icons.delete_outline_rounded,
+                size: 20,
+                color: AppColors.danger,
+              ),
               title: Text('卸载', style: TextStyle(color: AppColors.danger)),
-              subtitle: Text('其提供的技能/命令将一并移除',
-                  style: TextStyle(
-                      fontSize: AppTextSizes.caption,
-                      color: theme.colorScheme.onSurfaceVariant)),
+              subtitle: Text(
+                '其提供的技能/命令将一并移除',
+                style: TextStyle(
+                  fontSize: AppTextSizes.caption,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
               onTap: () async {
                 Navigator.pop(context);
-                final ok = await capsConfirm(context,
-                    title: '卸载插件',
-                    message: '确定卸载「${p.label}」？其提供的技能/命令将一并移除。',
-                    confirmLabel: '卸载');
+                final ok = await capsConfirm(
+                  context,
+                  title: '卸载插件',
+                  message: '确定卸载「${p.label}」？其提供的技能/命令将一并移除。',
+                  confirmLabel: '卸载',
+                );
                 if (!ok) return;
                 _run(() => ref.read(pluginsProvider.notifier).uninstall(p));
               },
@@ -204,7 +242,11 @@ class PluginsTabState extends ConsumerState<PluginsTab>
       context,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
-            AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
+          AppSpacing.lg,
+          0,
+          AppSpacing.lg,
+          AppSpacing.lg,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -215,24 +257,31 @@ class PluginsTabState extends ConsumerState<PluginsTab>
               title: const Text('更新市场目录'),
               onTap: () {
                 Navigator.pop(context);
-                _run(() =>
-                    ref.read(pluginsProvider.notifier).updateMarketplace(m));
+                _run(
+                  () => ref.read(pluginsProvider.notifier).updateMarketplace(m),
+                );
               },
             ),
             ListTile(
               contentPadding: EdgeInsets.zero,
               dense: true,
-              leading: Icon(Icons.delete_outline_rounded,
-                  size: 20, color: AppColors.danger),
-              title:
-                  Text('移除市场', style: TextStyle(color: AppColors.danger)),
+              leading: Icon(
+                Icons.delete_outline_rounded,
+                size: 20,
+                color: AppColors.danger,
+              ),
+              title: Text('移除市场', style: TextStyle(color: AppColors.danger)),
               onTap: () async {
                 Navigator.pop(context);
-                final ok = await capsConfirm(context,
-                    title: '移除插件市场', message: '确定移除「${m.name}」？');
+                final ok = await capsConfirm(
+                  context,
+                  title: '移除插件市场',
+                  message: '确定移除「${m.name}」？',
+                );
                 if (!ok) return;
-                _run(() =>
-                    ref.read(pluginsProvider.notifier).removeMarketplace(m));
+                _run(
+                  () => ref.read(pluginsProvider.notifier).removeMarketplace(m),
+                );
               },
             ),
           ],
@@ -243,9 +292,9 @@ class PluginsTabState extends ConsumerState<PluginsTab>
 
   /// 打开插件市场浏览页 (页面右上角入口)
   void openMarketplace() {
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => const PluginsBrowserPage(),
-    ));
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const PluginsBrowserPage()));
   }
 
   Future<void> _run(Future<void> Function() action) async {
@@ -260,7 +309,8 @@ class PluginsTabState extends ConsumerState<PluginsTab>
   void _snack(String msg) {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating));
+        SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
+      );
     }
   }
 }

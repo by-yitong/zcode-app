@@ -47,10 +47,7 @@ final goRouterProvider = GoRouter(
       builder: (context, state) {
         final workspaceKey = state.uri.queryParameters['workspace'] ?? '';
         final taskId = state.uri.queryParameters['task'];
-        return ChatScreen(
-          workspaceKey: workspaceKey,
-          taskId: taskId,
-        );
+        return ChatScreen(workspaceKey: workspaceKey, taskId: taskId);
       },
     ),
   ],
@@ -79,8 +76,7 @@ class HomeRedirectScreen extends ConsumerStatefulWidget {
   const HomeRedirectScreen({super.key});
 
   @override
-  ConsumerState<HomeRedirectScreen> createState() =>
-      _HomeRedirectScreenState();
+  ConsumerState<HomeRedirectScreen> createState() => _HomeRedirectScreenState();
 }
 
 class _HomeRedirectScreenState extends ConsumerState<HomeRedirectScreen> {
@@ -159,8 +155,11 @@ class _HomeRedirectScreenState extends ConsumerState<HomeRedirectScreen> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.cloud_off_rounded,
-                        size: 48, color: Colors.white38),
+                    const Icon(
+                      Icons.cloud_off_rounded,
+                      size: 48,
+                      color: Colors.white38,
+                    ),
                     const SizedBox(height: 16),
                     Text(
                       _error!,

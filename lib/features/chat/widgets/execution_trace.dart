@@ -50,24 +50,24 @@ class ExecutionNode {
 }
 
 ExecutionStatus _toolStatus(String s) => switch (s) {
-      'error' || 'failed' => ExecutionStatus.error,
-      'cancelled' => ExecutionStatus.cancelled,
-      'inputStreaming' ||
-      'pendingApproval' ||
-      'running' ||
-      'scheduled' ||
-      'started' ||
-      'progress' => ExecutionStatus.running,
-      _ => ExecutionStatus.success,
-    };
+  'error' || 'failed' => ExecutionStatus.error,
+  'cancelled' => ExecutionStatus.cancelled,
+  'inputStreaming' ||
+  'pendingApproval' ||
+  'running' ||
+  'scheduled' ||
+  'started' ||
+  'progress' => ExecutionStatus.running,
+  _ => ExecutionStatus.success,
+};
 
 /// 子代理行 wire 状态 → 弹窗头部状态 (wire 四态: running/success/failed/cancelled)
 ExecutionStatus _mapSubagentStatus(String s) => switch (s) {
-      'running' => ExecutionStatus.running,
-      'failed' => ExecutionStatus.error,
-      'cancelled' => ExecutionStatus.cancelled,
-      _ => ExecutionStatus.success, // success / 未知
-    };
+  'running' => ExecutionStatus.running,
+  'failed' => ExecutionStatus.error,
+  'cancelled' => ExecutionStatus.cancelled,
+  _ => ExecutionStatus.success, // success / 未知
+};
 
 /// 执行类 part → node (TextPart 不进 trace, 由调用方渲染正文)
 ExecutionNode? _partToNode(MessagePart p, int seq) {
@@ -193,22 +193,19 @@ bool exploreEligible(ToolActivity a) {
 /// search(搜索) / list(列表), 其余 file(文件)
 String exploreBucket(ToolActivity a) {
   final r = a.toolName.toLowerCase();
-  final inputVals =
-      (a.input?.values ?? const [])
-          .whereType<String>()
-          .join(' ; ')
-          .toLowerCase();
+  final inputVals = (a.input?.values ?? const [])
+      .whereType<String>()
+      .join(' ; ')
+      .toLowerCase();
   if (RegExp(
-    r'(\bgrep\b|\bsearch\b|\bfetch\b|\bweb.?search\b|\bweb.?fetch\b)',
-  ).hasMatch(r) ||
-      RegExp(r'(^|\s)(rg|grep|ripgrep|git\s+grep)(\s|$)').hasMatch(
-        inputVals,
-      )) {
+        r'(\bgrep\b|\bsearch\b|\bfetch\b|\bweb.?search\b|\bweb.?fetch\b)',
+      ).hasMatch(r) ||
+      RegExp(r'(^|\s)(rg|grep|ripgrep|git\s+grep)(\s|$)').hasMatch(inputVals)) {
     return 'search';
   }
   if (RegExp(
-    r'(\bglob\b|\bfind\b|\blist\b|\btree\b|\bdir\b|\bls\b)',
-  ).hasMatch(r) ||
+        r'(\bglob\b|\bfind\b|\blist\b|\btree\b|\bdir\b|\bls\b)',
+      ).hasMatch(r) ||
       RegExp(r'(^|\s)(ls|find|tree|dir)(\s|$)').hasMatch(inputVals)) {
     return 'list';
   }
@@ -257,21 +254,15 @@ List<ExecutionNode> _absorbExploreRuns(List<ExecutionNode> nodes) {
   var run = <ExecutionNode>[];
   void flush() {
     if (run.length >= 2) {
-      final activities = [
-        for (final n in run) n.activity!,
-      ];
-      final running = run.any(
-        (n) => n.status == ExecutionStatus.running,
-      );
+      final activities = [for (final n in run) n.activity!];
+      final running = run.any((n) => n.status == ExecutionStatus.running);
       out.add(
         ExecutionNode(
           kind: ExecutionNodeKind.explore,
           id: 'explore_${run.first.id}',
           title: '探索',
           subtitle: exploreSummary(activities),
-          status: running
-              ? ExecutionStatus.running
-              : run.last.status,
+          status: running ? ExecutionStatus.running : run.last.status,
           durationMs: null,
           children: run,
         ),
@@ -303,11 +294,13 @@ class ExecutionNodeList extends StatelessWidget {
   final ThemeData theme;
   final Color inkColor;
   final Future<List<MessagePart>> Function(String childSessionId)?
-      onLoadChildren;
+  onLoadChildren;
 
   /// 实时刷新器 (null = 无实时能力, 弹窗退化为打开时快照)
   final Future<({List<MessagePart> parts, String? status})> Function(
-      String childSessionId)? onLiveRefresh;
+    String childSessionId,
+  )?
+  onLiveRefresh;
 
   const ExecutionNodeList({
     super.key,
@@ -343,12 +336,14 @@ class ExecutionNodeWidget extends StatefulWidget {
   final ThemeData theme;
   final Color inkColor;
   final Future<List<MessagePart>> Function(String childSessionId)?
-      onLoadChildren;
+  onLoadChildren;
   final int depth;
 
   /// 实时刷新器 (null = 无实时能力, 弹窗退化为打开时快照)
   final Future<({List<MessagePart> parts, String? status})> Function(
-      String childSessionId)? onLiveRefresh;
+    String childSessionId,
+  )?
+  onLiveRefresh;
 
   const ExecutionNodeWidget({
     super.key,
@@ -399,7 +394,8 @@ class _ExecutionNodeWidgetState extends State<ExecutionNodeWidget> {
       _ => theme.colorScheme.onSurfaceVariant,
     };
     // 子代理: 有下钻句柄 → 右箭头示意"打开详情弹窗"
-    final opensDetail = n.kind == ExecutionNodeKind.subagent &&
+    final opensDetail =
+        n.kind == ExecutionNodeKind.subagent &&
         n.subagent?.childSessionId != null &&
         widget.onLoadChildren != null;
     // 探索组: 子工具行已内联, 直接可展开
@@ -424,10 +420,7 @@ class _ExecutionNodeWidgetState extends State<ExecutionNodeWidget> {
               onTap: _onTap,
               borderRadius: BorderRadius.circular(AppRadius.xs),
               child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 2,
-                  vertical: 1,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
                 child: Row(
                   children: [
                     Icon(_iconFor(n.kind), size: 14, color: statusColor),
@@ -516,7 +509,7 @@ class _ExecutionNodeWidgetState extends State<ExecutionNodeWidget> {
                   ),
                 ),
               ),
-            ],
+          ],
         ),
       ),
     );
@@ -533,16 +526,15 @@ class _ExecutionNodeWidgetState extends State<ExecutionNodeWidget> {
       color: err ? AppColors.danger : color,
     );
   }
-
 }
 
 IconData _iconFor(ExecutionNodeKind k) => switch (k) {
-      ExecutionNodeKind.thinking => Icons.psychology_outlined,
-      ExecutionNodeKind.tool => Icons.build_outlined,
-      ExecutionNodeKind.mcp => Icons.extension,
-      ExecutionNodeKind.subagent => Icons.account_tree_outlined,
-      ExecutionNodeKind.explore => Icons.travel_explore,
-    };
+  ExecutionNodeKind.thinking => Icons.psychology_outlined,
+  ExecutionNodeKind.tool => Icons.build_outlined,
+  ExecutionNodeKind.mcp => Icons.extension,
+  ExecutionNodeKind.subagent => Icons.account_tree_outlined,
+  ExecutionNodeKind.explore => Icons.travel_explore,
+};
 
 /// ── 详情 Bottom Sheet (DraggableScrollableSheet) ──
 void showExecutionDetail(
@@ -551,7 +543,9 @@ void showExecutionDetail(
   ThemeData theme, {
   Future<List<MessagePart>> Function(String childSessionId)? onLoadChildren,
   Future<({List<MessagePart> parts, String? status})> Function(
-      String childSessionId)? onLiveRefresh,
+    String childSessionId,
+  )?
+  onLiveRefresh,
 }) {
   showModalBottomSheet<void>(
     context: context,
@@ -572,11 +566,13 @@ class _ExecutionDetailSheet extends StatefulWidget {
 
   /// 子代理 children 懒加载器 (null = 无下钻能力)
   final Future<List<MessagePart>> Function(String childSessionId)?
-      onLoadChildren;
+  onLoadChildren;
 
   /// 实时刷新器 (null = 无实时能力, 弹窗退化为打开时快照)
   final Future<({List<MessagePart> parts, String? status})> Function(
-      String childSessionId)? onLiveRefresh;
+    String childSessionId,
+  )?
+  onLiveRefresh;
 
   const _ExecutionDetailSheet({
     required this.node,
@@ -716,12 +712,11 @@ class _ExecutionDetailSheetState extends State<_ExecutionDetailSheet> {
                   child: Container(
                     width: 36,
                     height: 4,
-                    margin: const EdgeInsets.symmetric(
-                      vertical: AppSpacing.sm,
-                    ),
+                    margin: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
                     decoration: BoxDecoration(
-                      color: theme.colorScheme.onSurfaceVariant
-                          .withValues(alpha: 0.4),
+                      color: theme.colorScheme.onSurfaceVariant.withValues(
+                        alpha: 0.4,
+                      ),
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
@@ -751,8 +746,8 @@ class _ExecutionDetailSheetState extends State<_ExecutionDetailSheet> {
   Widget _buildContent(BuildContext context, ThemeData theme) {
     final n = widget.node;
     // 子代理: 轮询期间用实时行状态, 不再用打开那一刻的快照
-    final status = widget.node.kind == ExecutionNodeKind.subagent &&
-            _liveStatus != null
+    final status =
+        widget.node.kind == ExecutionNodeKind.subagent && _liveStatus != null
         ? _mapSubagentStatus(_liveStatus!)
         : n.status;
     final typeLabel = switch (n.kind) {
@@ -888,8 +883,7 @@ class _ExecutionDetailSheetState extends State<_ExecutionDetailSheet> {
           _codeBlock(theme, _prettyJson(n.activity!.input!)),
         ],
         // Result
-        if (n.activity?.result != null &&
-            n.activity!.result!.isNotEmpty) ...[
+        if (n.activity?.result != null && n.activity!.result!.isNotEmpty) ...[
           const SizedBox(height: AppSpacing.md),
           _sectionLabel(theme, 'Result'),
           _codeBlock(theme, _clip(n.activity!.result!, 8000)),
@@ -905,60 +899,60 @@ class _ExecutionDetailSheetState extends State<_ExecutionDetailSheet> {
   }
 
   Widget _sectionLabel(ThemeData theme, String s) => Padding(
-        padding: const EdgeInsets.only(bottom: AppSpacing.xs),
-        child: Text(
-          s,
-          style: theme.textTheme.labelMedium?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      );
+    padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+    child: Text(
+      s,
+      style: theme.textTheme.labelMedium?.copyWith(
+        color: theme.colorScheme.onSurfaceVariant,
+        fontWeight: FontWeight.w600,
+      ),
+    ),
+  );
 
   Widget _kv(ThemeData theme, String k, String v) => Padding(
-        padding: const EdgeInsets.only(bottom: AppSpacing.xs),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 56,
-              child: Text(
-                k,
-                style: TextStyle(
-                  fontSize: AppTextSizes.label,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
+    padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 56,
+          child: Text(
+            k,
+            style: TextStyle(
+              fontSize: AppTextSizes.label,
+              color: theme.colorScheme.onSurfaceVariant,
             ),
-            Expanded(
-              child: Text(
-                v,
-                style: TextStyle(
-                  fontSize: AppTextSizes.label,
-                  fontFamily: kMonoFont,
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-
-  Widget _codeBlock(ThemeData theme, String text) => Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(AppSpacing.sm),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerLowest,
-          borderRadius: BorderRadius.circular(AppRadius.sm),
-        ),
-        child: Text(
-          text,
-          style: TextStyle(
-            fontSize: AppTextSizes.label,
-            fontFamily: kMonoFont,
-            height: 1.5,
           ),
         ),
-      );
+        Expanded(
+          child: Text(
+            v,
+            style: TextStyle(
+              fontSize: AppTextSizes.label,
+              fontFamily: kMonoFont,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _codeBlock(ThemeData theme, String text) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(AppSpacing.sm),
+    decoration: BoxDecoration(
+      color: theme.colorScheme.surfaceContainerLowest,
+      borderRadius: BorderRadius.circular(AppRadius.sm),
+    ),
+    child: Text(
+      text,
+      style: TextStyle(
+        fontSize: AppTextSizes.label,
+        fontFamily: kMonoFont,
+        height: 1.5,
+      ),
+    ),
+  );
 
   static String _prettyJson(Map<String, dynamic> m) {
     try {

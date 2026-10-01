@@ -17,73 +17,79 @@ void main() {
   );
 
   PendingPermission bashPerm() => PendingPermission(
-        id: 'perm_test_bash',
-        toolCallId: 'call_bash',
-        toolName: 'Bash',
-        reason: '运行 grep 命令搜索权限相关代码，需要执行前确认',
-        riskLevel: 'medium',
-        input: const {
-          'command': 'grep -rn "allowOnce" lib/ | head -20',
-          'description': 'Search code',
-        },
-        options: const [
-          PermissionOption(
-              optionId: 'allowOnce', kind: 'allowOnce', name: 'Allow once'),
-          PermissionOption(
-              optionId: 'allowAlways',
-              kind: 'allowAlways',
-              name: 'Always allow in this project'),
-          PermissionOption(
-              optionId: 'deny',
-              kind: 'deny',
-              name: 'Deny',
-              decision: 'deny'),
-        ],
-      );
+    id: 'perm_test_bash',
+    toolCallId: 'call_bash',
+    toolName: 'Bash',
+    reason: '运行 grep 命令搜索权限相关代码，需要执行前确认',
+    riskLevel: 'medium',
+    input: const {
+      'command': 'grep -rn "allowOnce" lib/ | head -20',
+      'description': 'Search code',
+    },
+    options: const [
+      PermissionOption(
+        optionId: 'allowOnce',
+        kind: 'allowOnce',
+        name: 'Allow once',
+      ),
+      PermissionOption(
+        optionId: 'allowAlways',
+        kind: 'allowAlways',
+        name: 'Always allow in this project',
+      ),
+      PermissionOption(
+        optionId: 'deny',
+        kind: 'deny',
+        name: 'Deny',
+        decision: 'deny',
+      ),
+    ],
+  );
 
   PendingPermission writePerm() => PendingPermission(
-        id: 'perm_test_write',
-        toolCallId: 'call_write',
-        toolName: 'Write',
-        reason: '创建新文件',
-        riskLevel: 'medium',
-        input: const {
-          'file_path': '/home/admins/projects/zocde-app/lib/new_file.dart',
-        },
-        options: const [
-          PermissionOption(
-              optionId: 'allowOnce', kind: 'allowOnce', name: 'Allow once'),
-          PermissionOption(
-              optionId: 'allowAlways',
-              kind: 'allowAlways',
-              name: 'Always allow in this project'),
-          PermissionOption(
-              optionId: 'deny',
-              kind: 'deny',
-              name: 'Deny',
-              decision: 'deny'),
-        ],
-      );
+    id: 'perm_test_write',
+    toolCallId: 'call_write',
+    toolName: 'Write',
+    reason: '创建新文件',
+    riskLevel: 'medium',
+    input: const {
+      'file_path': '/home/admins/projects/zocde-app/lib/new_file.dart',
+    },
+    options: const [
+      PermissionOption(
+        optionId: 'allowOnce',
+        kind: 'allowOnce',
+        name: 'Allow once',
+      ),
+      PermissionOption(
+        optionId: 'allowAlways',
+        kind: 'allowAlways',
+        name: 'Always allow in this project',
+      ),
+      PermissionOption(
+        optionId: 'deny',
+        kind: 'deny',
+        name: 'Deny',
+        decision: 'deny',
+      ),
+    ],
+  );
 
   Widget host(PendingPermission perm) => MaterialApp(
-        theme: dark,
-        home: Scaffold(
-          backgroundColor: const Color(0xFF09090A),
-          body: Center(
-            child: ListView(
-              reverse: true,
-              padding: const EdgeInsets.all(12),
-              children: [
-                ApprovalCard(
-                  perm: perm,
-                  theme: dark,
-                  onAnswer: (_, __) {},
-                ),
-              ],
-            ),
-          ),
+    theme: dark,
+    home: Scaffold(
+      backgroundColor: const Color(0xFF09090A),
+      body: Center(
+        child: ListView(
+          reverse: true,
+          padding: const EdgeInsets.all(12),
+          children: [
+            ApprovalCard(perm: perm, theme: dark, onAnswer: (_, __) {}),
+          ],
         ),
-      );
+      ),
+    ),
+  );
 
   testWidgets('ApprovalCard Bash 渲染 golden', (tester) async {
     tester.view.physicalSize = const Size(1080, 600);

@@ -22,7 +22,8 @@ class ZcodeSession {
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
 
-  bool get isValid => deviceSid.isNotEmpty && passHash.isNotEmpty && cookie.isNotEmpty;
+  bool get isValid =>
+      deviceSid.isNotEmpty && passHash.isNotEmpty && cookie.isNotEmpty;
 
   factory ZcodeSession.fromJson(Map<String, dynamic> json) {
     return ZcodeSession(
@@ -38,11 +39,11 @@ class ZcodeSession {
   }
 
   Map<String, dynamic> toJson() => {
-        'mid': mid,
-        'deviceSid': deviceSid,
-        'passHash': passHash,
-        'cookie': cookie,
-        'deviceName': deviceName,
-        'createdAt': createdAt.toIso8601String(),
-      };
+    'mid': mid,
+    'deviceSid': deviceSid,
+    'passHash': passHash,
+    'cookie': cookie,
+    'deviceName': deviceName,
+    'createdAt': createdAt.toIso8601String(),
+  };
 }

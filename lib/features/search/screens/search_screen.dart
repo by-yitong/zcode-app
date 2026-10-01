@@ -34,11 +34,7 @@ class SearchScreen extends ConsumerStatefulWidget {
   /// 选择会话, 由调用方跳转 (需处理跨工作区 selectedWorkspace)
   final void Function(Task task)? onSelectTask;
 
-  const SearchScreen({
-    super.key,
-    this.onSlashCommand,
-    this.onSelectTask,
-  });
+  const SearchScreen({super.key, this.onSlashCommand, this.onSelectTask});
 
   @override
   ConsumerState<SearchScreen> createState() => _SearchScreenState();
@@ -98,18 +94,23 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           .where((t) => t.title.toLowerCase().contains(query))
           .toList();
     }
-    tasks.sort((a, b) => (b.updatedAt?.millisecondsSinceEpoch ?? 0)
-        .compareTo(a.updatedAt?.millisecondsSinceEpoch ?? 0));
+    tasks.sort(
+      (a, b) => (b.updatedAt?.millisecondsSinceEpoch ?? 0).compareTo(
+        a.updatedAt?.millisecondsSinceEpoch ?? 0,
+      ),
+    );
     if (tasks.length > 50) tasks = tasks.sublist(0, 50);
 
     // 斜杠命令: 空查询全展示, 有查询按命令/描述匹配
     final commands = query.isEmpty
         ? kSlashCommands
         : kSlashCommands
-            .where((c) =>
-                c.command.contains(query) ||
-                c.description.toLowerCase().contains(query))
-            .toList();
+              .where(
+                (c) =>
+                    c.command.contains(query) ||
+                    c.description.toLowerCase().contains(query),
+              )
+              .toList();
 
     return Scaffold(
       appBar: AppBar(
@@ -131,7 +132,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     icon: const Icon(Icons.close, size: 18),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(
-                        minWidth: 36, minHeight: 36),
+                      minWidth: 36,
+                      minHeight: 36,
+                    ),
                     color: theme.colorScheme.onSurfaceVariant,
                     onPressed: () {
                       _searchController.clear();
@@ -166,10 +169,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.search_off,
-                size: 40,
-                color: theme.colorScheme.onSurfaceVariant
-                    .withValues(alpha: 0.5)),
+            Icon(
+              Icons.search_off,
+              size: 40,
+              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+            ),
             const SizedBox(height: AppSpacing.md),
             Text(
               _query.isEmpty ? '开始搜索' : '未找到匹配结果',
@@ -188,33 +192,35 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         // 斜杠命令
         if (commands.isNotEmpty) ...[
           _sectionLabel(theme, '命令'),
-          for (final cmd in commands)
-            _buildCommandTile(theme, cmd),
+          for (final cmd in commands) _buildCommandTile(theme, cmd),
           if (tasks.isNotEmpty) _divider(theme, isDark),
         ],
         // 会话结果
         if (tasks.isNotEmpty) ...[
           _sectionLabel(theme, _query.isEmpty ? '最近对话' : '对话'),
-          for (final task in tasks)
-            _buildTaskTile(theme, task, workspaceNames),
+          for (final task in tasks) _buildTaskTile(theme, task, workspaceNames),
         ],
       ],
     );
   }
 
   Widget _divider(ThemeData theme, bool isDark) => Divider(
-        height: 1,
-        indent: AppSpacing.lg,
-        endIndent: AppSpacing.lg,
-        color:
-            (isDark ? AppColors.darkBorder : AppColors.lightBorder)
-                .withValues(alpha: 0.5),
-      );
+    height: 1,
+    indent: AppSpacing.lg,
+    endIndent: AppSpacing.lg,
+    color: (isDark ? AppColors.darkBorder : AppColors.lightBorder).withValues(
+      alpha: 0.5,
+    ),
+  );
 
   Widget _sectionLabel(ThemeData theme, String label) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(
-          AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.xs),
+        AppSpacing.lg,
+        AppSpacing.md,
+        AppSpacing.lg,
+        AppSpacing.xs,
+      ),
       child: Text(
         label,
         style: TextStyle(
@@ -231,7 +237,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       onTap: () => _selectSlashCommand(cmd),
       child: Padding(
         padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.lg, vertical: AppSpacing.md),
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.md,
+        ),
         child: Row(
           children: [
             Container(
@@ -269,10 +277,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 ],
               ),
             ),
-            Icon(Icons.north_west,
-                size: 16,
-                color: theme.colorScheme.onSurfaceVariant
-                    .withValues(alpha: 0.5)),
+            Icon(
+              Icons.north_west,
+              size: 16,
+              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+            ),
           ],
         ),
       ),
@@ -284,7 +293,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     Task task,
     Map<String, String> workspaceNames,
   ) {
-    final wsName = workspaceNames[task.workspaceKey] ??
+    final wsName =
+        workspaceNames[task.workspaceKey] ??
         task.workspaceKey.split('/').where((s) => s.isNotEmpty).lastOrNull ??
         'Unknown';
 
@@ -292,7 +302,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       onTap: () => _selectTask(task),
       child: Padding(
         padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.lg, vertical: AppSpacing.md),
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.md,
+        ),
         child: Row(
           children: [
             Icon(
@@ -318,10 +330,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   const SizedBox(height: 2),
                   Row(
                     children: [
-                      Icon(Icons.folder_outlined,
-                          size: 12,
-                          color: theme.colorScheme.onSurfaceVariant
-                              .withValues(alpha: 0.7)),
+                      Icon(
+                        Icons.folder_outlined,
+                        size: 12,
+                        color: theme.colorScheme.onSurfaceVariant.withValues(
+                          alpha: 0.7,
+                        ),
+                      ),
                       const SizedBox(width: 4),
                       Expanded(
                         child: Text(
@@ -350,10 +365,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 ],
               ),
             ),
-            Icon(Icons.chevron_right,
-                size: 18,
-                color: theme.colorScheme.onSurfaceVariant
-                    .withValues(alpha: 0.4)),
+            Icon(
+              Icons.chevron_right,
+              size: 18,
+              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+            ),
           ],
         ),
       ),

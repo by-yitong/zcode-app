@@ -19,19 +19,19 @@ final appLog = AppLogger();
 
 class AppLogger {
   AppLogger()
-      : _logger = Logger(
-          filter: ProductionFilter(),
-          // 协议调试期: release 真机也需要 d 级 (RPC keys / V4 帧 / 解析路径),
-          // 否则线上问题无线索。稳定后可改回 kDebugMode ? trace : info。
-          level: Level.trace,
-          printer: PrettyPrinter(
-            methodCount: 0,
-            errorMethodCount: 5,
-            lineLength: 80,
-            colors: true,
-            printEmojis: false,
-          ),
-        );
+    : _logger = Logger(
+        filter: ProductionFilter(),
+        // 协议调试期: release 真机也需要 d 级 (RPC keys / V4 帧 / 解析路径),
+        // 否则线上问题无线索。稳定后可改回 kDebugMode ? trace : info。
+        level: Level.trace,
+        printer: PrettyPrinter(
+          methodCount: 0,
+          errorMethodCount: 5,
+          lineLength: 80,
+          colors: true,
+          printEmojis: false,
+        ),
+      );
 
   final Logger _logger;
 

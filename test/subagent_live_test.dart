@@ -4,18 +4,16 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zcode_app/providers/chat_provider.dart';
 
-ToolPart _tool(String status) => ToolPart(ToolActivity(
-      toolCallId: 'tc_1',
-      toolName: 'Bash',
-      status: status,
-    ));
+ToolPart _tool(String status) => ToolPart(
+  ToolActivity(toolCallId: 'tc_1', toolName: 'Bash', status: status),
+);
 
 SubagentPart _subagent(String status) => SubagentPart(
-      subagentType: 'Explore',
-      status: status,
-      summaryText: '摘要',
-      rowIdKey: 'subagent_1',
-    );
+  subagentType: 'Explore',
+  status: status,
+  summaryText: '摘要',
+  rowIdKey: 'subagent_1',
+);
 
 void main() {
   group('hasRunningActivity (弹窗轮询停止条件)', () {
@@ -24,10 +22,7 @@ void main() {
     });
 
     test('ToolPart done + SubagentPart running → true', () {
-      expect(
-        hasRunningActivity([_tool('done'), _subagent('running')]),
-        isTrue,
-      );
+      expect(hasRunningActivity([_tool('done'), _subagent('running')]), isTrue);
     });
 
     test('全部 done → false', () {
@@ -44,10 +39,7 @@ void main() {
     test('混入 TextPart/ThoughtPart 不影响判定', () {
       // 只有文本/思考 → 不算运行中
       expect(
-        hasRunningActivity([
-          const TextPart('正文'),
-          const ThoughtPart('思考'),
-        ]),
+        hasRunningActivity([const TextPart('正文'), const ThoughtPart('思考')]),
         isFalse,
       );
       // 混在 running 工具前后 → 仍检出运行中
@@ -76,7 +68,11 @@ void main() {
 
     test('子代理 success/failed/cancelled 均不算运行中', () {
       for (final s in ['success', 'failed', 'cancelled']) {
-        expect(hasRunningActivity([_subagent(s)]), isFalse, reason: 'status=$s');
+        expect(
+          hasRunningActivity([_subagent(s)]),
+          isFalse,
+          reason: 'status=$s',
+        );
       }
     });
   });

@@ -76,7 +76,9 @@ class AppEmptyState extends StatelessWidget {
               const SizedBox(height: AppSpacing.xl),
               FilledButton.icon(
                 onPressed: onAction,
-                icon: actionIcon != null ? Icon(actionIcon, size: 18) : const SizedBox.shrink(),
+                icon: actionIcon != null
+                    ? Icon(actionIcon, size: 18)
+                    : const SizedBox.shrink(),
                 label: Text(actionLabel!),
               ),
             ],

@@ -67,7 +67,9 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
               decoration: BoxDecoration(
                 color: cs.surface,
                 borderRadius: BorderRadius.circular(AppRadius.md),
-                border: Border.all(color: AppColors.accent.withValues(alpha: 0.5)),
+                border: Border.all(
+                  color: AppColors.accent.withValues(alpha: 0.5),
+                ),
               ),
               child: Row(
                 children: [
@@ -78,8 +80,11 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
                       color: AppColors.accentContainer,
                       borderRadius: BorderRadius.circular(AppRadius.md),
                     ),
-                    child: const Icon(Icons.computer_rounded,
-                        size: 22, color: AppColors.accent),
+                    child: const Icon(
+                      Icons.computer_rounded,
+                      size: 22,
+                      color: AppColors.accent,
+                    ),
                   ),
                   const SizedBox(width: AppSpacing.md),
                   Expanded(
@@ -88,17 +93,20 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
                       children: [
                         Text(
                           session?.deviceName ?? '未连接',
-                          style: theme.textTheme.bodyLarge
-                              ?.copyWith(fontWeight: FontWeight.w600),
+                          style: theme.textTheme.bodyLarge?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                         const SizedBox(height: 2),
                         Text(
                           session != null
                               ? 'SID ${session.deviceSid.length > 14 ? '${session.deviceSid.substring(0, 14)}…' : session.deviceSid}'
                               : '扫码或粘贴地址连接桌面端',
-                          style: AppText.mono(context,
-                              size: AppTextSizes.monoXs,
-                              color: cs.onSurfaceVariant),
+                          style: AppText.mono(
+                            context,
+                            size: AppTextSizes.monoXs,
+                            color: cs.onSurfaceVariant,
+                          ),
                         ),
                       ],
                     ),
@@ -110,8 +118,7 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
             const SizedBox(height: AppSpacing.md),
 
             // 已保存列表
-            AppSectionHeader(
-                title: '已保存 (${list.length})'),
+            AppSectionHeader(title: '已保存 (${list.length})'),
             if (list.isEmpty)
               AppEmptyState(
                 icon: Icons.devices_rounded,
@@ -126,24 +133,23 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
                       onLongPress: () => _itemActions(c),
                       behavior: HitTestBehavior.translucent,
                       child: AppTile(
-                      icon: c.id == currentSid
-                          ? Icons.check_circle_rounded
-                          : Icons.computer_rounded,
-                      iconTint: c.id == currentSid
-                          ? AppColors.success
-                          : cs.onSurfaceVariant,
-                      title: c.label,
-                      subtitle:
-                          '${c.name} · 上次使用 ${_timeAgo(c.lastUsedAt)}',
-                      subtitleMaxLines: 1,
-                      value: c.id == currentSid ? '当前' : null,
-                      showChevron: c.id != currentSid,
-                      onTap: c.id == currentSid || _switching
-                          ? null
-                          : () => _switch(c),
-                      trailing: c.id == currentSid
-                          ? CapsPillCurrent(cs)
-                          : null,
+                        icon: c.id == currentSid
+                            ? Icons.check_circle_rounded
+                            : Icons.computer_rounded,
+                        iconTint: c.id == currentSid
+                            ? AppColors.success
+                            : cs.onSurfaceVariant,
+                        title: c.label,
+                        subtitle: '${c.name} · 上次使用 ${_timeAgo(c.lastUsedAt)}',
+                        subtitleMaxLines: 1,
+                        value: c.id == currentSid ? '当前' : null,
+                        showChevron: c.id != currentSid,
+                        onTap: c.id == currentSid || _switching
+                            ? null
+                            : () => _switch(c),
+                        trailing: c.id == currentSid
+                            ? CapsPillCurrent(cs)
+                            : null,
                       ),
                     ),
                 ],
@@ -151,13 +157,13 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
             if (list.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.xs),
               Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
                 child: Text(
                   '长按条目可重命名或删除; 切换需要对应电脑的 ZCode 在线',
                   style: TextStyle(
-                      fontSize: AppTextSizes.caption,
-                      color: cs.onSurfaceVariant.withValues(alpha: 0.7)),
+                    fontSize: AppTextSizes.caption,
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.7),
+                  ),
                 ),
               ),
             ],
@@ -173,22 +179,26 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
       RelayConnectionState.ready => ('已连接', AppColors.success),
       RelayConnectionState.connecting ||
       RelayConnectionState.bootstrapping ||
-      RelayConnectionState.reconnecting =>
-        ('连接中', AppColors.warning),
+      RelayConnectionState.reconnecting => ('连接中', AppColors.warning),
       _ => ('离线', AppColors.danger),
     };
     return Container(
       padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.sm + 2, vertical: 3),
+        horizontal: AppSpacing.sm + 2,
+        vertical: 3,
+      ),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(AppRadius.pill),
       ),
-      child: Text(label,
-          style: TextStyle(
-              fontSize: AppTextSizes.caption,
-              fontWeight: FontWeight.w600,
-              color: color)),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: AppTextSizes.caption,
+          fontWeight: FontWeight.w600,
+          color: color,
+        ),
+      ),
     );
   }
 
@@ -200,11 +210,13 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
         content: const Text('将断开当前连接并重新连接该桌面端。'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('切换')),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('切换'),
+          ),
         ],
       ),
     );
@@ -249,31 +261,40 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
       isScrollControlled: true,
       builder: (ctx) => Padding(
         padding: EdgeInsets.fromLTRB(
-            AppSpacing.lg, 0, AppSpacing.lg, MediaQuery.of(ctx).viewInsets.bottom + AppSpacing.lg),
+          AppSpacing.lg,
+          0,
+          AppSpacing.lg,
+          MediaQuery.of(ctx).viewInsets.bottom + AppSpacing.lg,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(children: [
-              Expanded(
-                child: Text('添加远程连接',
-                    style: Theme.of(ctx).textTheme.titleMedium
-                        ?.copyWith(fontWeight: FontWeight.w600)),
-              ),
-              IconButton(
-                icon: const Icon(Icons.qr_code_scanner_rounded),
-                tooltip: '扫码',
-                onPressed: () async {
-                  Navigator.pop(ctx);
-                  final result = await Navigator.of(context).push<String>(
-                    MaterialPageRoute(builder: (_) => const ScannerScreen()),
-                  );
-                  if (result != null && result.isNotEmpty && mounted) {
-                    _addConnectionWith(result);
-                  }
-                },
-              ),
-            ]),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '添加远程连接',
+                    style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.qr_code_scanner_rounded),
+                  tooltip: '扫码',
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    final result = await Navigator.of(context).push<String>(
+                      MaterialPageRoute(builder: (_) => const ScannerScreen()),
+                    );
+                    if (result != null && result.isNotEmpty && mounted) {
+                      _addConnectionWith(result);
+                    }
+                  },
+                ),
+              ],
+            ),
             const SizedBox(height: AppSpacing.md),
             TextField(
               controller: controller,
@@ -347,12 +368,14 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
                     content: TextField(controller: controller, autofocus: true),
                     actions: [
                       TextButton(
-                          onPressed: () => Navigator.pop(dctx),
-                          child: const Text('取消')),
+                        onPressed: () => Navigator.pop(dctx),
+                        child: const Text('取消'),
+                      ),
                       TextButton(
-                          onPressed: () =>
-                              Navigator.pop(dctx, controller.text.trim()),
-                          child: const Text('确定')),
+                        onPressed: () =>
+                            Navigator.pop(dctx, controller.text.trim()),
+                        child: const Text('确定'),
+                      ),
                     ],
                   ),
                 );
@@ -363,10 +386,12 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
               },
             ),
             ListTile(
-              leading: Icon(Icons.delete_outline_rounded,
-                  size: 20, color: AppColors.danger),
-              title: Text('删除',
-                  style: TextStyle(color: AppColors.danger)),
+              leading: Icon(
+                Icons.delete_outline_rounded,
+                size: 20,
+                color: AppColors.danger,
+              ),
+              title: Text('删除', style: TextStyle(color: AppColors.danger)),
               onTap: () async {
                 Navigator.pop(ctx);
                 final ok = await showDialog<bool>(
@@ -376,11 +401,13 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
                     content: const Text('仅移除保存的连接记录, 不影响桌面端。'),
                     actions: [
                       TextButton(
-                          onPressed: () => Navigator.pop(dctx, false),
-                          child: const Text('取消')),
+                        onPressed: () => Navigator.pop(dctx, false),
+                        child: const Text('取消'),
+                      ),
                       TextButton(
-                          onPressed: () => Navigator.pop(dctx, true),
-                          child: const Text('删除')),
+                        onPressed: () => Navigator.pop(dctx, true),
+                        child: const Text('删除'),
+                      ),
                     ],
                   ),
                 );
@@ -396,7 +423,8 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
   void _snack(String msg) {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating));
+        SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
+      );
     }
   }
 
@@ -419,16 +447,21 @@ class CapsPillCurrent extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.sm + 2, vertical: 3),
+        horizontal: AppSpacing.sm + 2,
+        vertical: 3,
+      ),
       decoration: BoxDecoration(
         color: AppColors.success.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(AppRadius.pill),
       ),
-      child: Text('当前',
-          style: TextStyle(
-              fontSize: AppTextSizes.caption,
-              fontWeight: FontWeight.w600,
-              color: AppColors.success)),
+      child: Text(
+        '当前',
+        style: TextStyle(
+          fontSize: AppTextSizes.caption,
+          fontWeight: FontWeight.w600,
+          color: AppColors.success,
+        ),
+      ),
     );
   }
 }

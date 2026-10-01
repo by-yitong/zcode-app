@@ -64,10 +64,12 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
 
   /// 该项目下是否存在"正在运行且未归档"的任务 (项目切换弹窗运行中标记用)
   static bool _hasRunningTask(List<Task> tasks, String workspaceKey) =>
-      tasks.any((t) =>
-          t.workspaceKey == workspaceKey &&
-          t.status == TaskStatus.running &&
-          !t.archived);
+      tasks.any(
+        (t) =>
+            t.workspaceKey == workspaceKey &&
+            t.status == TaskStatus.running &&
+            !t.archived,
+      );
 
   /// 长按会话弹出操作菜单 (归档 / 删除)
   ///

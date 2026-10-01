@@ -66,18 +66,14 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
   PipSnapshot? _snapshot;
   int _index = 0;
 
-  // 拖动手柄 (enableDrag:false 原生拖动会抢内容手势, 故由标题栏手柄自行驱动):
-  // 以 getOverlayPosition 为基准累积位移到"最新目标位置"; 两级节流 —
-  // ① in-flight 串行: 上一发 moveOverlay Future 完成前不发下一发;
-  // ② 帧对齐: 每渲染帧至多发一发 (postFrameCallback), 目标取发送瞬间最新值。
-  // 真机教训: 通道全速发送 (往返毫秒级 = 数百次 updateViewLayout/秒) 会让
-  // ROM 窗口动画反复重定向, 表现为拖动抖动; 帧对齐后与显示刷新率同频。
-  OverlayPosition _dragTarget = const OverlayPosition(0, 0);
-  OverlayPosition? _lastSentPosition;
-  bool _dragTargetReady = false;
-  bool _moveInFlight = false;
-  bool _moveSendQueued = false;
+  // 拖动手柄: 插件原生拖动 (onTouch 在原生层直接搬窗口, 零通道往返 =
+  // 官方例子的丝滑路径)。默认关 (原生监听挂在整窗上, 开着会抢正文手势);
+  // 按下标题栏瞬间 resizeOverlay 同尺寸切 enableDrag=true, 松手切回 false。
+  // 曾用 Dart 侧 moveOverlay 逐帧搬窗 (帧对齐+串行+整数量化), 通道延迟使
+  // 窗口落后手指一帧再追帧, 真机表现为抖动 — 已废弃整条路径。
   bool _dragging = false;
+  int? _dragWindowWidthDp;
+  int? _dragWindowHeightDp;
   PipSnapshot? _pendingSnapshot;
   Timer? _emptyDebounce;
 
@@ -165,23 +161,19 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
 
   void _onPanStart(DragStartDetails details) {
     _dragging = true;
-    _dragTargetReady = false;
-    unawaited(() async {
-      final pos = await _pip.getOverlayPosition();
-      if (pos != null && mounted) {
-        _dragTarget = pos;
-        _dragTargetReady = true;
-      }
-    }());
-  }
-
-  void _onPanUpdate(DragUpdateDetails details) {
-    if (!_dragTargetReady) return;
-    _dragTarget = OverlayPosition(
-      _dragTarget.x + details.delta.dx,
-      _dragTarget.y + details.delta.dy,
+    // 记录当前窗口尺寸 (dp, 取卡片 RenderBox = 生产环境即悬浮窗窗口尺寸),
+    // 同尺寸 resizeOverlay 仅切换 enableDrag — 原生层拖动接管, 跟手零延迟
+    final size = context.size;
+    if (size == null) return;
+    _dragWindowWidthDp = size.width.round();
+    _dragWindowHeightDp = size.height.round();
+    unawaited(
+      _pip.setNativeDrag(
+        true,
+        windowWidthDp: _dragWindowWidthDp!,
+        windowHeightDp: _dragWindowHeightDp!,
+      ),
     );
-    _dispatchMove();
   }
 
   void _onPanEnd(DragEndDetails details) => _onDragFinished();
@@ -190,48 +182,16 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
 
   void _onDragFinished() {
     _dragging = false;
+    final w = _dragWindowWidthDp;
+    final h = _dragWindowHeightDp;
+    if (w != null && h != null) {
+      unawaited(_pip.setNativeDrag(false, windowWidthDp: w, windowHeightDp: h));
+    }
     // 应用拖动期间挂起的快照 (若无可省一次 rebuild)
     final pending = _pendingSnapshot;
     _pendingSnapshot = null;
     if (pending != null && mounted) _acceptSnapshot(pending);
   }
-
-  /// 串行 + 帧对齐发送 moveOverlay:
-  /// - 在途 / 本帧已排队 → 跳过 (完成回调与帧回调会回查);
-  /// - 目标量化为整数 dp, 与上次已发一致 → 跳过;
-  /// - 请求一帧, 帧回调里取当时最新目标发送 — 与显示刷新率同频, 不丢尾帧
-  ///   (pan 停止后若仍有未发目标, 最后一帧回调必达)。
-  void _dispatchMove() {
-    if (_moveInFlight || _moveSendQueued) return;
-    final target = _quantizedTarget();
-    final last = _lastSentPosition;
-    if (last != null && last.x == target.x && last.y == target.y) {
-      return;
-    }
-    _moveSendQueued = true;
-    // 悬浮窗有呼吸动画常态产帧; 空闲时 scheduleFrame 保底唤起一帧
-    WidgetsBinding.instance.scheduleFrame();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _moveSendQueued = false;
-      if (!mounted || _moveInFlight) return;
-      final t = _quantizedTarget();
-      final l = _lastSentPosition;
-      if (l != null && l.x == t.x && l.y == t.y) return;
-      _moveInFlight = true;
-      _lastSentPosition = t;
-      unawaited(
-        _pip.moveOverlay(t).whenComplete(() {
-          _moveInFlight = false;
-          if (mounted) _dispatchMove();
-        }),
-      );
-    });
-  }
-
-  OverlayPosition _quantizedTarget() => OverlayPosition(
-    _dragTarget.x.roundToDouble(),
-    _dragTarget.y.roundToDouble(),
-  );
 
   @override
   Widget build(BuildContext context) {
@@ -259,7 +219,6 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
                       ? null
                       : sessions[_index.clamp(0, sessions.length - 1)],
                   onPanStart: _onPanStart,
-                  onPanUpdate: _onPanUpdate,
                   onPanEnd: _onPanEnd,
                   onPanCancel: _onPanCancel,
                   onClose: () => unawaited(_close()),
@@ -341,7 +300,6 @@ class _Header extends StatelessWidget {
   /// null = 空态 (无会话): 中性灰点 + "ZCode" 标题, 手柄与关闭按钮照常可用
   final PipSessionSnapshot? session;
   final void Function(DragStartDetails) onPanStart;
-  final void Function(DragUpdateDetails) onPanUpdate;
   final void Function(DragEndDetails) onPanEnd;
   final VoidCallback onPanCancel;
   final VoidCallback onClose;
@@ -349,7 +307,6 @@ class _Header extends StatelessWidget {
   const _Header({
     required this.session,
     required this.onPanStart,
-    required this.onPanUpdate,
     required this.onPanEnd,
     required this.onPanCancel,
     required this.onClose,
@@ -370,7 +327,6 @@ class _Header extends StatelessWidget {
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onPanStart: onPanStart,
-              onPanUpdate: onPanUpdate,
               onPanEnd: onPanEnd,
               onPanCancel: onPanCancel,
               child: Padding(

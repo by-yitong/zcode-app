@@ -98,14 +98,14 @@ class _AiMarkdownState extends State<AiMarkdown> {
     final codeBg = widget.codeBg;
     final minimal = widget.minimal;
     final heading = widget.headingBase;
-    final body = widget.bodyStyle ??
+    final body =
+        widget.bodyStyle ??
         TextStyle(
           color: ink,
           fontSize: AppTextSizes.bodyMd,
           height: minimal ? 1.5 : 1.6,
         );
-    final borderColor =
-        theme.colorScheme.outlineVariant.withValues(alpha: 0.4);
+    final borderColor = theme.colorScheme.outlineVariant.withValues(alpha: 0.4);
 
     _brightness = theme.brightness;
     _ink = ink;
@@ -127,17 +127,28 @@ class _AiMarkdownState extends State<AiMarkdown> {
       h2: heading ?? _h(ink, AppTextSizes.titleSm, FontWeight.w700, 1.4),
       h3: heading ?? _h(ink, AppTextSizes.bodyMd, FontWeight.w700, 1.5),
       h4: heading ?? _h(ink, AppTextSizes.bodyMd, FontWeight.w600, 1.5),
-      h5: heading ??
-          _h(ink.withValues(alpha: 0.85), AppTextSizes.bodySm,
-              FontWeight.w600, 1.5),
-      h6: heading ??
-          _h(ink.withValues(alpha: 0.7), AppTextSizes.label,
-              FontWeight.w600, 1.5),
+      h5:
+          heading ??
+          _h(
+            ink.withValues(alpha: 0.85),
+            AppTextSizes.bodySm,
+            FontWeight.w600,
+            1.5,
+          ),
+      h6:
+          heading ??
+          _h(
+            ink.withValues(alpha: 0.7),
+            AppTextSizes.label,
+            FontWeight.w600,
+            1.5,
+          ),
     );
 
     _sheet = minimal
         ? GptMarkdownStyleSheet(
-            inlineCode: widget.inlineCode ??
+            inlineCode:
+                widget.inlineCode ??
                 InlineCodeStyle(
                   fontFamily: kMonoFont,
                   backgroundColor: codeBg,
@@ -173,7 +184,8 @@ class _AiMarkdownState extends State<AiMarkdown> {
               color: AppColors.accent,
               fontWeight: FontWeight.w500,
             ),
-            inlineCode: widget.inlineCode ??
+            inlineCode:
+                widget.inlineCode ??
                 InlineCodeStyle(
                   fontFamily: kMonoFont,
                   color: ink,

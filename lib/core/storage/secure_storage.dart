@@ -21,10 +21,11 @@ class SecureStorageService {
   static const defaultGlmBaseUrl = 'https://open.bigmodel.cn/api/paas/v4';
 
   SecureStorageService([FlutterSecureStorage? storage])
-      : _secure = storage ??
-            const FlutterSecureStorage(
-              aOptions: AndroidOptions(encryptedSharedPreferences: true),
-            );
+    : _secure =
+          storage ??
+          const FlutterSecureStorage(
+            aOptions: AndroidOptions(encryptedSharedPreferences: true),
+          );
 
   /// 保存会话
   Future<void> saveSession(ZcodeSession session) async {
@@ -141,7 +142,8 @@ class PreferencesService {
 
   set themeMode(String mode) => _prefs.setString('themeMode', mode);
 
-  String get defaultModel => _prefs.getString('defaultModel') ?? 'GLM-X-PREVIEW';
+  String get defaultModel =>
+      _prefs.getString('defaultModel') ?? 'GLM-X-PREVIEW';
 
   set defaultModel(String model) => _prefs.setString('defaultModel', model);
 
@@ -149,8 +151,7 @@ class PreferencesService {
 
   set defaultMode(String mode) => _prefs.setString('defaultMode', mode);
 
-  bool get organizeByWorkspace =>
-      _prefs.getBool('organizeByWorkspace') ?? true;
+  bool get organizeByWorkspace => _prefs.getBool('organizeByWorkspace') ?? true;
 
   set organizeByWorkspace(bool v) => _prefs.setBool('organizeByWorkspace', v);
 }

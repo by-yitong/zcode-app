@@ -24,76 +24,69 @@ void main() {
     }
 
     Widget tree() => MaterialApp(
-          home: Scaffold(
-            body: NotificationListener<ScrollMetricsNotification>(
-              onNotification: (n) {
-                // —— 与 chat_screen 的贴底跟随处理器同构 (静止门控) ——
-                if (!ctrl.hasClients || !atBottom) return false;
-                if (ctrl.position.isScrollingNotifier.value) return false;
-                final pos = ctrl.position;
-                if (pos.minScrollExtent.isFinite) {
-                  pos.jumpTo(pos.minScrollExtent);
-                }
-                return false;
-              },
-              child: CustomScrollView(
-                controller: ctrl,
-                reverse: true,
-                center: centerKey,
-                slivers: [
-                  SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (ctx, i) {
-                        final liveCount = ids.length - bEnd(ids);
-                        if (i < liveCount) {
-                          final id = ids[bEnd(ids) + i];
-                          final isLast = id == ids.last;
-                          return Container(
-                            key: isLast ? null : ValueKey(id),
-                            height: isLast ? growLast : 80,
-                            color: Colors.blue,
-                            alignment: Alignment.center,
-                            child: Text(id),
-                          );
-                        }
-                        return Container(
-                          key: ValueKey('perm$i'),
-                          height: 100,
-                          color: Colors.orange,
-                          alignment: Alignment.center,
-                          child: Text('perm$i'),
-                        );
-                      },
-                      childCount:
-                          ids.length - bEnd(ids) + permCount,
-                    ),
-                  ),
-                  SliverList(
-                    key: centerKey,
-                    delegate: SliverChildBuilderDelegate(
-                      (ctx, i) {
-                        final id = ids[bEnd(ids) - 1 - i];
-                        return Container(
-                          key: id == 'm10' ? sentinelKey : ValueKey(id),
-                          height: 80,
-                          color: Colors.grey,
-                          alignment: Alignment.center,
-                          child: Text(id),
-                        );
-                      },
-                      childCount: bEnd(ids),
-                    ),
-                  ),
-                ],
+      home: Scaffold(
+        body: NotificationListener<ScrollMetricsNotification>(
+          onNotification: (n) {
+            // —— 与 chat_screen 的贴底跟随处理器同构 (静止门控) ——
+            if (!ctrl.hasClients || !atBottom) return false;
+            if (ctrl.position.isScrollingNotifier.value) return false;
+            final pos = ctrl.position;
+            if (pos.minScrollExtent.isFinite) {
+              pos.jumpTo(pos.minScrollExtent);
+            }
+            return false;
+          },
+          child: CustomScrollView(
+            controller: ctrl,
+            reverse: true,
+            center: centerKey,
+            slivers: [
+              SliverList(
+                delegate: SliverChildBuilderDelegate((ctx, i) {
+                  final liveCount = ids.length - bEnd(ids);
+                  if (i < liveCount) {
+                    final id = ids[bEnd(ids) + i];
+                    final isLast = id == ids.last;
+                    return Container(
+                      key: isLast ? null : ValueKey(id),
+                      height: isLast ? growLast : 80,
+                      color: Colors.blue,
+                      alignment: Alignment.center,
+                      child: Text(id),
+                    );
+                  }
+                  return Container(
+                    key: ValueKey('perm$i'),
+                    height: 100,
+                    color: Colors.orange,
+                    alignment: Alignment.center,
+                    child: Text('perm$i'),
+                  );
+                }, childCount: ids.length - bEnd(ids) + permCount),
               ),
-            ),
+              SliverList(
+                key: centerKey,
+                delegate: SliverChildBuilderDelegate((ctx, i) {
+                  final id = ids[bEnd(ids) - 1 - i];
+                  return Container(
+                    key: id == 'm10' ? sentinelKey : ValueKey(id),
+                    height: 80,
+                    color: Colors.grey,
+                    alignment: Alignment.center,
+                    child: Text(id),
+                  );
+                }, childCount: bEnd(ids)),
+              ),
+            ],
           ),
-        );
+        ),
+      ),
+    );
 
-    double sentinelY() => (sentinelKey.currentContext!.findRenderObject()
-            as RenderBox)
-        .localToGlobal(Offset.zero)
-        .dy;
+    double sentinelY() =>
+        (sentinelKey.currentContext!.findRenderObject() as RenderBox)
+            .localToGlobal(Offset.zero)
+            .dy;
 
     // 模拟滚动监听维护 atBottom (只在用户主动滚动时翻转)
     void userJump(double target) {
@@ -109,8 +102,10 @@ void main() {
     await t.pump();
     final before = sentinelY();
     // ignore: avoid_print
-    print('BASE offset=${ctrl.offset} min=${ctrl.position.minScrollExtent} '
-        'sentinel=$before');
+    print(
+      'BASE offset=${ctrl.offset} min=${ctrl.position.minScrollExtent} '
+      'sentinel=$before',
+    );
 
     // 1) live 追加 2 条新消息 (流式新气泡)
     ids = [...ids, 'm21', 'm22'];
@@ -159,8 +154,10 @@ void main() {
     await t.pumpWidget(tree());
     await t.pump();
     // ignore: avoid_print
-    print('FOLLOW offset=${ctrl.offset} '
-        'min=${ctrl.position.minScrollExtent}');
+    print(
+      'FOLLOW offset=${ctrl.offset} '
+      'min=${ctrl.position.minScrollExtent}',
+    );
     expect(
       ctrl.offset,
       ctrl.position.minScrollExtent,
@@ -177,8 +174,10 @@ void main() {
     await t.pumpWidget(tree());
     await t.pump(const Duration(milliseconds: 100)); // 动画进行中
     // ignore: avoid_print
-    print('GESTURE offset=${ctrl.offset} isScrolling='
-        '${ctrl.position.isScrollingNotifier.value}');
+    print(
+      'GESTURE offset=${ctrl.offset} isScrolling='
+      '${ctrl.position.isScrollingNotifier.value}',
+    );
     expect(
       ctrl.position.isScrollingNotifier.value,
       isTrue,

@@ -1,6 +1,5 @@
 import 'dart:async';
 
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
@@ -52,11 +51,13 @@ class MessageBubble extends StatefulWidget {
 
   /// ★ 子代理子会话懒加载器 (AgentCard 展开时拉嵌套内容, null=无下钻)
   final Future<List<MessagePart>> Function(String childSessionId)?
-      subagentLoader;
+  subagentLoader;
 
   /// ★ 子代理详情弹窗实时刷新器 (chat_screen 注入)
   final Future<({List<MessagePart> parts, String? status})> Function(
-      String childSessionId)? subagentLiveRefresh;
+    String childSessionId,
+  )?
+  subagentLiveRefresh;
 
   /// ★ 附件图片读回器 (V4 ref → bytes; null = 不读回只显示占位)
   final Future<Uint8List?> Function(String attachmentRef)? attachmentLoader;
@@ -169,8 +170,9 @@ class MessageBubbleState extends State<MessageBubble> {
                             children: [
                               for (final a in message.attachments)
                                 ClipRRect(
-                                  borderRadius:
-                                      BorderRadius.circular(AppRadius.sm),
+                                  borderRadius: BorderRadius.circular(
+                                    AppRadius.sm,
+                                  ),
                                   child: SizedBox(
                                     width: 88,
                                     height: 88,
@@ -850,11 +852,7 @@ class _AttachmentThumbState extends State<_AttachmentThumb> {
     return Container(
       color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
       alignment: Alignment.center,
-      child: const Icon(
-        Icons.image_outlined,
-        size: 20,
-        color: Colors.white70,
-      ),
+      child: const Icon(Icons.image_outlined, size: 20, color: Colors.white70),
     );
   }
 }

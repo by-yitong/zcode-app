@@ -41,7 +41,9 @@ class _ImportSheetState extends ConsumerState<ImportSheet> {
     if (_selected.isEmpty) return;
     setState(() => _importing = true);
     try {
-      final res = await ref.read(importProvider.notifier).importSelected(
+      final res = await ref
+          .read(importProvider.notifier)
+          .importSelected(
             _selected,
             targetScope: _targetScope,
             importMode: _importMode,
@@ -52,7 +54,10 @@ class _ImportSheetState extends ConsumerState<ImportSheet> {
       appLog.w('[Import] 导入失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('导入失败: $e'), behavior: SnackBarBehavior.floating),
+          SnackBar(
+            content: Text('导入失败: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
         );
       }
     } finally {
@@ -68,7 +73,11 @@ class _ImportSheetState extends ConsumerState<ImportSheet> {
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(
-          AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
+        AppSpacing.lg,
+        0,
+        AppSpacing.lg,
+        AppSpacing.lg,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -77,9 +86,12 @@ class _ImportSheetState extends ConsumerState<ImportSheet> {
             children: [
               Icon(Icons.download_rounded, size: 20, color: AppColors.accent),
               const SizedBox(width: AppSpacing.sm),
-              Text('导入外部 ${importCategoryLabel(widget.category)}',
-                  style: theme.textTheme.titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w600)),
+              Text(
+                '导入外部 ${importCategoryLabel(widget.category)}',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               const Spacer(),
               IconButton(
                 icon: const Icon(Icons.refresh_rounded, size: 20),
@@ -92,23 +104,29 @@ class _ImportSheetState extends ConsumerState<ImportSheet> {
           Text(
             '扫描 Claude Code、Codex CLI 等外部 Agent 中可复用的资源；只导入缺失项，不覆盖现有内容。',
             style: TextStyle(
-                fontSize: AppTextSizes.bodySm, color: cs.onSurfaceVariant),
+              fontSize: AppTextSizes.bodySm,
+              color: cs.onSurfaceVariant,
+            ),
           ),
           const SizedBox(height: AppSpacing.md),
           Flexible(
             child: agents.when(
               loading: () => const Padding(
-                  padding: EdgeInsets.all(AppSpacing.xl),
-                  child: Center(
-                      child:
-                          CircularProgressIndicator(strokeWidth: 2.5))),
+                padding: EdgeInsets.all(AppSpacing.xl),
+                child: Center(
+                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                ),
+              ),
               error: (e, _) => Padding(
                 padding: const EdgeInsets.all(AppSpacing.xl),
                 child: Center(
-                  child: Text('扫描失败: $e',
-                      style: TextStyle(
-                          fontSize: AppTextSizes.bodySm,
-                          color: AppColors.danger)),
+                  child: Text(
+                    '扫描失败: $e',
+                    style: TextStyle(
+                      fontSize: AppTextSizes.bodySm,
+                      color: AppColors.danger,
+                    ),
+                  ),
                 ),
               ),
               data: (list) {
@@ -121,8 +139,9 @@ class _ImportSheetState extends ConsumerState<ImportSheet> {
                         '暂无可导入内容。\n可检查外部 Agent 的目录后重新扫描。',
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                            fontSize: AppTextSizes.bodySm,
-                            color: cs.onSurfaceVariant),
+                          fontSize: AppTextSizes.bodySm,
+                          color: cs.onSurfaceVariant,
+                        ),
                       ),
                     ),
                   );
@@ -148,13 +167,23 @@ class _ImportSheetState extends ConsumerState<ImportSheet> {
             Row(
               children: [
                 Expanded(
-                  child: _seg(cs, '导入到', const {'global': '全局', 'project': '项目'},
-                      _targetScope, (v) => setState(() => _targetScope = v)),
+                  child: _seg(
+                    cs,
+                    '导入到',
+                    const {'global': '全局', 'project': '项目'},
+                    _targetScope,
+                    (v) => setState(() => _targetScope = v),
+                  ),
                 ),
                 const SizedBox(width: AppSpacing.md),
                 Expanded(
-                  child: _seg(cs, '方式', const {'copy': '复制', 'symlink': '软链'},
-                      _importMode, (v) => setState(() => _importMode = v)),
+                  child: _seg(
+                    cs,
+                    '方式',
+                    const {'copy': '复制', 'symlink': '软链'},
+                    _importMode,
+                    (v) => setState(() => _importMode = v),
+                  ),
                 ),
               ],
             ),
@@ -163,16 +192,23 @@ class _ImportSheetState extends ConsumerState<ImportSheet> {
               width: double.infinity,
               child: FilledButton(
                 onPressed: _importing || _selected.isEmpty ? null : _runImport,
-                style: FilledButton.styleFrom(backgroundColor: AppColors.accent),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.accent,
+                ),
                 child: _importing
                     ? const SizedBox(
                         width: 16,
                         height: 16,
                         child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white))
-                    : Text(_selected.isEmpty
-                        ? '选择要导入的项目'
-                        : '导入已选 (${_selected.length})'),
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Text(
+                        _selected.isEmpty
+                            ? '选择要导入的项目'
+                            : '导入已选 (${_selected.length})',
+                      ),
               ),
             ),
           ],
@@ -189,16 +225,26 @@ class _ImportSheetState extends ConsumerState<ImportSheet> {
       padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
       child: Column(
         children: [
-          Icon(success > 0 ? Icons.check_circle_rounded : Icons.info_rounded,
-              size: 44, color: success > 0 ? AppColors.success : cs.onSurfaceVariant),
+          Icon(
+            success > 0 ? Icons.check_circle_rounded : Icons.info_rounded,
+            size: 44,
+            color: success > 0 ? AppColors.success : cs.onSurfaceVariant,
+          ),
           const SizedBox(height: AppSpacing.md),
-          Text('导入完成',
-              style: theme.textTheme.titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w600)),
+          Text(
+            '导入完成',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
           const SizedBox(height: AppSpacing.sm),
-          Text('成功 $success · 跳过 $skipped · 失败 $failed',
-              style: TextStyle(
-                  fontSize: AppTextSizes.bodySm, color: cs.onSurfaceVariant)),
+          Text(
+            '成功 $success · 跳过 $skipped · 失败 $failed',
+            style: TextStyle(
+              fontSize: AppTextSizes.bodySm,
+              color: cs.onSurfaceVariant,
+            ),
+          ),
           const SizedBox(height: AppSpacing.lg),
           SizedBox(
             width: double.infinity,
@@ -215,7 +261,9 @@ class _ImportSheetState extends ConsumerState<ImportSheet> {
 
   Widget _agentHeader(ThemeData theme, ColorScheme cs, ImportAgent agent) {
     final count = agent.candidates.length;
-    final allSelected = agent.candidates.every((c) => _selected.contains(c.jsonKey));
+    final allSelected = agent.candidates.every(
+      (c) => _selected.contains(c.jsonKey),
+    );
     return Padding(
       padding: const EdgeInsets.only(top: AppSpacing.sm, bottom: AppSpacing.xs),
       child: Row(
@@ -224,9 +272,10 @@ class _ImportSheetState extends ConsumerState<ImportSheet> {
             child: Text(
               '${importAgentLabel(agent.agent)} · $count 项',
               style: TextStyle(
-                  fontSize: AppTextSizes.label,
-                  fontWeight: FontWeight.w600,
-                  color: cs.onSurfaceVariant),
+                fontSize: AppTextSizes.label,
+                fontWeight: FontWeight.w600,
+                color: cs.onSurfaceVariant,
+              ),
             ),
           ),
           GestureDetector(
@@ -241,9 +290,13 @@ class _ImportSheetState extends ConsumerState<ImportSheet> {
                 }
               }
             }),
-            child: Text(allSelected ? '取消全选' : '全选',
-                style: TextStyle(
-                    fontSize: AppTextSizes.label, color: AppColors.accent)),
+            child: Text(
+              allSelected ? '取消全选' : '全选',
+              style: TextStyle(
+                fontSize: AppTextSizes.label,
+                color: AppColors.accent,
+              ),
+            ),
           ),
         ],
       ),
@@ -266,7 +319,9 @@ class _ImportSheetState extends ConsumerState<ImportSheet> {
               child: Checkbox(
                 value: checked,
                 onChanged: (v) => setState(() {
-                  v == true ? _selected.add(c.jsonKey) : _selected.remove(c.jsonKey);
+                  v == true
+                      ? _selected.add(c.jsonKey)
+                      : _selected.remove(c.jsonKey);
                 }),
                 materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 activeColor: AppColors.accent,
@@ -277,11 +332,14 @@ class _ImportSheetState extends ConsumerState<ImportSheet> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(c.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodyMedium
-                          ?.copyWith(fontWeight: FontWeight.w500)),
+                  Text(
+                    c.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
                   if (c.sourceScope != null || c.version != null)
                     Text(
                       [
@@ -289,8 +347,9 @@ class _ImportSheetState extends ConsumerState<ImportSheet> {
                         if (c.version != null) 'v${c.version}',
                       ].join(' · '),
                       style: TextStyle(
-                          fontSize: AppTextSizes.caption,
-                          color: cs.onSurfaceVariant),
+                        fontSize: AppTextSizes.caption,
+                        color: cs.onSurfaceVariant,
+                      ),
                     ),
                 ],
               ),
@@ -301,16 +360,24 @@ class _ImportSheetState extends ConsumerState<ImportSheet> {
     );
   }
 
-  Widget _seg(ColorScheme cs, String label, Map<String, String> options,
-      String value, ValueChanged<String> onChanged) {
+  Widget _seg(
+    ColorScheme cs,
+    String label,
+    Map<String, String> options,
+    String value,
+    ValueChanged<String> onChanged,
+  ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label,
-            style: TextStyle(
-                fontSize: AppTextSizes.label,
-                fontWeight: FontWeight.w600,
-                color: cs.onSurfaceVariant)),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: AppTextSizes.label,
+            fontWeight: FontWeight.w600,
+            color: cs.onSurfaceVariant,
+          ),
+        ),
         const SizedBox(height: AppSpacing.xs + 2),
         SegmentedButton<String>(
           segments: [

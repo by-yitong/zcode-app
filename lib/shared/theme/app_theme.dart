@@ -21,16 +21,20 @@ class AppTheme {
     // 深色: 卡片用半透明白叠加在 bg 上; 浅色用实色
     final surface = isDark ? AppColors.darkSurface : AppColors.lightSurface;
     final surfaceLow = isDark ? AppColors.darkSurface : AppColors.lightSurface;
-    final surfaceHigh =
-        isDark ? AppColors.darkSurfaceHigh : AppColors.lightSurfaceHigh;
+    final surfaceHigh = isDark
+        ? AppColors.darkSurfaceHigh
+        : AppColors.lightSurfaceHigh;
     final surfaceHighest = isDark
         ? AppColors.darkSurfaceHighest
         : AppColors.lightSurfaceHigh;
     final border = isDark ? AppColors.darkBorder : AppColors.lightBorder;
-    final borderSubtle = isDark ? AppColors.darkBorderSubtle : AppColors.lightBorder;
+    final borderSubtle = isDark
+        ? AppColors.darkBorderSubtle
+        : AppColors.lightBorder;
     final ink = isDark ? AppColors.darkInk : AppColors.lightInk;
-    final inkSecondary =
-        isDark ? AppColors.darkInkSecondary : AppColors.lightInk;
+    final inkSecondary = isDark
+        ? AppColors.darkInkSecondary
+        : AppColors.lightInk;
     final inkMuted = isDark ? AppColors.darkInkMuted : AppColors.lightInkMuted;
 
     final colorScheme = ColorScheme(
@@ -189,7 +193,9 @@ class AppTheme {
 
       // ── 对话框/底部弹层 (不透明提升面, 与页面背景分离) ──
       bottomSheetTheme: BottomSheetThemeData(
-        backgroundColor: isDark ? AppColors.darkSurfaceElevated : AppColors.lightSurface,
+        backgroundColor: isDark
+            ? AppColors.darkSurfaceElevated
+            : AppColors.lightSurface,
         surfaceTintColor: Colors.transparent,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(
@@ -285,7 +291,9 @@ class AppTheme {
 
       // ── 对话框 (不透明提升面, 与页面背景分离) ──
       dialogTheme: DialogThemeData(
-        backgroundColor: isDark ? AppColors.darkSurfaceElevated : AppColors.lightSurface,
+        backgroundColor: isDark
+            ? AppColors.darkSurfaceElevated
+            : AppColors.lightSurface,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         shape: RoundedRectangleBorder(

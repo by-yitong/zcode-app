@@ -47,29 +47,45 @@ void main() {
     });
 
     test('shell 按命令判定', () {
-      expect(exploreEligible(_act('bash', input: {'command': 'rg foo'})),
-          isTrue);
       expect(
-          exploreEligible(
-              _act('bash', input: {'command': 'sed -n "10,20p" file.txt'})),
-          isTrue);
-      expect(exploreEligible(_act('bash', input: {'command': 'git status'})),
-          isTrue);
-      expect(exploreEligible(_act('bash', input: {'command': 'ls -la'})),
-          isTrue);
+        exploreEligible(_act('bash', input: {'command': 'rg foo'})),
+        isTrue,
+      );
+      expect(
+        exploreEligible(
+          _act('bash', input: {'command': 'sed -n "10,20p" file.txt'}),
+        ),
+        isTrue,
+      );
+      expect(
+        exploreEligible(_act('bash', input: {'command': 'git status'})),
+        isTrue,
+      );
+      expect(
+        exploreEligible(_act('bash', input: {'command': 'ls -la'})),
+        isTrue,
+      );
       // 写操作黑名单
-      expect(exploreEligible(_act('bash', input: {'command': 'rm -rf /tmp/x'})),
-          isFalse);
       expect(
-          exploreEligible(
-              _act('bash', input: {'command': 'cat a && sed -i s/a/b/ c'})),
-          isFalse);
+        exploreEligible(_act('bash', input: {'command': 'rm -rf /tmp/x'})),
+        isFalse,
+      );
+      expect(
+        exploreEligible(
+          _act('bash', input: {'command': 'cat a && sed -i s/a/b/ c'}),
+        ),
+        isFalse,
+      );
       // 输出重定向
-      expect(exploreEligible(_act('bash', input: {'command': 'cat a > b'})),
-          isFalse);
+      expect(
+        exploreEligible(_act('bash', input: {'command': 'cat a > b'})),
+        isFalse,
+      );
       // 无只读白名单命令
-      expect(exploreEligible(_act('bash', input: {'command': 'echo hi'})),
-          isFalse);
+      expect(
+        exploreEligible(_act('bash', input: {'command': 'echo hi'})),
+        isFalse,
+      );
       // 无命令
       expect(exploreEligible(_act('bash')), isFalse);
     });
@@ -95,8 +111,10 @@ void main() {
     });
 
     test('列表桶与顺序 (glob 属列表桶, 与桌面端 V6e 一致)', () {
-      expect(exploreSummary([_act('ls'), _act('read'), _act('read')]),
-          '1 列表, 2 文件');
+      expect(
+        exploreSummary([_act('ls'), _act('read'), _act('read')]),
+        '1 列表, 2 文件',
+      );
       expect(exploreSummary([_act('glob')]), '1 列表');
     });
   });

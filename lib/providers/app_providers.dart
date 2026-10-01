@@ -29,8 +29,7 @@ final secureStorageProvider = Provider<SecureStorageService>((ref) {
   return SecureStorageService();
 });
 
-final preferencesProvider =
-    FutureProvider<PreferencesService>((ref) async {
+final preferencesProvider = FutureProvider<PreferencesService>((ref) async {
   final prefs = PreferencesService();
   await prefs.init();
   return prefs;
@@ -46,20 +45,22 @@ final preferencesProvider =
 /// 类型时输出 info 日志, 供上层监听并触发自动刷新。
 final networkInfoProvider =
     StreamProvider<List<connectivity_plus.ConnectivityResult>>((ref) async* {
-  final connectivity = connectivity_plus.Connectivity();
-  var wasOffline = false;
-  yield* connectivity.onConnectivityChanged.map((results) {
-    final logger = ref.read(loggerProvider);
-    final offline = results.contains(connectivity_plus.ConnectivityResult.none);
-    if (offline) {
-      wasOffline = true;
-    } else if (wasOffline) {
-      wasOffline = false;
-      logger.i('[Network] 网络已恢复: $results');
-    }
-    return results;
-  });
-});
+      final connectivity = connectivity_plus.Connectivity();
+      var wasOffline = false;
+      yield* connectivity.onConnectivityChanged.map((results) {
+        final logger = ref.read(loggerProvider);
+        final offline = results.contains(
+          connectivity_plus.ConnectivityResult.none,
+        );
+        if (offline) {
+          wasOffline = true;
+        } else if (wasOffline) {
+          wasOffline = false;
+          logger.i('[Network] 网络已恢复: $results');
+        }
+        return results;
+      });
+    });
 
 // ================================================================
 // 主题模式
@@ -120,8 +121,8 @@ final zcodeApiClientProvider = Provider<ZcodeApiClient>((ref) {
 /// 当前会话
 final sessionProvider =
     StateNotifierProvider<SessionNotifier, AsyncValue<ZcodeSession?>>((ref) {
-  return SessionNotifier(ref.watch(secureStorageProvider));
-});
+      return SessionNotifier(ref.watch(secureStorageProvider));
+    });
 
 class SessionNotifier extends StateNotifier<AsyncValue<ZcodeSession?>> {
   final SecureStorageService _storage;
@@ -137,7 +138,9 @@ class SessionNotifier extends StateNotifier<AsyncValue<ZcodeSession?>> {
         appLog.i('[Session] 恢复已保存的会话');
         state = AsyncValue.data(session);
       } else {
-        appLog.i('[Session] 无可用会话 (session=${session == null ? "未存储" : "已失效"})');
+        appLog.i(
+          '[Session] 无可用会话 (session=${session == null ? "未存储" : "已失效"})',
+        );
         state = const AsyncValue.data(null);
       }
     } catch (e, st) {
@@ -203,7 +206,9 @@ final relayClientProvider = Provider<RelayClient?>((ref) {
 });
 
 /// Relay 连接状态
-final relayConnectionStateProvider = StreamProvider<RelayConnectionState>((ref) async* {
+final relayConnectionStateProvider = StreamProvider<RelayConnectionState>((
+  ref,
+) async* {
   final client = ref.watch(relayClientProvider);
   if (client == null) return;
   // 先 yield 当前状态, 避免 StreamProvider 卡在 loading (broadcast stream 不重放缓存)
@@ -253,18 +258,20 @@ final chatRepositoryProvider = Provider<ChatRepository?>((ref) {
 
 /// 工作区列表
 final workspaceListProvider =
-    StateNotifierProvider<WorkspaceListNotifier, AsyncValue<List<Workspace>>>((ref) {
-  final repo = ref.watch(workspaceRepositoryProvider);
-  return WorkspaceListNotifier(repo, ref);
-});
+    StateNotifierProvider<WorkspaceListNotifier, AsyncValue<List<Workspace>>>((
+      ref,
+    ) {
+      final repo = ref.watch(workspaceRepositoryProvider);
+      return WorkspaceListNotifier(repo, ref);
+    });
 
-class WorkspaceListNotifier
-    extends StateNotifier<AsyncValue<List<Workspace>>> {
+class WorkspaceListNotifier extends StateNotifier<AsyncValue<List<Workspace>>> {
   final WorkspaceRepository? _repo;
   final Ref _ref;
   StreamSubscription<Map<String, dynamic>>? _pushSub;
 
-  WorkspaceListNotifier(this._repo, this._ref) : super(const AsyncValue.loading()) {
+  WorkspaceListNotifier(this._repo, this._ref)
+    : super(const AsyncValue.loading()) {
     // 3.7.7: 服务端 workspace-list-updated 推送 (payload.result 与 bootstrap 同构),
     // 接入后任务/工作区列表实时更新, 不再依赖手动 refresh
     final client = _ref.read(relayClientProvider);
@@ -286,7 +293,8 @@ class WorkspaceListNotifier
         if (t.archived) continue;
         final prev = prevTasks[t.id];
         if (prev == null || prev.archived) continue;
-        if (prev.status == TaskStatus.running && t.status != TaskStatus.running) {
+        if (prev.status == TaskStatus.running &&
+            t.status != TaskStatus.running) {
           appLog.i('[Workspace] 任务完成: ${t.title} (${t.id})');
           NotificationService.notifyTurnComplete(
             taskId: t.id,
@@ -298,7 +306,9 @@ class WorkspaceListNotifier
 
       _ref.read(allTasksProvider.notifier).state = tasks;
       state = AsyncValue.data(workspaces);
-      appLog.d('[Workspace] 推送更新: ${workspaces.length} 工作区 / ${tasks.length} 任务');
+      appLog.d(
+        '[Workspace] 推送更新: ${workspaces.length} 工作区 / ${tasks.length} 任务',
+      );
     } catch (e) {
       appLog.w('[Workspace] 推送 payload 解析失败: $e');
     }
@@ -316,7 +326,9 @@ class WorkspaceListNotifier
       final tasks = Workspace.parseTasks(resp);
       _ref.read(allTasksProvider.notifier).state = tasks;
       state = AsyncValue.data(workspaces);
-      appLog.i('[Workspace] bootstrap 完成: ${workspaces.length} 个工作区, ${tasks.length} 个任务');
+      appLog.i(
+        '[Workspace] bootstrap 完成: ${workspaces.length} 个工作区, ${tasks.length} 个任务',
+      );
     } catch (e, st) {
       appLog.e('[Workspace] bootstrap 加载失败', e, st);
       state = AsyncValue.error(e, st);
@@ -331,7 +343,9 @@ class WorkspaceListNotifier
       final tasks = Workspace.parseTasks(resp);
       _ref.read(allTasksProvider.notifier).state = tasks;
       state = AsyncValue.data(workspaces);
-      appLog.d('[Workspace] 列表刷新完成: ${workspaces.length} 个工作区, ${tasks.length} 个任务');
+      appLog.d(
+        '[Workspace] 列表刷新完成: ${workspaces.length} 个工作区, ${tasks.length} 个任务',
+      );
     } catch (e, st) {
       appLog.e('[Workspace] 列表刷新失败', e, st);
       state = AsyncValue.error(e, st);
@@ -355,7 +369,10 @@ final selectedWorkspaceProvider = StateProvider<Workspace?>((ref) => null);
 // 当前工作区的任务列表
 // ================================================================
 
-final taskListProvider = FutureProvider.family<List<Task>, String>((ref, workspaceKey) async {
+final taskListProvider = FutureProvider.family<List<Task>, String>((
+  ref,
+  workspaceKey,
+) async {
   // 任务从 bootstrap 响应中获取 (result.tasks 含所有工作区任务)
   final workspacesAsync = ref.watch(workspaceListProvider);
   return workspacesAsync.maybeWhen(
@@ -402,20 +419,24 @@ final sessionsIndexSyncProvider = Provider<void>((ref) {
       final oldSub = indexSubscriptionId;
       if (oldSub != null) {
         indexSubscriptionId = null;
-        unawaited(client
-            .unsubscribeSessionsIndexV4(subscriptionId: oldSub)
-            .catchError((Object e) {
-          appLog.d('[SessionsIndex] 旧订阅退订失败 (可忽略): $e');
-        }));
+        unawaited(
+          client.unsubscribeSessionsIndexV4(subscriptionId: oldSub).catchError((
+            Object e,
+          ) {
+            appLog.d('[SessionsIndex] 旧订阅退订失败 (可忽略): $e');
+          }),
+        );
       }
       final (:subscriptionId, :stream) = await client.subscribeSessionsIndexV4(
         workspacePath: ws.workspacePath,
         workspaceIdentity: ws.workspaceIdentity,
       );
       if (disposed) {
-        unawaited(client
-            .unsubscribeSessionsIndexV4(subscriptionId: subscriptionId)
-            .catchError((_) {}));
+        unawaited(
+          client
+              .unsubscribeSessionsIndexV4(subscriptionId: subscriptionId)
+              .catchError((_) {}),
+        );
         return;
       }
       indexSubscriptionId = subscriptionId;
@@ -457,9 +478,11 @@ final sessionsIndexSyncProvider = Provider<void>((ref) {
     frameSub?.cancel();
     final sid = indexSubscriptionId;
     if (sid != null) {
-      unawaited(client
-          .unsubscribeSessionsIndexV4(subscriptionId: sid)
-          .catchError((_) {}));
+      unawaited(
+        client
+            .unsubscribeSessionsIndexV4(subscriptionId: sid)
+            .catchError((_) {}),
+      );
     }
   });
 });
@@ -470,7 +493,10 @@ final sessionsIndexSyncProvider = Provider<void>((ref) {
 /// (如 remote:ssh:host:22:user:path), 不是路径; 任务列表按
 /// workspaceKey(=路径) 过滤, 所以必须用当前工作区的 key 落库。
 void _applySessionsIndexFrame(
-    Ref ref, Workspace ws, Map<String, dynamic> wire) {
+  Ref ref,
+  Workspace ws,
+  Map<String, dynamic> wire,
+) {
   try {
     final frame = wire['frame'] as Map<String, dynamic>?;
     final payload = frame?['payload'] as Map<String, dynamic>?;
@@ -483,8 +509,11 @@ void _applySessionsIndexFrame(
       final snap = payload['snapshot'] as Map<String, dynamic>?;
       final sessions = (snap?['sessions'] as List?) ?? [];
       appLog.d('[SessionsIndex] 快照: ${sessions.length} 会话 (${ws.name})');
-      _upsertIndexSessions(ref, ws,
-          sessions.whereType<Map>().map((e) => Map<String, dynamic>.from(e)));
+      _upsertIndexSessions(
+        ref,
+        ws,
+        sessions.whereType<Map>().map((e) => Map<String, dynamic>.from(e)),
+      );
     } else if (kind == 'deltas') {
       for (final d in (payload['deltas'] as List? ?? []).whereType<Map>()) {
         final dm = Map<String, dynamic>.from(d);
@@ -493,8 +522,10 @@ void _applySessionsIndexFrame(
             final s = dm['session'];
             if (s is Map) {
               final m = Map<String, dynamic>.from(s);
-              appLog.d('[SessionsIndex] upsert: ${m['sessionId']} '
-                  'phase=${m['phase']} ended=${m['sessionEnded']}');
+              appLog.d(
+                '[SessionsIndex] upsert: ${m['sessionId']} '
+                'phase=${m['phase']} ended=${m['sessionEnded']}',
+              );
               _upsertIndexSessions(ref, ws, [m]);
             }
           case 'session.removed':
@@ -517,7 +548,10 @@ void _applySessionsIndexFrame(
 }
 
 void _upsertIndexSessions(
-    Ref ref, Workspace ws, Iterable<Map<String, dynamic>> sessions) {
+  Ref ref,
+  Workspace ws,
+  Iterable<Map<String, dynamic>> sessions,
+) {
   final notifier = ref.read(allTasksProvider.notifier);
   var tasks = [...notifier.state];
   var changed = false;
@@ -539,10 +573,10 @@ Task _taskFromIndexSession(Workspace ws, Map<String, dynamic> s) {
   final status = phase == 'running'
       ? TaskStatus.running
       : phase.startsWith('completed')
-          ? TaskStatus.complete
-          : phase == 'error'
-              ? TaskStatus.error
-              : TaskStatus.idle;
+      ? TaskStatus.complete
+      : phase == 'error'
+      ? TaskStatus.error
+      : TaskStatus.idle;
   int? ts(dynamic v) => v is int ? v : (v is num ? v.toInt() : null);
   return Task(
     id: s['sessionId'] as String? ?? '',
@@ -570,18 +604,17 @@ class ModelListState {
   ModelListState copyWith({
     List<String>? models,
     Map<String, String>? providerNames,
-  }) =>
-      ModelListState(
-        models: models ?? this.models,
-        providerNames: providerNames ?? this.providerNames,
-      );
+  }) => ModelListState(
+    models: models ?? this.models,
+    providerNames: providerNames ?? this.providerNames,
+  );
 }
 
 final modelListProvider =
     StateNotifierProvider<ModelListNotifier, AsyncValue<ModelListState>>((ref) {
-  final client = ref.watch(relayClientProvider);
-  return ModelListNotifier(client);
-});
+      final client = ref.watch(relayClientProvider);
+      return ModelListNotifier(client);
+    });
 
 class ModelListNotifier extends StateNotifier<AsyncValue<ModelListState>> {
   final RelayClient? _client;
@@ -665,10 +698,9 @@ class ModelListNotifier extends StateNotifier<AsyncValue<ModelListState>> {
         state = const AsyncValue.data(ModelListState());
         appLog.w('[Model] 未发现任何模型 (响应格式可能变化)');
       } else {
-        state = AsyncValue.data(ModelListState(
-          models: ids.toList()..sort(),
-          providerNames: names,
-        ));
+        state = AsyncValue.data(
+          ModelListState(models: ids.toList()..sort(), providerNames: names),
+        );
         appLog.d('[Model] 模型列表加载完成: ${ids.length} 个模型');
       }
     } catch (e, st) {
@@ -694,7 +726,10 @@ class ModelListNotifier extends StateNotifier<AsyncValue<ModelListState>> {
   /// 模型 ID 组装为 "<providerId>/<modelId>" (setModel/switchModelConfig 按此拆分);
   /// visibility=hidden 的模型不展示 (对齐网页端)。
   void _collectFromSelectionView(
-      List providers, Set<String> out, Map<String, String> names) {
+    List providers,
+    Set<String> out,
+    Map<String, String> names,
+  ) {
     for (final p in providers) {
       if (p is! Map) continue;
       final pid = p['providerId'] as String? ?? '';
@@ -721,7 +756,10 @@ class ModelListNotifier extends StateNotifier<AsyncValue<ModelListState>> {
   ///   - origin === 'injected'
   ///   - description 以 "custom model" 开头
   void _collectFromProviders(
-      Object? node, Set<String> out, Map<String, String> names) {
+    Object? node,
+    Set<String> out,
+    Map<String, String> names,
+  ) {
     Object? root = node is Map && node.containsKey('raw') ? node['raw'] : node;
     if (root is! List) {
       // getDisplayOrder 可能返回 Map (如 {models:[...], providers:[...]})
@@ -741,8 +779,10 @@ class ModelListNotifier extends StateNotifier<AsyncValue<ModelListState>> {
   }
 
   void _parseProviderList(
-      List list, Set<String> out, Map<String, String> names) {
-
+    List list,
+    Set<String> out,
+    Map<String, String> names,
+  ) {
     // 网页端隐藏的 provider 前缀 (Nl/Al 逻辑)
     const hiddenProviders = {'zcode-anthropic', 'zcode-openai-compatible'};
 
@@ -812,8 +852,8 @@ final glmQuotaServiceProvider = Provider<GlmQuotaService>((ref) {
 /// GLM 凭据 (持久化在 SecureStorage)。null = 未配置。
 final glmCredentialProvider =
     StateNotifierProvider<GlmCredentialNotifier, GlmCredential?>((ref) {
-  return GlmCredentialNotifier(ref.watch(secureStorageProvider));
-});
+      return GlmCredentialNotifier(ref.watch(secureStorageProvider));
+    });
 
 class GlmCredentialNotifier extends StateNotifier<GlmCredential?> {
   final SecureStorageService _storage;
@@ -840,15 +880,16 @@ class GlmCredentialNotifier extends StateNotifier<GlmCredential?> {
 /// GLM 余量查询状态。无凭据时不自动查询 (state 保持 null, 不显示 loading)。
 final glmQuotaProvider =
     StateNotifierProvider<GlmQuotaNotifier, AsyncValue<GlmQuota?>>((ref) {
-  final cred = ref.watch(glmCredentialProvider);
-  return GlmQuotaNotifier(cred, ref.watch(glmQuotaServiceProvider));
-});
+      final cred = ref.watch(glmCredentialProvider);
+      return GlmQuotaNotifier(cred, ref.watch(glmQuotaServiceProvider));
+    });
 
 class GlmQuotaNotifier extends StateNotifier<AsyncValue<GlmQuota?>> {
   final GlmCredential? _cred;
   final GlmQuotaService _service;
 
-  GlmQuotaNotifier(this._cred, this._service) : super(const AsyncValue.data(null)) {
+  GlmQuotaNotifier(this._cred, this._service)
+    : super(const AsyncValue.data(null)) {
     // 有凭据时启动即查一次, 给用户卡片立即可用的摘要
     if (_cred != null && _cred.isValid) {
       Future.microtask(load);
@@ -904,12 +945,9 @@ class SkillItem {
     return SkillItem(
       id: json['id'] as String?,
       name: json['name'] as String? ?? json['id'] as String? ?? 'Unknown',
-      description: json['description'] as String? ??
-          json['desc'] as String? ??
-          '',
-      enabled: json['enabled'] as bool? ??
-          json['active'] as bool? ??
-          true,
+      description:
+          json['description'] as String? ?? json['desc'] as String? ?? '',
+      enabled: json['enabled'] as bool? ?? json['active'] as bool? ?? true,
       scope: json['scope'] as String?,
     );
   }
@@ -942,8 +980,10 @@ final serverSlashCommandsProvider = FutureProvider<List<String>>((ref) async {
       workspaceIdentity: ws.workspaceIdentity,
     );
     final raw = state['slashCommands'];
-    appLog.d('[SlashCommands] readWorkspaceState keys=${state.keys.toList()} '
-        'slashCommands=${raw is List ? raw.length : raw}');
+    appLog.d(
+      '[SlashCommands] readWorkspaceState keys=${state.keys.toList()} '
+      'slashCommands=${raw is List ? raw.length : raw}',
+    );
     if (raw is List) {
       return raw
           .map((e) => e is Map ? e['name'] as String? : e as String?)
@@ -959,19 +999,17 @@ final serverSlashCommandsProvider = FutureProvider<List<String>>((ref) async {
 
 final skillsProvider =
     StateNotifierProvider<SkillsNotifier, AsyncValue<List<SkillItem>>>((ref) {
-  final client = ref.watch(relayClientProvider);
-  return SkillsNotifier(client, ref);
-});
+      final client = ref.watch(relayClientProvider);
+      return SkillsNotifier(client, ref);
+    });
 
-class SkillsNotifier
-    extends StateNotifier<AsyncValue<List<SkillItem>>> {
+class SkillsNotifier extends StateNotifier<AsyncValue<List<SkillItem>>> {
   final RelayClient? _client;
   final Ref _ref;
   StreamSubscription<bool>? _readySub;
   int _loadAttempts = 0;
 
-  SkillsNotifier(this._client, this._ref)
-      : super(const AsyncValue.loading()) {
+  SkillsNotifier(this._client, this._ref) : super(const AsyncValue.loading()) {
     if (_client == null) {
       state = const AsyncValue.data([]);
       return;
@@ -1045,7 +1083,8 @@ List<SkillItem> _parseSkillsResponse(dynamic body) {
     skillsJson = body;
   } else if (body is Map) {
     final map = body as Map<String, dynamic>;
-    skillsJson = map['skills'] as List<dynamic>? ??
+    skillsJson =
+        map['skills'] as List<dynamic>? ??
         map['result'] as List<dynamic>? ??
         map['data'] as List<dynamic>? ??
         map['items'] as List<dynamic>? ??

@@ -37,7 +37,10 @@ class V4Frame {
     }
     return V4Frame(
       topic: inner['topic'] as String? ?? j['topic'] as String? ?? '',
-      subscriptionId: inner['subscriptionId'] as String? ?? j['subscriptionId'] as String? ?? '',
+      subscriptionId:
+          inner['subscriptionId'] as String? ??
+          j['subscriptionId'] as String? ??
+          '',
       fromSeq: (inner['fromSeq'] as num?)?.toInt() ?? 0,
       toSeq: (inner['toSeq'] as num?)?.toInt() ?? 0,
       sentAt: inner['sentAt'] != null
@@ -56,7 +59,9 @@ class V4SnapshotPayload extends V4FramePayload {
 
   factory V4SnapshotPayload.fromJson(Map<String, dynamic> j) {
     return V4SnapshotPayload(
-      V4ConversationSnapshot.fromJson(j['snapshot'] as Map<String, dynamic>? ?? {}),
+      V4ConversationSnapshot.fromJson(
+        j['snapshot'] as Map<String, dynamic>? ?? {},
+      ),
     );
   }
 }
@@ -68,7 +73,10 @@ class V4DeltasPayload extends V4FramePayload {
   factory V4DeltasPayload.fromJson(Map<String, dynamic> j) {
     final raw = j['deltas'] as List<dynamic>? ?? [];
     return V4DeltasPayload(
-      raw.whereType<Map>().map((e) => V4Delta.fromJson(Map<String, dynamic>.from(e))).toList(),
+      raw
+          .whereType<Map>()
+          .map((e) => V4Delta.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
     );
   }
 }
@@ -129,21 +137,23 @@ class V4RowDeltaOp extends V4Delta {
   final String append;
   const V4RowDeltaOp(this.rowId, this.path, this.append);
   factory V4RowDeltaOp.fromJson(Map<String, dynamic> j) => V4RowDeltaOp(
-        (j['rowId'] as num?)?.toInt() ?? 0,
-        j['path'] as String? ?? '',
-        j['append'] as String? ?? '',
-      );
+    (j['rowId'] as num?)?.toInt() ?? 0,
+    j['path'] as String? ?? '',
+    j['append'] as String? ?? '',
+  );
 }
 
 /// 状态 patch — 更新 snapshot 的部分字段
 class V4StateUpdated extends V4Delta {
   final Map<String, dynamic> patch;
+
   /// delta 级 revision (状态变化推进会话 revision, CAS 命令追踪用)
   final int revision;
   const V4StateUpdated(this.patch, {this.revision = 0});
-  factory V4StateUpdated.fromJson(Map<String, dynamic> j) =>
-      V4StateUpdated(j['patch'] as Map<String, dynamic>? ?? {},
-          revision: (j['revision'] as num?)?.toInt() ?? 0);
+  factory V4StateUpdated.fromJson(Map<String, dynamic> j) => V4StateUpdated(
+    j['patch'] as Map<String, dynamic>? ?? {},
+    revision: (j['revision'] as num?)?.toInt() ?? 0,
+  );
 }
 
 class V4SessionUpserted extends V4Delta {
@@ -234,15 +244,17 @@ class V4ConversationSnapshot {
           : null,
       plan: (j['plan'] as Map<String, dynamic>?)?['items'] is List
           ? ((j['plan'] as Map<String, dynamic>)['items'] as List)
-              .whereType<Map>()
-              .map((e) => V4PlanItem.fromJson(Map<String, dynamic>.from(e)))
-              .toList()
+                .whereType<Map>()
+                .map((e) => V4PlanItem.fromJson(Map<String, dynamic>.from(e)))
+                .toList()
           : [],
       rows: V4Rows.fromJson(j['rows'] as Map<String, dynamic>? ?? {}),
       queue: V4Queue.fromJson(j['queue'] as Map<String, dynamic>? ?? {}),
       pendingInteractions: (j['pendingInteractions'] as List<dynamic>? ?? [])
           .whereType<Map>()
-          .map((e) => V4PendingInteraction.fromJson(Map<String, dynamic>.from(e)))
+          .map(
+            (e) => V4PendingInteraction.fromJson(Map<String, dynamic>.from(e)),
+          )
           .toList(),
       backgroundWorks: (j['backgroundWorks'] as List<dynamic>? ?? [])
           .whereType<Map>()
@@ -271,11 +283,11 @@ class V4QueueItem {
   factory V4QueueItem.fromJson(Map<String, dynamic> j) {
     final payload = j['payload'];
     return V4QueueItem(
-      queueItemId: j['queueItemId'] as String? ??
-          j['sourceCommandId'] as String? ??
-          '',
+      queueItemId:
+          j['queueItemId'] as String? ?? j['sourceCommandId'] as String? ?? '',
       kind: j['kind'] as String? ?? '',
-      text: (j['text'] as String?) ??
+      text:
+          (j['text'] as String?) ??
           (payload is Map ? payload['text'] as String? : null) ??
           '',
     );
@@ -290,16 +302,17 @@ class V4Queue {
   const V4Queue({this.items = const [], this.autoDrain = true});
 
   factory V4Queue.fromJson(Map<String, dynamic> j) => V4Queue(
-        items: (j['items'] as List<dynamic>? ?? [])
-            .whereType<Map>()
-            .map((e) => V4QueueItem.fromJson(Map<String, dynamic>.from(e)))
-            .toList(),
-        autoDrain: j['autoDrain'] as bool? ?? true,
-      );
+    items: (j['items'] as List<dynamic>? ?? [])
+        .whereType<Map>()
+        .map((e) => V4QueueItem.fromJson(Map<String, dynamic>.from(e)))
+        .toList(),
+    autoDrain: j['autoDrain'] as bool? ?? true,
+  );
 }
 
 class V4Control {
-  final String phase; // running|completedSuccess|completedInterrupted|error|draft|prewarming
+  final String
+  phase; // running|completedSuccess|completedInterrupted|error|draft|prewarming
   final bool sessionEnded;
   final bool canStop;
   final String stopState; // idle|stoppable|stopping
@@ -316,13 +329,13 @@ class V4Control {
   });
 
   factory V4Control.fromJson(Map<String, dynamic> j) => V4Control(
-        phase: j['phase'] as String? ?? 'draft',
-        sessionEnded: j['sessionEnded'] as bool? ?? false,
-        canStop: j['canStop'] as bool? ?? false,
-        stopState: j['stopState'] as String? ?? 'idle',
-        lastError: j['lastError'] as Map<String, dynamic>? ?? {},
-        raw: j,
-      );
+    phase: j['phase'] as String? ?? 'draft',
+    sessionEnded: j['sessionEnded'] as bool? ?? false,
+    canStop: j['canStop'] as bool? ?? false,
+    stopState: j['stopState'] as String? ?? 'idle',
+    lastError: j['lastError'] as Map<String, dynamic>? ?? {},
+    raw: j,
+  );
 
   bool get isRunning => phase == 'running';
   bool get isComplete =>
@@ -347,20 +360,19 @@ class V4Config {
   });
 
   factory V4Config.fromJson(Map<String, dynamic> j) => V4Config(
-        provider: j['provider'] as String? ?? '',
-        model: j['model'] as String? ?? '',
-        thought: j['thought'] as String? ?? 'max',
-        thoughtLevels: (j['thoughtLevels'] as List<dynamic>? ?? [])
-            .map((e) => e.toString())
-            .toList(),
-        followupMode: j['followupMode'] as String? ?? 'queue',
-        mode: j['mode'] as String? ?? 'build',
-      );
+    provider: j['provider'] as String? ?? '',
+    model: j['model'] as String? ?? '',
+    thought: j['thought'] as String? ?? 'max',
+    thoughtLevels: (j['thoughtLevels'] as List<dynamic>? ?? [])
+        .map((e) => e.toString())
+        .toList(),
+    followupMode: j['followupMode'] as String? ?? 'queue',
+    mode: j['mode'] as String? ?? 'build',
+  );
 
   /// 完整模型 ID: "provider/model"
-  String get modelId => provider.isNotEmpty && model.isNotEmpty
-      ? '$provider/$model'
-      : model;
+  String get modelId =>
+      provider.isNotEmpty && model.isNotEmpty ? '$provider/$model' : model;
 }
 
 class V4Meta {
@@ -370,9 +382,9 @@ class V4Meta {
   V4Meta({this.title = '', this.titleSource = 'default'});
 
   factory V4Meta.fromJson(Map<String, dynamic> j) => V4Meta(
-        title: j['title'] as String? ?? '',
-        titleSource: j['titleSource'] as String? ?? 'default',
-      );
+    title: j['title'] as String? ?? '',
+    titleSource: j['titleSource'] as String? ?? 'default',
+  );
 }
 
 class V4Usage {
@@ -381,10 +393,10 @@ class V4Usage {
   V4Usage({this.contextWindow});
 
   factory V4Usage.fromJson(Map<String, dynamic> j) => V4Usage(
-        contextWindow: j['contextWindow'] is Map
-            ? V4ContextWindow.fromJson(j['contextWindow'] as Map<String, dynamic>)
-            : null,
-      );
+    contextWindow: j['contextWindow'] is Map
+        ? V4ContextWindow.fromJson(j['contextWindow'] as Map<String, dynamic>)
+        : null,
+  );
 }
 
 class V4ContextWindow {
@@ -399,11 +411,11 @@ class V4ContextWindow {
   });
 
   factory V4ContextWindow.fromJson(Map<String, dynamic> j) => V4ContextWindow(
-        usedTokens: (j['usedTokens'] as num?)?.toInt() ?? 0,
-        maxTokens: (j['maxTokens'] as num?)?.toInt() ?? 0,
-        autoCompactThresholdTokens:
-            (j['autoCompactThresholdTokens'] as num?)?.toInt(),
-      );
+    usedTokens: (j['usedTokens'] as num?)?.toInt() ?? 0,
+    maxTokens: (j['maxTokens'] as num?)?.toInt() ?? 0,
+    autoCompactThresholdTokens: (j['autoCompactThresholdTokens'] as num?)
+        ?.toInt(),
+  );
 }
 
 class V4Goal {
@@ -413,9 +425,9 @@ class V4Goal {
   V4Goal({this.objective = '', this.status = 'active'});
 
   factory V4Goal.fromJson(Map<String, dynamic> j) => V4Goal(
-        objective: j['objective'] as String? ?? '',
-        status: j['status'] as String? ?? 'active',
-      );
+    objective: j['objective'] as String? ?? '',
+    status: j['status'] as String? ?? 'active',
+  );
 }
 
 class V4PlanItem {
@@ -423,13 +435,17 @@ class V4PlanItem {
   final String content;
   final String status; // pending|inProgress|completed
 
-  V4PlanItem({required this.id, required this.content, this.status = 'pending'});
+  V4PlanItem({
+    required this.id,
+    required this.content,
+    this.status = 'pending',
+  });
 
   factory V4PlanItem.fromJson(Map<String, dynamic> j) => V4PlanItem(
-        id: j['id'] as String? ?? '',
-        content: j['content'] as String? ?? '',
-        status: j['status'] as String? ?? 'pending',
-      );
+    id: j['id'] as String? ?? '',
+    content: j['content'] as String? ?? '',
+    status: j['status'] as String? ?? 'pending',
+  );
 }
 
 class V4Rows {
@@ -440,13 +456,13 @@ class V4Rows {
   V4Rows({this.window = const [], this.totalCount = 0, this.firstRowId});
 
   factory V4Rows.fromJson(Map<String, dynamic> j) => V4Rows(
-        window: (j['window'] as List<dynamic>? ?? [])
-            .whereType<Map>()
-            .map((e) => V4Row.fromJson(Map<String, dynamic>.from(e)))
-            .toList(),
-        totalCount: (j['totalCount'] as num?)?.toInt() ?? 0,
-        firstRowId: (j['firstRowId'] as num?)?.toInt(),
-      );
+    window: (j['window'] as List<dynamic>? ?? [])
+        .whereType<Map>()
+        .map((e) => V4Row.fromJson(Map<String, dynamic>.from(e)))
+        .toList(),
+    totalCount: (j['totalCount'] as num?)?.toInt() ?? 0,
+    firstRowId: (j['firstRowId'] as num?)?.toInt(),
+  );
 }
 
 // ================================================================
@@ -485,11 +501,7 @@ class V4TurnFileChanges {
   final int deletions;
   final int files;
 
-  V4TurnFileChanges({
-    this.additions = 0,
-    this.deletions = 0,
-    this.files = 0,
-  });
+  V4TurnFileChanges({this.additions = 0, this.deletions = 0, this.files = 0});
 
   factory V4TurnFileChanges.fromJson(Map<String, dynamic> j) =>
       V4TurnFileChanges(
@@ -510,12 +522,16 @@ class V4TurnHeaderRow extends V4Row {
   final String origin;
   final String executionKind;
   final String state;
+
   /// 轮次开始时间 (ms epoch, 必有)
   final int? startedAt;
+
   /// 轮次结束时间 (ms epoch, 完成后才有)
   final int? endedAt;
+
   /// 服务器计算的活跃时长 (优先于 endedAt-startedAt)
   final int? activeMs;
+
   /// 本轮文件变更统计 (权威来源)
   final V4TurnFileChanges? fileChanges;
 
@@ -533,20 +549,21 @@ class V4TurnHeaderRow extends V4Row {
   });
 
   factory V4TurnHeaderRow.fromJson(Map<String, dynamic> j) => V4TurnHeaderRow(
-        rowId: (j['rowId'] as num?)?.toInt() ?? 0,
-        turnId: j['turnId'] as String? ?? '',
-        revision: (j['revision'] as num?)?.toInt() ?? 0,
-        origin: j['origin'] as String? ?? 'userInput',
-        executionKind: j['executionKind'] as String? ?? 'agent',
-        state: j['state'] as String? ?? 'running',
-        startedAt: (j['startedAt'] as num?)?.toInt(),
-        endedAt: (j['endedAt'] as num?)?.toInt(),
-        activeMs: (j['activeMs'] as num?)?.toInt(),
-        fileChanges: j['fileChanges'] is Map
-            ? V4TurnFileChanges.fromJson(
-                Map<String, dynamic>.from(j['fileChanges'] as Map))
-            : null,
-      );
+    rowId: (j['rowId'] as num?)?.toInt() ?? 0,
+    turnId: j['turnId'] as String? ?? '',
+    revision: (j['revision'] as num?)?.toInt() ?? 0,
+    origin: j['origin'] as String? ?? 'userInput',
+    executionKind: j['executionKind'] as String? ?? 'agent',
+    state: j['state'] as String? ?? 'running',
+    startedAt: (j['startedAt'] as num?)?.toInt(),
+    endedAt: (j['endedAt'] as num?)?.toInt(),
+    activeMs: (j['activeMs'] as num?)?.toInt(),
+    fileChanges: j['fileChanges'] is Map
+        ? V4TurnFileChanges.fromJson(
+            Map<String, dynamic>.from(j['fileChanges'] as Map),
+          )
+        : null,
+  );
 
   /// 轮次是否仍在运行
   bool get isRunning => state == 'running';
@@ -568,9 +585,12 @@ class V4TurnHeaderRow extends V4Row {
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': 'turnHeader', 'rowId': rowId, 'origin': origin,
-        'executionKind': executionKind, 'state': state,
-      };
+    'kind': 'turnHeader',
+    'rowId': rowId,
+    'origin': origin,
+    'executionKind': executionKind,
+    'state': state,
+  };
 }
 
 /// userInput 行附件元数据 (V4 图片发送协议; wire 字段 ref/fileName/mime/bytes,
@@ -579,6 +599,7 @@ class V4AttachmentMeta {
   final String ref;
   final String fileName;
   final String mime;
+
   /// 字节数 (wire 为整型长度, 非内容)
   final int bytes;
 
@@ -589,22 +610,24 @@ class V4AttachmentMeta {
     required this.bytes,
   });
 
-  factory V4AttachmentMeta.fromJson(Map<String, dynamic> j) =>
-      V4AttachmentMeta(
-        ref: j['ref'] as String? ?? '',
-        fileName: j['fileName'] as String? ?? '',
-        mime: j['mime'] as String? ?? '',
-        bytes: (j['bytes'] as num?)?.toInt() ?? 0,
-      );
+  factory V4AttachmentMeta.fromJson(Map<String, dynamic> j) => V4AttachmentMeta(
+    ref: j['ref'] as String? ?? '',
+    fileName: j['fileName'] as String? ?? '',
+    mime: j['mime'] as String? ?? '',
+    bytes: (j['bytes'] as num?)?.toInt() ?? 0,
+  );
 }
 
 class V4UserInputRow extends V4Row {
   final String text;
+
   /// ★ 引导输入: AI 工作中途的插话 (inputRouting.mode=guide)。
   /// 不开新轮次, 而是把当前轮次切成多个工作段 (workSegments)。
   final bool guided;
+
   /// 行实体 ID (用于匹配 workSegments[].triggerEntityId)
   final String? entityId;
+
   /// 随行附件 (图片走 V4 分片上传后以 ref 引用; 文本可空)
   final List<V4AttachmentMeta> attachments;
 
@@ -619,22 +642,24 @@ class V4UserInputRow extends V4Row {
   });
 
   factory V4UserInputRow.fromJson(Map<String, dynamic> j) => V4UserInputRow(
-        rowId: (j['rowId'] as num?)?.toInt() ?? 0,
-        turnId: j['turnId'] as String? ?? '',
-        revision: (j['revision'] as num?)?.toInt() ?? 0,
-        text: j['text'] as String? ?? '',
-        guided: j['guided'] as bool? ?? false,
-        entityId: j['entityId'] as String?,
-        attachments: (j['attachments'] as List<dynamic>? ?? [])
-            .whereType<Map>()
-            .map((e) =>
-                V4AttachmentMeta.fromJson(Map<String, dynamic>.from(e)))
-            .toList(),
-      );
+    rowId: (j['rowId'] as num?)?.toInt() ?? 0,
+    turnId: j['turnId'] as String? ?? '',
+    revision: (j['revision'] as num?)?.toInt() ?? 0,
+    text: j['text'] as String? ?? '',
+    guided: j['guided'] as bool? ?? false,
+    entityId: j['entityId'] as String?,
+    attachments: (j['attachments'] as List<dynamic>? ?? [])
+        .whereType<Map>()
+        .map((e) => V4AttachmentMeta.fromJson(Map<String, dynamic>.from(e)))
+        .toList(),
+  );
 
   @override
-  Map<String, dynamic> toJson() =>
-      {'kind': 'userInput', 'rowId': rowId, 'text': text};
+  Map<String, dynamic> toJson() => {
+    'kind': 'userInput',
+    'rowId': rowId,
+    'text': text,
+  };
 }
 
 class V4AssistantTextRow extends V4Row {
@@ -669,18 +694,23 @@ class V4AssistantTextRow extends V4Row {
     String? state,
     String? model,
     String? feedback,
-  }) =>
-      V4AssistantTextRow(
-        rowId: rowId, turnId: turnId, revision: revision,
-        text: text ?? this.text,
-        state: state ?? this.state,
-        model: model ?? this.model,
-        feedback: feedback ?? this.feedback,
-      );
+  }) => V4AssistantTextRow(
+    rowId: rowId,
+    turnId: turnId,
+    revision: revision,
+    text: text ?? this.text,
+    state: state ?? this.state,
+    model: model ?? this.model,
+    feedback: feedback ?? this.feedback,
+  );
 
   @override
-  Map<String, dynamic> toJson() =>
-      {'kind': 'assistantText', 'rowId': rowId, 'text': text, 'state': state};
+  Map<String, dynamic> toJson() => {
+    'kind': 'assistantText',
+    'rowId': rowId,
+    'text': text,
+    'state': state,
+  };
 }
 
 class V4ReasoningRow extends V4Row {
@@ -698,31 +728,38 @@ class V4ReasoningRow extends V4Row {
   });
 
   factory V4ReasoningRow.fromJson(Map<String, dynamic> j) => V4ReasoningRow(
-        rowId: (j['rowId'] as num?)?.toInt() ?? 0,
-        turnId: j['turnId'] as String? ?? '',
-        revision: (j['revision'] as num?)?.toInt() ?? 0,
-        text: j['text'] as String? ?? '',
-        state: j['state'] as String? ?? 'streaming',
-        durationMs: (j['durationMs'] as num?)?.toInt(),
-      );
+    rowId: (j['rowId'] as num?)?.toInt() ?? 0,
+    turnId: j['turnId'] as String? ?? '',
+    revision: (j['revision'] as num?)?.toInt() ?? 0,
+    text: j['text'] as String? ?? '',
+    state: j['state'] as String? ?? 'streaming',
+    durationMs: (j['durationMs'] as num?)?.toInt(),
+  );
 
   V4ReasoningRow copyWith({String? text, String? state, int? durationMs}) =>
       V4ReasoningRow(
-        rowId: rowId, turnId: turnId, revision: revision,
+        rowId: rowId,
+        turnId: turnId,
+        revision: revision,
         text: text ?? this.text,
         state: state ?? this.state,
         durationMs: durationMs ?? this.durationMs,
       );
 
   @override
-  Map<String, dynamic> toJson() =>
-      {'kind': 'reasoning', 'rowId': rowId, 'text': text, 'state': state};
+  Map<String, dynamic> toJson() => {
+    'kind': 'reasoning',
+    'rowId': rowId,
+    'text': text,
+    'state': state,
+  };
 }
 
 class V4ToolCallRow extends V4Row {
   final String toolCallId;
   final String toolName;
-  final String status; // inputStreaming|pendingApproval|running|success|error|cancelled
+  final String
+  status; // inputStreaming|pendingApproval|running|success|error|cancelled
   final String inputText;
   final Map<String, dynamic>? input;
   final V4ToolOutput? output;
@@ -742,19 +779,19 @@ class V4ToolCallRow extends V4Row {
   });
 
   factory V4ToolCallRow.fromJson(Map<String, dynamic> j) => V4ToolCallRow(
-        rowId: (j['rowId'] as num?)?.toInt() ?? 0,
-        turnId: j['turnId'] as String? ?? '',
-        revision: (j['revision'] as num?)?.toInt() ?? 0,
-        toolCallId: j['toolCallId'] as String? ?? '',
-        toolName: j['toolName'] as String? ?? '',
-        status: j['status'] as String? ?? 'running',
-        inputText: j['inputText'] as String? ?? '',
-        input: j['input'] as Map<String, dynamic>?,
-        output: j['output'] is Map
-            ? V4ToolOutput.fromJson(j['output'] as Map<String, dynamic>)
-            : null,
-        error: j['error'] as Map<String, dynamic>?,
-      );
+    rowId: (j['rowId'] as num?)?.toInt() ?? 0,
+    turnId: j['turnId'] as String? ?? '',
+    revision: (j['revision'] as num?)?.toInt() ?? 0,
+    toolCallId: j['toolCallId'] as String? ?? '',
+    toolName: j['toolName'] as String? ?? '',
+    status: j['status'] as String? ?? 'running',
+    inputText: j['inputText'] as String? ?? '',
+    input: j['input'] as Map<String, dynamic>?,
+    output: j['output'] is Map
+        ? V4ToolOutput.fromJson(j['output'] as Map<String, dynamic>)
+        : null,
+    error: j['error'] as Map<String, dynamic>?,
+  );
 
   V4ToolCallRow copyWith({
     String? status,
@@ -762,24 +799,30 @@ class V4ToolCallRow extends V4Row {
     Map<String, dynamic>? input,
     V4ToolOutput? output,
     Map<String, dynamic>? error,
-  }) =>
-      V4ToolCallRow(
-        rowId: rowId, turnId: turnId, revision: revision,
-        toolCallId: toolCallId, toolName: toolName,
-        status: status ?? this.status,
-        inputText: inputText ?? this.inputText,
-        input: input ?? this.input,
-        output: output ?? this.output,
-        error: error ?? this.error,
-      );
+  }) => V4ToolCallRow(
+    rowId: rowId,
+    turnId: turnId,
+    revision: revision,
+    toolCallId: toolCallId,
+    toolName: toolName,
+    status: status ?? this.status,
+    inputText: inputText ?? this.inputText,
+    input: input ?? this.input,
+    output: output ?? this.output,
+    error: error ?? this.error,
+  );
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': 'toolCall', 'rowId': rowId,
-        'toolCallId': toolCallId, 'toolName': toolName, 'status': status,
-      };
+    'kind': 'toolCall',
+    'rowId': rowId,
+    'toolCallId': toolCallId,
+    'toolName': toolName,
+    'status': status,
+  };
 
   bool get isPendingApproval => status == 'pendingApproval';
+
   /// 等待批准也算"未完成" — 轮次保持工作中态, 过程不收起
   bool get isRunning =>
       status == 'running' ||
@@ -794,9 +837,8 @@ class V4ToolOutput {
 
   V4ToolOutput({this.text = ''});
 
-  factory V4ToolOutput.fromJson(Map<String, dynamic> j) => V4ToolOutput(
-        text: j['text'] as String? ?? '',
-      );
+  factory V4ToolOutput.fromJson(Map<String, dynamic> j) =>
+      V4ToolOutput(text: j['text'] as String? ?? '');
 
   V4ToolOutput copyWith({String? text}) =>
       V4ToolOutput(text: text ?? this.text);
@@ -825,21 +867,18 @@ class V4SubagentRow extends V4Row {
   bool get isRunning => status == 'running';
 
   factory V4SubagentRow.fromJson(Map<String, dynamic> j) => V4SubagentRow(
-        rowId: (j['rowId'] as num?)?.toInt() ?? 0,
-        turnId: j['turnId'] as String? ?? '',
-        revision: (j['revision'] as num?)?.toInt() ?? 0,
-        subagentType: j['subagentType'] as String? ?? '',
-        status: j['status'] as String? ?? 'running',
-        summaryText: j['summaryText'] as String? ?? '',
-        childSessionId: j['childSessionId'] as String?,
-        parentToolCallId: j['parentToolCallId'] as String?,
-        backgrounded: j['backgrounded'] == true,
-      );
+    rowId: (j['rowId'] as num?)?.toInt() ?? 0,
+    turnId: j['turnId'] as String? ?? '',
+    revision: (j['revision'] as num?)?.toInt() ?? 0,
+    subagentType: j['subagentType'] as String? ?? '',
+    status: j['status'] as String? ?? 'running',
+    summaryText: j['summaryText'] as String? ?? '',
+    childSessionId: j['childSessionId'] as String?,
+    parentToolCallId: j['parentToolCallId'] as String?,
+    backgrounded: j['backgrounded'] == true,
+  );
 
-  V4SubagentRow copyWith({
-    String? status,
-    String? summaryText,
-  }) =>
+  V4SubagentRow copyWith({String? status, String? summaryText}) =>
       V4SubagentRow(
         rowId: rowId,
         turnId: turnId,
@@ -853,8 +892,11 @@ class V4SubagentRow extends V4Row {
       );
 
   @override
-  Map<String, dynamic> toJson() =>
-      {'kind': 'subagent', 'rowId': rowId, 'subagentType': subagentType};
+  Map<String, dynamic> toJson() => {
+    'kind': 'subagent',
+    'rowId': rowId,
+    'subagentType': subagentType,
+  };
 }
 
 class V4TimelineMarkerRow extends V4Row {
@@ -887,8 +929,11 @@ class V4TimelineMarkerRow extends V4Row {
       );
 
   @override
-  Map<String, dynamic> toJson() =>
-      {'kind': 'timelineMarker', 'rowId': rowId, 'lane': lane};
+  Map<String, dynamic> toJson() => {
+    'kind': 'timelineMarker',
+    'rowId': rowId,
+    'lane': lane,
+  };
 }
 
 class V4UnknownRow extends V4Row {
@@ -904,12 +949,12 @@ class V4UnknownRow extends V4Row {
   });
 
   factory V4UnknownRow.fromJson(Map<String, dynamic> j) => V4UnknownRow(
-        rowId: (j['rowId'] as num?)?.toInt() ?? 0,
-        turnId: j['turnId'] as String? ?? '',
-        revision: (j['revision'] as num?)?.toInt() ?? 0,
-        kind: j['kind'] as String? ?? 'unknown',
-        raw: j,
-      );
+    rowId: (j['rowId'] as num?)?.toInt() ?? 0,
+    turnId: j['turnId'] as String? ?? '',
+    revision: (j['revision'] as num?)?.toInt() ?? 0,
+    kind: j['kind'] as String? ?? 'unknown',
+    raw: j,
+  );
 
   @override
   Map<String, dynamic> toJson() => {'kind': kind, 'rowId': rowId, ...raw};
@@ -979,8 +1024,9 @@ class V4PermissionPayload {
         detail: j['detail'] as Map<String, dynamic>? ?? {},
         options: (j['options'] as List<dynamic>? ?? [])
             .whereType<Map>()
-            .map((e) =>
-                V4PermissionOption.fromJson(Map<String, dynamic>.from(e)))
+            .map(
+              (e) => V4PermissionOption.fromJson(Map<String, dynamic>.from(e)),
+            )
             .toList(),
       );
 }
@@ -1032,8 +1078,9 @@ class V4UserInputPayload {
         freeText: j['freeText'] as bool? ?? false,
         options: (j['options'] as List<dynamic>? ?? [])
             .whereType<Map>()
-            .map((e) =>
-                V4UserInputOption.fromJson(Map<String, dynamic>.from(e)))
+            .map(
+              (e) => V4UserInputOption.fromJson(Map<String, dynamic>.from(e)),
+            )
             .toList(),
         sensitive: j['sensitive'] as bool? ?? false,
         toolName: j['toolName'] as String?,
@@ -1072,14 +1119,14 @@ class V4Question {
   });
 
   factory V4Question.fromJson(Map<String, dynamic> j) => V4Question(
-        question: j['question'] as String? ?? '',
-        header: j['header'] as String? ?? '',
-        multiSelect: j['multiSelect'] as bool? ?? false,
-        options: (j['options'] as List<dynamic>? ?? [])
-            .whereType<Map>()
-            .map((e) => V4QuestionOption.fromJson(Map<String, dynamic>.from(e)))
-            .toList(),
-      );
+    question: j['question'] as String? ?? '',
+    header: j['header'] as String? ?? '',
+    multiSelect: j['multiSelect'] as bool? ?? false,
+    options: (j['options'] as List<dynamic>? ?? [])
+        .whereType<Map>()
+        .map((e) => V4QuestionOption.fromJson(Map<String, dynamic>.from(e)))
+        .toList(),
+  );
 }
 
 class V4QuestionOption {
@@ -1087,14 +1134,17 @@ class V4QuestionOption {
   final String label;
   final String? description;
 
-  V4QuestionOption({required this.value, required this.label, this.description});
+  V4QuestionOption({
+    required this.value,
+    required this.label,
+    this.description,
+  });
 
-  factory V4QuestionOption.fromJson(Map<String, dynamic> j) =>
-      V4QuestionOption(
-        value: j['value'] as String? ?? '',
-        label: j['label'] as String? ?? '',
-        description: j['description'] as String?,
-      );
+  factory V4QuestionOption.fromJson(Map<String, dynamic> j) => V4QuestionOption(
+    value: j['value'] as String? ?? '',
+    label: j['label'] as String? ?? '',
+    description: j['description'] as String?,
+  );
 }
 
 // ================================================================
@@ -1151,6 +1201,7 @@ class SessionEvent {
 
 // AgentEvent 兼容壳
 sealed class AgentEvent {}
+
 class AgentMessageChunk extends AgentEvent {}
 
 class V4BackgroundWork {
@@ -1159,6 +1210,7 @@ class V4BackgroundWork {
   final String title;
   final String status; // running|resultPending|failed|cancelled
   final DateTime startedAt;
+
   /// 子会话 id (kind=='subagent' 时有值, 用于关联子会话)
   final String? childSessionId;
 
@@ -1171,17 +1223,16 @@ class V4BackgroundWork {
     this.childSessionId,
   });
 
-  factory V4BackgroundWork.fromJson(Map<String, dynamic> j) =>
-      V4BackgroundWork(
-        workId: j['workId'] as String? ?? '',
-        kind: j['kind'] as String? ?? 'bash',
-        title: j['title'] as String? ?? '',
-        status: j['status'] as String? ?? 'running',
-        childSessionId: j['childSessionId'] as String?,
-        startedAt: j['startedAt'] != null
-            ? DateTime.fromMillisecondsSinceEpoch(j['startedAt'] as int)
-            : DateTime.now(),
-      );
+  factory V4BackgroundWork.fromJson(Map<String, dynamic> j) => V4BackgroundWork(
+    workId: j['workId'] as String? ?? '',
+    kind: j['kind'] as String? ?? 'bash',
+    title: j['title'] as String? ?? '',
+    status: j['status'] as String? ?? 'running',
+    childSessionId: j['childSessionId'] as String?,
+    startedAt: j['startedAt'] != null
+        ? DateTime.fromMillisecondsSinceEpoch(j['startedAt'] as int)
+        : DateTime.now(),
+  );
 }
 
 class V4Subagents {
@@ -1196,10 +1247,10 @@ class V4Subagents {
   });
 
   factory V4Subagents.fromJson(Map<String, dynamic> j) => V4Subagents(
-        revision: (j['revision'] as num?)?.toInt() ?? 0,
-        childSessionIds: (j['childSessionIds'] as List<dynamic>? ?? [])
-            .map((e) => e.toString())
-            .toList(),
-        endedTotal: (j['endedTotal'] as num?)?.toInt() ?? 0,
-      );
+    revision: (j['revision'] as num?)?.toInt() ?? 0,
+    childSessionIds: (j['childSessionIds'] as List<dynamic>? ?? [])
+        .map((e) => e.toString())
+        .toList(),
+    endedTotal: (j['endedTotal'] as num?)?.toInt() ?? 0,
+  );
 }

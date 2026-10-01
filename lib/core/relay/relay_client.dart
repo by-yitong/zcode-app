@@ -135,9 +135,7 @@ class RelayClient {
   /// 等 RPC ready (同步检查 + stream 等待), 带超时。
   Future<void> waitRpcReady(Duration timeout) async {
     if (_rpcReady) return;
-    await onRpcReadyChange
-        .firstWhere((ready) => ready)
-        .timeout(timeout);
+    await onRpcReadyChange.firstWhere((ready) => ready).timeout(timeout);
   }
 
   int _reconnectAttempts = 0;
@@ -176,7 +174,10 @@ class RelayClient {
 
   String _genUuid() {
     final r = Random();
-    final hex = List.generate(16, (_) => r.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+    final hex = List.generate(
+      16,
+      (_) => r.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
     return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
   }
 
@@ -322,7 +323,8 @@ class RelayClient {
         // 近 45s 收到过任意帧 → 连接活跃, 无需探活 (避免误杀刚重建的连接)
         final lastFrame = _lastFrameAt;
         if (lastFrame != null &&
-            DateTime.now().difference(lastFrame) < const Duration(seconds: 45)) {
+            DateTime.now().difference(lastFrame) <
+                const Duration(seconds: 45)) {
           return;
         }
         final alive = await _probeLiveness();
@@ -336,7 +338,10 @@ class RelayClient {
         return;
       }
     } else {
-      _log('info', 'revive(): 前台恢复, 状态=${_state.name} socketOpen=$socketOpen → 强制重连');
+      _log(
+        'info',
+        'revive(): 前台恢复, 状态=${_state.name} socketOpen=$socketOpen → 强制重连',
+      );
     }
 
     _reconnectAttempts = 0;
@@ -399,17 +404,12 @@ class RelayClient {
       },
       'deviceInfo': deviceInfo,
     });
-    _log('debug',
-        'mobile-view-state-update 已发送 (task=${activeTaskId ?? '-'})');
+    _log('debug', 'mobile-view-state-update 已发送 (task=${activeTaskId ?? '-'})');
   }
 
   /// 发送 data 层消息 (认证后的所有消息都通过 data 包裹)
   void _sendPayload(Map<String, dynamic> payload) {
-    _sendRaw({
-      'type': 'data',
-      'payload': payload,
-      'client_ts': _ts(),
-    });
+    _sendRaw({'type': 'data', 'payload': payload, 'client_ts': _ts()});
   }
 
   /// 发送 data 层消息并等待响应 (requestId 配对)
@@ -422,11 +422,7 @@ class RelayClient {
     final completer = Completer<Map<String, dynamic>>();
     _pending[requestId] = completer;
 
-    _sendPayload({
-      'zcode_type': zcodeType,
-      'requestId': requestId,
-      ...extra,
-    });
+    _sendPayload({'zcode_type': zcodeType, 'requestId': requestId, ...extra});
 
     Future.delayed(timeout, () {
       if (_pending.containsKey(requestId)) {
@@ -467,7 +463,8 @@ class RelayClient {
       case 'error':
         final code = msg['code'] ?? 'unknown';
         _log('error', 'Server error: $code');
-        if (!_errorController.isClosed) _errorController.add('Server error: $code');
+        if (!_errorController.isClosed)
+          _errorController.add('Server error: $code');
       default:
         _log('debug', 'RECV [$type]');
     }
@@ -529,14 +526,18 @@ class RelayClient {
     // 其他 data 层消息
     if (zt == 'bridge-degraded') {
       _log('warn', '★ bridge-degraded! payload=$payload');
-      _log('warn', '  pending RPC: ${_pendingRpc.length}, rpcReady=$_rpcReady, bridgeGen=$_bridgeGeneration');
+      _log(
+        'warn',
+        '  pending RPC: ${_pendingRpc.length}, rpcReady=$_rpcReady, bridgeGen=$_bridgeGeneration',
+      );
       _onBridgeDegraded();
       return;
     }
     if (zt == 'workspace-list-updated') {
       _log('debug', '← workspace-list-updated (列表变更推送)');
       if (!_workspaceListController.isClosed) {
-        if (!_workspaceListController.isClosed) _workspaceListController.add(payload);
+        if (!_workspaceListController.isClosed)
+          _workspaceListController.add(payload);
       }
       return;
     }
@@ -556,9 +557,7 @@ class RelayClient {
     _pendingRpc.clear();
     for (final entry in pendingRpc.entries) {
       if (!entry.value.isCompleted) {
-        entry.value.completeError(
-          TimeoutException('Bridge degraded'),
-        );
+        entry.value.completeError(TimeoutException('Bridge degraded'));
       }
     }
 
@@ -571,7 +570,10 @@ class RelayClient {
         now.difference(_lastReconnectTime!).inSeconds < 10) {
       _degradedCount++;
       if (_degradedCount > 3) {
-        _log('warn', 'Bridge degraded ${_degradedCount}x in 10s, stop auto-reconnect');
+        _log(
+          'warn',
+          'Bridge degraded ${_degradedCount}x in 10s, stop auto-reconnect',
+        );
         return;
       }
     } else {
@@ -594,10 +596,16 @@ class RelayClient {
     if (key == null) return;
     // 已有可用 bridge (如并发的完整打开赢了) 或已有打开在进行中 → 跳过
     if (_rpcReady || _bridgeOpenFuture != null) {
-      _log('debug', 'Reopen bridge ($reason) skipped: rpcReady=$_rpcReady opening=${_bridgeOpenFuture != null}');
+      _log(
+        'debug',
+        'Reopen bridge ($reason) skipped: rpcReady=$_rpcReady opening=${_bridgeOpenFuture != null}',
+      );
       return;
     }
-    _log('info', 'Reopening bridge ($reason): $key (taskId=${_currentTaskId ?? "none"}, attempt ${_degradedCount + 1})');
+    _log(
+      'info',
+      'Reopening bridge ($reason): $key (taskId=${_currentTaskId ?? "none"}, attempt ${_degradedCount + 1})',
+    );
     _bridgeGeneration++;
     _seqCounter = 0;
     _rpcReqId = 0;
@@ -617,8 +625,8 @@ class RelayClient {
       });
       // 更新 recoveryId
       final bridgeData = resp['bridge'] as Map<String, dynamic>?;
-      final newRid = bridgeData?['recoveryId'] as String? ??
-          resp['recoveryId'] as String?;
+      final newRid =
+          bridgeData?['recoveryId'] as String? ?? resp['recoveryId'] as String?;
       if (newRid != null) _currentRecoveryId = newRid;
       await _rpcReadyCompleter!.future.timeout(
         const Duration(seconds: 15),
@@ -665,7 +673,9 @@ class RelayClient {
     final Uint8List data;
     if (fragCount > 1) {
       final buf = _fragBufs.putIfAbsent(
-          seqKey, () => List<Uint8List?>.filled(fragCount, null));
+        seqKey,
+        () => List<Uint8List?>.filled(fragCount, null),
+      );
       if (fragIndex < buf.length) buf[fragIndex] = Uint8List.fromList(bytes);
       final received = buf.whereType<Uint8List>().length;
       if (received < buf.length) {
@@ -717,8 +727,13 @@ class RelayClient {
       final v4Sub = _v4FrameSubs[id];
       if (v4Sub != null && !v4Sub.isClosed && rpc.body is Map) {
         try {
-          final frame = V4Frame.fromJson(Map<String, dynamic>.from(rpc.body as Map));
-          _log('debug', '← V4 frame via OK #$id: payload kind=${frame.payload.runtimeType}');
+          final frame = V4Frame.fromJson(
+            Map<String, dynamic>.from(rpc.body as Map),
+          );
+          _log(
+            'debug',
+            '← V4 frame via OK #$id: payload kind=${frame.payload.runtimeType}',
+          );
           v4Sub.add(frame);
         } catch (e) {
           _log('error', 'V4 frame decode (via OK) error: $e');
@@ -750,7 +765,9 @@ class RelayClient {
       if (v4Sub != null && !v4Sub.isClosed) {
         if (rpc.body is Map) {
           try {
-            final frame = V4Frame.fromJson(Map<String, dynamic>.from(rpc.body as Map));
+            final frame = V4Frame.fromJson(
+              Map<String, dynamic>.from(rpc.body as Map),
+            );
             v4Sub.add(frame);
           } catch (e) {
             _log('error', 'V4 frame decode error: $e');
@@ -766,7 +783,10 @@ class RelayClient {
 
       // V3 session event 分发 (保留兼容)
       final event = SessionEvent.fromBody(rpc.body);
-      _log('debug', '← EVENT sub=$subId kind=${event.kind} sid=${event.sessionId}');
+      _log(
+        'debug',
+        '← EVENT sub=$subId kind=${event.kind} sid=${event.sessionId}',
+      );
 
       // 推到对应订阅的 controller
       final sub = _eventSubs[subId];
@@ -807,7 +827,9 @@ class RelayClient {
     Future.delayed(timeout, () {
       if (_pendingRpc.containsKey(id)) {
         _pendingRpc.remove(id);
-        completer.completeError(TimeoutException('RPC timeout: $channel.$method'));
+        completer.completeError(
+          TimeoutException('RPC timeout: $channel.$method'),
+        );
       }
     });
 
@@ -858,7 +880,10 @@ class RelayClient {
     _seqCounter++;
     final messageBytes = data.length;
     final checksum = _crc32(data);
-    _log('debug', '_sendRpcFrameData: seq=$_seqCounter bridgeGen=$_bridgeGeneration bridgeSession=$_activeBridgeSession bytes=$messageBytes checksum=$checksum');
+    _log(
+      'debug',
+      '_sendRpcFrameData: seq=$_seqCounter bridgeGen=$_bridgeGeneration bridgeSession=$_activeBridgeSession bytes=$messageBytes checksum=$checksum',
+    );
     _sendPayload({
       'zcode_type': 'rpc-frame',
       'bridgeSessionId': _activeBridgeSession,
@@ -904,7 +929,9 @@ class RelayClient {
     }
     _reconnectAttempts++;
     _setState(RelayConnectionState.reconnecting);
-    final delay = Duration(seconds: min(30, pow(2, _reconnectAttempts).toInt()));
+    final delay = Duration(
+      seconds: min(30, pow(2, _reconnectAttempts).toInt()),
+    );
     _log('info', 'Reconnect in ${delay.inSeconds}s (#$_reconnectAttempts)');
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(delay, () async {
@@ -988,7 +1015,9 @@ class RelayClient {
     final pending = _bridgeOpenFuture;
     if (pending != null) {
       _log('debug', 'openWorkspaceBridge: 复用进行中的打开');
-      return pending.then((_) => {'bridgeSessionId': _activeBridgeSession, 'rpcReady': true});
+      return pending.then(
+        (_) => {'bridgeSessionId': _activeBridgeSession, 'rpcReady': true},
+      );
     }
     final future = _doOpenWorkspaceBridge(workspaceKey, taskId: taskId);
     _bridgeOpenFuture = future;
@@ -1010,7 +1039,10 @@ class RelayClient {
     _rpcReady = false;
     if (!_rpcReadyController.isClosed) _rpcReadyController.add(false);
     _rpcReadyCompleter = Completer<void>();
-    _log('info', 'Opening bridge: workspace=$workspaceKey taskId=${taskId ?? "none"}');
+    _log(
+      'info',
+      'Opening bridge: workspace=$workspaceKey taskId=${taskId ?? "none"}',
+    );
 
     final resp = _requestResponse('workspace-bridge-open', {
       'bridgeSessionId': bridgeSessionId,
@@ -1025,9 +1057,13 @@ class RelayClient {
     final bridgeReady = await resp;
     // ★ V4: 从 bridge-ready 响应提取 recoveryId
     final bridgeData = bridgeReady['bridge'] as Map<String, dynamic>?;
-    _currentRecoveryId = bridgeData?['recoveryId'] as String? ??
+    _currentRecoveryId =
+        bridgeData?['recoveryId'] as String? ??
         bridgeReady['recoveryId'] as String?;
-    _log('info', 'bridge-ready: recoveryId=$_currentRecoveryId (${sw.elapsedMilliseconds}ms)');
+    _log(
+      'info',
+      'bridge-ready: recoveryId=$_currentRecoveryId (${sw.elapsedMilliseconds}ms)',
+    );
 
     // 等 RPC Init 帧 (服务器自动推送)
     await _rpcReadyCompleter!.future.timeout(
@@ -1079,7 +1115,7 @@ class RelayClient {
         'content': content,
         'clientId': 'renderer:${_genUuid()}',
         'clientLabel': config.deviceName,
-      }
+      },
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
@@ -1108,11 +1144,9 @@ class RelayClient {
     Map<String, dynamic>? fullResponse,
     String? reason,
   }) async {
-    final responseMap = fullResponse ??
-        {
-          'decision': decision,
-          if (reason != null) 'reason': reason,
-        };
+    final responseMap =
+        fullResponse ??
+        {'decision': decision, if (reason != null) 'reason': reason};
     // ★ 直接调 respondPermission 方法 (与网页端 zcodeTaskService.respondPermission 一致)
     final resp = await _rpcCall('zcode-task', 'respondPermission', [
       {
@@ -1123,7 +1157,7 @@ class RelayClient {
         'requestId': permissionRequestId,
         'optionId': optionId,
         'response': responseMap,
-      }
+      },
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
@@ -1153,7 +1187,7 @@ class RelayClient {
         'byteBudget': byteBudget,
         'clientMode': 'web-remote-replayable',
         if (etag != null) 'etag': etag,
-      }
+      },
     ]);
     _log('debug', 'getTaskSnapshot: resp.body type=${resp.body.runtimeType}');
     if (resp.body is Map) {
@@ -1170,7 +1204,10 @@ class RelayClient {
       }
       return {'snapshot': snapshot, 'etag': m['etag']};
     }
-    _log('warn', 'getTaskSnapshot: body is NOT a Map! body=${_trunc(resp.body)}');
+    _log(
+      'warn',
+      'getTaskSnapshot: body is NOT a Map! body=${_trunc(resp.body)}',
+    );
     return {'raw': resp.body};
   }
 
@@ -1181,7 +1218,7 @@ class RelayClient {
     required String rootPath,
   }) async {
     final resp = await _rpcCall('file', 'listWorkspaceFiles', [
-      {'rootPath': rootPath}
+      {'rootPath': rootPath},
     ]);
     if (resp.body is List) {
       return (resp.body as List)
@@ -1205,7 +1242,7 @@ class RelayClient {
         'workspacePath': workspacePath,
         'sessionId': sessionId,
         'messageLimit': messageLimit,
-      }
+      },
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
@@ -1229,7 +1266,7 @@ class RelayClient {
         'mode': mode,
         if (model != null) 'model': model,
         'thoughtLevel': thoughtLevel,
-      }
+      },
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
@@ -1264,7 +1301,7 @@ class RelayClient {
     required String workspacePath,
   }) async {
     final resp = await _rpcCall('zcode-task', 'getTaskTokenUsage', [
-      {'taskId': taskId, 'workspacePath': workspacePath}
+      {'taskId': taskId, 'workspacePath': workspacePath},
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
@@ -1287,7 +1324,7 @@ class RelayClient {
         'sessionId': sessionId,
         'mode': mode,
         if (expectedRevision != null) 'expectedRevision': expectedRevision,
-      }
+      },
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
@@ -1299,7 +1336,7 @@ class RelayClient {
     required String sessionId,
   }) async {
     final resp = await _rpcCall('zcode-session', 'compact', [
-      {'workspacePath': workspacePath, 'sessionId': sessionId}
+      {'workspacePath': workspacePath, 'sessionId': sessionId},
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
@@ -1323,22 +1360,24 @@ class RelayClient {
         {
           'workspacePath': workspacePath,
           if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
-        }
+        },
       ]);
     } on RpcException {
       try {
         resp = await _rpcCall('zcode-session', 'readState', [
           {
             'workspacePath': workspacePath,
-            if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
-          }
+            if (workspaceIdentity != null)
+              'workspaceIdentity': workspaceIdentity,
+          },
         ]);
       } on RpcException {
         resp = await _rpcCall('zcode-workspace', 'readState', [
           {
             'workspacePath': workspacePath,
-            if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
-          }
+            if (workspaceIdentity != null)
+              'workspaceIdentity': workspaceIdentity,
+          },
         ]);
       }
     }
@@ -1395,7 +1434,7 @@ class RelayClient {
     required String model,
   }) async {
     final resp = await _rpcCall('zcode-session', 'setModel', [
-      {'workspacePath': workspacePath, 'sessionId': sessionId, 'model': model}
+      {'workspacePath': workspacePath, 'sessionId': sessionId, 'model': model},
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
@@ -1447,7 +1486,7 @@ class RelayClient {
         'clientId': _v4ClientId,
         'appVersion': config.appVersion,
         'clientKind': 'mobileApp',
-      }
+      },
     ]);
     _log('info', 'V4 initialized (clientId=$_v4ClientId)');
     _v4HandshakeDone = true;
@@ -1472,13 +1511,12 @@ class RelayClient {
     final id = _rpcReqId;
     final controller = StreamController<V4Frame>();
     _v4FrameSubs[id] = controller;
-    _sendRpcFrameData(RpcCodec.encodeListen(id, 'zcode-agent',
-        'onDynamicConversationFrame',
-          {
-            'workspacePath': workspacePath,
-            if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
-          }
-        ));
+    _sendRpcFrameData(
+      RpcCodec.encodeListen(id, 'zcode-agent', 'onDynamicConversationFrame', {
+        'workspacePath': workspacePath,
+        if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
+      }),
+    );
 
     try {
       final subResp = await _rpcCall('zcode-agent', 'subscribeConversationV4', [
@@ -1488,11 +1526,15 @@ class RelayClient {
           'sessionId': sessionId,
           if (base != null) 'base': base,
           if (visibility != null) 'visibility': visibility,
-        }
+        },
       ]);
-      final subData = subResp.body is Map ? Map<String, dynamic>.from(subResp.body as Map) : <String, dynamic>{};
-      final subscriptionId = subData['ack']?['subscriptionId'] as String? ??
-          subData['subscriptionId'] as String? ?? '';
+      final subData = subResp.body is Map
+          ? Map<String, dynamic>.from(subResp.body as Map)
+          : <String, dynamic>{};
+      final subscriptionId =
+          subData['ack']?['subscriptionId'] as String? ??
+          subData['subscriptionId'] as String? ??
+          '';
       _log('info', 'V4 subscribe: subscriptionId=$subscriptionId');
       _log('debug', 'V4 subscribe: subData=${_trunc(subData, 300)}');
       return controller.stream;
@@ -1505,9 +1547,11 @@ class RelayClient {
   }
 
   /// V4 取消订阅
-  Future<void> unsubscribeConversationV4({required String subscriptionId}) async {
+  Future<void> unsubscribeConversationV4({
+    required String subscriptionId,
+  }) async {
     await _rpcCall('zcode-agent', 'unsubscribeConversationV4', [
-      {'subscriptionId': subscriptionId}
+      {'subscriptionId': subscriptionId},
     ]);
   }
 
@@ -1522,7 +1566,7 @@ class RelayClient {
         'subscriptionId': subscriptionId,
         if (base != null) 'base': base,
         if (forceSnapshot != null) 'forceSnapshot': forceSnapshot,
-      }
+      },
     ]);
   }
 
@@ -1542,7 +1586,8 @@ class RelayClient {
     Map<String, dynamic>? envelopeExtras,
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
-    final cmdId = 'cmd_${now}_${Random().nextInt(0xFFFF).toRadixString(16).padLeft(4, '0')}';
+    final cmdId =
+        'cmd_${now}_${Random().nextInt(0xFFFF).toRadixString(16).padLeft(4, '0')}';
 
     final envelope = <String, dynamic>{
       // 3.7.7 抓包实测: 网页端 envelope 无 kind 字段 (旧版多发的 kind 服务端兼容)
@@ -1551,7 +1596,7 @@ class RelayClient {
       'commandId': cmdId,
       'clientId': _v4ClientId,
       'issuedAt': now,
-      'sessionId': sessionId,  // null for createSession, sessionId for others
+      'sessionId': sessionId, // null for createSession, sessionId for others
       if (baseRevision != null) 'baseRevision': baseRevision,
       if (baseLogEpoch != null) 'baseLogEpoch': baseLogEpoch,
       // 命令专属信封字段 (如队列命令的 queueItemId — 协议信封基类字段)
@@ -1563,7 +1608,7 @@ class RelayClient {
         'workspacePath': workspacePath,
         if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
         'envelope': envelope,
-      }
+      },
     ]);
 
     if (resp.body is Map) {
@@ -1574,8 +1619,7 @@ class RelayClient {
         final msg = body['message'] is List
             ? (body['message'] as List).map((e) => '$e').join('; ')
             : '${body['message'] ?? ''}';
-        throw StateError(
-            '命令被拒绝 [${body['reasonCode']}]: $msg');
+        throw StateError('命令被拒绝 [${body['reasonCode']}]: $msg');
       }
       return body;
     }
@@ -1622,16 +1666,15 @@ class RelayClient {
     required String workId,
     required int baseRevision,
     String? baseLogEpoch,
-  }) =>
-      sendConversationCommandV4(
-        workspacePath: workspacePath,
-        workspaceIdentity: workspaceIdentity,
-        sessionId: sessionId,
-        commandType: 'cancelBackgroundWork',
-        payload: {'workId': workId},
-        baseRevision: baseRevision,
-        baseLogEpoch: baseLogEpoch,
-      );
+  }) => sendConversationCommandV4(
+    workspacePath: workspacePath,
+    workspaceIdentity: workspaceIdentity,
+    sessionId: sessionId,
+    commandType: 'cancelBackgroundWork',
+    payload: {'workId': workId},
+    baseRevision: baseRevision,
+    baseLogEpoch: baseLogEpoch,
+  );
 
   /// V4 分页加载历史消息
   Future<Map<String, dynamic>> conversationRowsRangeV4({
@@ -1648,7 +1691,7 @@ class RelayClient {
         'sessionId': sessionId,
         if (beforeRowId != null) 'beforeRowId': beforeRowId,
         'limit': limit,
-      }
+      },
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
@@ -1665,7 +1708,7 @@ class RelayClient {
         'workspacePath': workspacePath,
         if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
         'sessionId': sessionId,
-      }
+      },
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
@@ -1686,7 +1729,7 @@ class RelayClient {
         'sessionId': sessionId,
         'baseRevision': baseRevision,
         'baseLogEpoch': baseLogEpoch,
-      }
+      },
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
@@ -1751,13 +1794,12 @@ class RelayClient {
           sessionId: sessionId,
           uploadId: uploadId,
           chunkIndex: index,
-          dataBase64: base64Encode(
-            Uint8List.sublistView(bytes, start, end),
-          ),
+          dataBase64: base64Encode(Uint8List.sublistView(bytes, start, end)),
         );
         if (next != index + 1) {
           throw StateError(
-              'attachmentChunkV4 进度异常: chunkIndex=$index nextChunkIndex=$next');
+            'attachmentChunkV4 进度异常: chunkIndex=$index nextChunkIndex=$next',
+          );
         }
       }
       return await attachmentCommitV4(
@@ -1805,7 +1847,7 @@ class RelayClient {
         'totalBytes': totalBytes,
         'totalChunks': totalChunks,
         'checksum': checksum,
-      }
+      },
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
@@ -1829,7 +1871,7 @@ class RelayClient {
         'uploadId': uploadId,
         'chunkIndex': chunkIndex,
         'dataBase64': dataBase64,
-      }
+      },
     ]);
     if (resp.body is Map) {
       final next = (resp.body as Map<String, dynamic>)['nextChunkIndex'];
@@ -1851,7 +1893,7 @@ class RelayClient {
         if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
         'sessionId': sessionId,
         'uploadId': uploadId,
-      }
+      },
     ]);
     if (resp.body is Map) {
       final ref = (resp.body as Map<String, dynamic>)['ref'] as String?;
@@ -1873,7 +1915,7 @@ class RelayClient {
         if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
         'sessionId': sessionId,
         'uploadId': uploadId,
-      }
+      },
     ]);
   }
 
@@ -1896,7 +1938,7 @@ class RelayClient {
           'ref': ref,
           'offset': offset,
           'limit': 524288,
-        }
+        },
       ]);
       if (resp.body is! Map) {
         throw StateError('attachmentReadV4 响应非 Map: ${resp.body}');
@@ -1927,7 +1969,7 @@ class RelayClient {
   /// payload.kind=deltas   → [{op:"session.upserted",session:{...}} | {op:"session.removed",...}]
   /// 返回 (subscriptionId, 帧流) — 退订时需携带 subscriptionId
   Future<({String subscriptionId, Stream<Map<String, dynamic>> stream})>
-      subscribeSessionsIndexV4({
+  subscribeSessionsIndexV4({
     required String workspacePath,
     String? workspaceIdentity,
     String runtimePolicy = 'existing-only',
@@ -1939,26 +1981,30 @@ class RelayClient {
     final id = _rpcReqId;
     final controller = StreamController<Map<String, dynamic>>();
     _indexFrameSubs[id] = controller;
-    _sendRpcFrameData(RpcCodec.encodeListen(id, 'zcode-agent',
-        'onDynamicSessionsIndexFrame',
-        {
-          'workspacePath': workspacePath,
-          if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
-        }));
+    _sendRpcFrameData(
+      RpcCodec.encodeListen(id, 'zcode-agent', 'onDynamicSessionsIndexFrame', {
+        'workspacePath': workspacePath,
+        if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
+      }),
+    );
 
     try {
-      final subResp = await _rpcCall('zcode-agent', 'subscribeSessionsIndexV4', [
-        {
-          'workspacePath': workspacePath,
-          if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
-          'runtimePolicy': runtimePolicy,
-        }
-      ]);
+      final subResp = await _rpcCall(
+        'zcode-agent',
+        'subscribeSessionsIndexV4',
+        [
+          {
+            'workspacePath': workspacePath,
+            if (workspaceIdentity != null)
+              'workspaceIdentity': workspaceIdentity,
+            'runtimePolicy': runtimePolicy,
+          },
+        ],
+      );
       final subData = subResp.body is Map
           ? Map<String, dynamic>.from(subResp.body as Map)
           : <String, dynamic>{};
-      final subscriptionId =
-          subData['ack']?['subscriptionId'] as String? ?? '';
+      final subscriptionId = subData['ack']?['subscriptionId'] as String? ?? '';
       _log('info', 'V4 sessions-index subscribe: $subscriptionId');
       return (subscriptionId: subscriptionId, stream: controller.stream);
     } catch (e) {
@@ -1970,9 +2016,11 @@ class RelayClient {
   }
 
   /// V4 取消会话索引订阅 (重订阅/切换工作区时调用, 避免服务端订阅堆积)
-  Future<void> unsubscribeSessionsIndexV4({required String subscriptionId}) async {
+  Future<void> unsubscribeSessionsIndexV4({
+    required String subscriptionId,
+  }) async {
     await _rpcCall('zcode-agent', 'unsubscribeSessionsIndexV4', [
-      {'subscriptionId': subscriptionId}
+      {'subscriptionId': subscriptionId},
     ]);
     _log('info', 'V4 sessions-index unsubscribe: $subscriptionId');
   }
@@ -1992,7 +2040,7 @@ class RelayClient {
     required String sessionId,
   }) async {
     final resp = await _rpcCall('zcode-session', 'stop', [
-      {'workspacePath': workspacePath, 'sessionId': sessionId}
+      {'workspacePath': workspacePath, 'sessionId': sessionId},
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
@@ -2013,7 +2061,7 @@ class RelayClient {
         'sessionId': sessionId,
         if (afterSeq != null) 'afterSeq': afterSeq,
         'limit': limit,
-      }
+      },
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
@@ -2030,7 +2078,7 @@ class RelayClient {
         'workspacePath': workspacePath,
         'sessionId': sessionId,
         if (toTurnIndex != null) 'toTurnIndex': toTurnIndex,
-      }
+      },
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
@@ -2042,7 +2090,7 @@ class RelayClient {
     required String sessionId,
   }) async {
     final resp = await _rpcCall('zcode-session', 'close', [
-      {'workspacePath': workspacePath, 'sessionId': sessionId}
+      {'workspacePath': workspacePath, 'sessionId': sessionId},
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
@@ -2054,7 +2102,7 @@ class RelayClient {
     required String sessionId,
   }) async {
     final resp = await _rpcCall('zcode-session', 'usage', [
-      {'workspacePath': workspacePath, 'sessionId': sessionId}
+      {'workspacePath': workspacePath, 'sessionId': sessionId},
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
@@ -2071,7 +2119,7 @@ class RelayClient {
         'workspacePath': workspacePath,
         'sessionId': sessionId,
         'thoughtLevel': thoughtLevel,
-      }
+      },
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
@@ -2082,7 +2130,7 @@ class RelayClient {
     required String workspacePath,
   }) async {
     final resp = await _rpcCall('zcode-session', 'list', [
-      {'workspacePath': workspacePath}
+      {'workspacePath': workspacePath},
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
@@ -2107,7 +2155,7 @@ class RelayClient {
         if (workspaceIdentity != null && workspaceIdentity.isNotEmpty)
           'workspaceIdentity': workspaceIdentity,
         'provider': provider,
-      }
+      },
     ]);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     return {'raw': resp.body};
@@ -2131,7 +2179,7 @@ class RelayClient {
         'skillId': skillId,
         'enabled': enabled,
         if (scope != null) 'scope': scope,
-      }
+      },
     ]);
   }
 
@@ -2142,7 +2190,10 @@ class RelayClient {
 
   /// 通用: 调用并归一为 Map
   Future<Map<String, dynamic>> _mapCall(
-      String channel, String method, List<dynamic> args) async {
+    String channel,
+    String method,
+    List<dynamic> args,
+  ) async {
     final resp = await _rpcCall(channel, method, args);
     if (resp.body is Map) return resp.body as Map<String, dynamic>;
     if (resp.body == null) return {};
@@ -2171,8 +2222,11 @@ class RelayClient {
     String? workspaceIdentity,
   }) async {
     await _rpcCall('skills', 'deleteSkill', [
-      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
-          extra: {'skillId': skillId})
+      _ws(
+        workspacePath: workspacePath,
+        workspaceIdentity: workspaceIdentity,
+        extra: {'skillId': skillId},
+      ),
     ]);
   }
 
@@ -2183,8 +2237,11 @@ class RelayClient {
     String? workspaceIdentity,
   }) async {
     return _mapCall('skills', 'copyToCommon', [
-      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
-          extra: {'skillId': skillId})
+      _ws(
+        workspacePath: workspacePath,
+        workspaceIdentity: workspaceIdentity,
+        extra: {'skillId': skillId},
+      ),
     ]);
   }
 
@@ -2195,8 +2252,11 @@ class RelayClient {
     String? workspaceIdentity,
   }) async {
     return _mapCall('skills', 'removeFromCommon', [
-      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
-          extra: {'skillId': skillId})
+      _ws(
+        workspacePath: workspacePath,
+        workspaceIdentity: workspaceIdentity,
+        extra: {'skillId': skillId},
+      ),
     ]);
   }
 
@@ -2209,8 +2269,11 @@ class RelayClient {
     String mode = 'allRuntimeScopes',
   }) async {
     return _mapCall('subagents', 'list', [
-      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
-          extra: {'mode': mode})
+      _ws(
+        workspacePath: workspacePath,
+        workspaceIdentity: workspaceIdentity,
+        extra: {'mode': mode},
+      ),
     ]);
   }
 
@@ -2220,7 +2283,7 @@ class RelayClient {
     required bool enabled,
   }) async {
     await _rpcCall('subagents', 'setEnabled', [
-      {'agentId': agentId, 'enabled': enabled}
+      {'agentId': agentId, 'enabled': enabled},
     ]);
   }
 
@@ -2231,7 +2294,7 @@ class RelayClient {
     String? thoughtLevel,
   }) async {
     await _rpcCall('subagents', 'setBuiltInModelOverride', [
-      {'agentName': agentName, 'model': model, 'thoughtLevel': thoughtLevel}
+      {'agentName': agentName, 'model': model, 'thoughtLevel': thoughtLevel},
     ]);
   }
 
@@ -2241,7 +2304,7 @@ class RelayClient {
     String provider = 'glm',
   }) async {
     return _mapCall('subagents', 'createAgent', [
-      {'provider': provider, 'config': config}
+      {'provider': provider, 'config': config},
     ]);
   }
 
@@ -2258,7 +2321,7 @@ class RelayClient {
         'agentId': agentId,
         'config': config,
         if (oldFilePath != null) 'oldFilePath': oldFilePath,
-      }
+      },
     ]);
   }
 
@@ -2268,7 +2331,7 @@ class RelayClient {
     required String filePath,
   }) async {
     await _rpcCall('subagents', 'deleteAgent', [
-      {'agentId': agentId, 'filePath': filePath}
+      {'agentId': agentId, 'filePath': filePath},
     ]);
   }
 
@@ -2280,7 +2343,7 @@ class RelayClient {
     String? workspaceIdentity,
   }) async {
     return _mapCall('commands', 'list', [
-      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity)
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity),
     ]);
   }
 
@@ -2296,7 +2359,7 @@ class RelayClient {
         if (workspacePath != null && storageLevel == 'workspace')
           'workspacePath': workspacePath,
         'config': config,
-      }
+      },
     ]);
   }
 
@@ -2314,14 +2377,14 @@ class RelayClient {
           'workspacePath': workspacePath,
         'config': config,
         'oldFilePath': oldFilePath,
-      }
+      },
     ]);
   }
 
   /// 删除命令 — commands/deleteCommandFile
   Future<void> deleteCommandFile({required String filePath}) async {
     await _rpcCall('commands', 'deleteCommandFile', [
-      {'filePath': filePath}
+      {'filePath': filePath},
     ]);
   }
 
@@ -2331,7 +2394,7 @@ class RelayClient {
     required bool enabled,
   }) async {
     await _rpcCall('commands', 'setCommandEnabled', [
-      {'filePath': filePath, 'enabled': enabled}
+      {'filePath': filePath, 'enabled': enabled},
     ]);
   }
 
@@ -2343,7 +2406,7 @@ class RelayClient {
     String? workspaceIdentity,
   }) async {
     return _mapCall('hooks', 'loadHooks', [
-      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity)
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity),
     ]);
   }
 
@@ -2354,8 +2417,11 @@ class RelayClient {
     String? workspaceIdentity,
   }) async {
     await _rpcCall('hooks', 'saveHooks', [
-      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
-          extra: {'hooks': hooks})
+      _ws(
+        workspacePath: workspacePath,
+        workspaceIdentity: workspaceIdentity,
+        extra: {'hooks': hooks},
+      ),
     ]);
   }
 
@@ -2367,7 +2433,7 @@ class RelayClient {
     String? workspaceIdentity,
   }) async {
     return _mapCall('mcp-sync', 'loadMcpFromUserDirectory', [
-      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity)
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity),
     ]);
   }
 
@@ -2388,7 +2454,7 @@ class RelayClient {
         if (enabled != null) 'enabled': enabled,
         if (projectPath != null && projectPath.isNotEmpty)
           'projectPath': projectPath,
-      }
+      },
     ]);
   }
 
@@ -2398,10 +2464,15 @@ class RelayClient {
     String? workspaceIdentity,
     String mode = 'status',
   }) async {
-    final arg = _ws(workspacePath: workspacePath,
-        workspaceIdentity: workspaceIdentity, extra: {'mode': mode});
+    final arg = _ws(
+      workspacePath: workspacePath,
+      workspaceIdentity: workspaceIdentity,
+      extra: {'mode': mode},
+    );
     try {
-      return await _mapCall('mcp-sync', 'listWorkspaceMcpServerStatuses', [arg]);
+      return await _mapCall('mcp-sync', 'listWorkspaceMcpServerStatuses', [
+        arg,
+      ]);
     } catch (_) {
       // 旧 agent 走 zcode-agent 通道
       return _mapCall('zcode-agent', 'listMcpServerStatuses', [arg]);
@@ -2425,7 +2496,7 @@ class RelayClient {
           'workspaceIdentity': workspaceIdentity,
         'categories': categories,
         'intent': intent,
-      }
+      },
     ]);
   }
 
@@ -2442,7 +2513,7 @@ class RelayClient {
         if (workspaceIdentity != null && workspaceIdentity.isNotEmpty)
           'workspaceIdentity': workspaceIdentity,
         'selections': selections,
-      }
+      },
     ]);
   }
 
@@ -2456,8 +2527,11 @@ class RelayClient {
     String? workspaceIdentity,
   }) async {
     await _rpcCall('plugins', 'setPluginEnabled', [
-      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
-          extra: {'pluginId': pluginId, 'enabled': enabled})
+      _ws(
+        workspacePath: workspacePath,
+        workspaceIdentity: workspaceIdentity,
+        extra: {'pluginId': pluginId, 'enabled': enabled},
+      ),
     ]);
   }
 
@@ -2467,7 +2541,7 @@ class RelayClient {
     String? workspaceIdentity,
   }) async {
     return _mapCall('zcode-agent', 'getPluginsOverview', [
-      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity)
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity),
     ]);
   }
 
@@ -2477,7 +2551,7 @@ class RelayClient {
     String? workspaceIdentity,
   }) async {
     return _mapCall('zcode-agent', 'listPlugins', [
-      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity)
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity),
     ]);
   }
 
@@ -2488,7 +2562,7 @@ class RelayClient {
     String? workspaceIdentity,
   }) async {
     return _mapCall('zcode-agent', 'getPluginReferenceCatalog', [
-      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity)
+      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity),
     ]);
   }
 
@@ -2500,8 +2574,11 @@ class RelayClient {
     String? workspaceIdentity,
   }) async {
     return _mapCall('zcode-agent', 'describePlugin', [
-      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
-          extra: {'marketplace': marketplace, 'pluginName': pluginName})
+      _ws(
+        workspacePath: workspacePath,
+        workspaceIdentity: workspaceIdentity,
+        extra: {'marketplace': marketplace, 'pluginName': pluginName},
+      ),
     ]);
   }
 
@@ -2515,13 +2592,16 @@ class RelayClient {
     String? workspaceIdentity,
   }) async {
     return _mapCall('zcode-agent', 'installPlugin', [
-      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
-          extra: {
-        'pluginName': pluginName,
-        'marketplace': marketplace,
-        if (scope != null) 'scope': scope,
-        if (operationId != null) 'operationId': operationId,
-      })
+      _ws(
+        workspacePath: workspacePath,
+        workspaceIdentity: workspaceIdentity,
+        extra: {
+          'pluginName': pluginName,
+          'marketplace': marketplace,
+          if (scope != null) 'scope': scope,
+          if (operationId != null) 'operationId': operationId,
+        },
+      ),
     ]);
   }
 
@@ -2535,35 +2615,39 @@ class RelayClient {
     String? workspaceIdentity,
   }) async {
     return _mapCall('zcode-agent', 'uninstallPlugin', [
-      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
-          extra: {
-        if (pluginId != null) 'pluginId': pluginId,
-        if (pluginName != null) 'pluginName': pluginName,
-        if (marketplace != null) 'marketplace': marketplace,
-        'removeCache': removeCache,
-      })
+      _ws(
+        workspacePath: workspacePath,
+        workspaceIdentity: workspaceIdentity,
+        extra: {
+          if (pluginId != null) 'pluginId': pluginId,
+          if (pluginName != null) 'pluginName': pluginName,
+          if (marketplace != null) 'marketplace': marketplace,
+          'removeCache': removeCache,
+        },
+      ),
     ]);
   }
 
   /// 更新插件 — zcode-agent/updatePlugin
   Future<Map<String, dynamic>> updatePlugin({required String pluginId}) async {
     return _mapCall('zcode-agent', 'updatePlugin', [
-      {'pluginId': pluginId}
+      {'pluginId': pluginId},
     ]);
   }
 
   /// 取消插件操作 — zcode-agent/cancelPluginOperation
   Future<void> cancelPluginOperation({required String operationId}) async {
     await _rpcCall('zcode-agent', 'cancelPluginOperation', [
-      {'operationId': operationId}
+      {'operationId': operationId},
     ]);
   }
 
   /// 恢复内置插件 — zcode-agent/restoreBuiltinPlugin
-  Future<Map<String, dynamic>> restoreBuiltinPlugin(
-      {required String pluginId}) async {
+  Future<Map<String, dynamic>> restoreBuiltinPlugin({
+    required String pluginId,
+  }) async {
     return _mapCall('zcode-agent', 'restoreBuiltinPlugin', [
-      {'pluginId': pluginId}
+      {'pluginId': pluginId},
     ]);
   }
 
@@ -2574,8 +2658,11 @@ class RelayClient {
     String? workspaceIdentity,
   }) async {
     return _mapCall('zcode-agent', 'addPluginMarketplace', [
-      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
-          extra: {'source': source})
+      _ws(
+        workspacePath: workspacePath,
+        workspaceIdentity: workspaceIdentity,
+        extra: {'source': source},
+      ),
     ]);
   }
 
@@ -2586,8 +2673,11 @@ class RelayClient {
     String? workspaceIdentity,
   }) async {
     return _mapCall('zcode-agent', 'removePluginMarketplace', [
-      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
-          extra: {'marketplace': marketplace})
+      _ws(
+        workspacePath: workspacePath,
+        workspaceIdentity: workspaceIdentity,
+        extra: {'marketplace': marketplace},
+      ),
     ]);
   }
 
@@ -2598,8 +2688,11 @@ class RelayClient {
     String? workspaceIdentity,
   }) async {
     return _mapCall('zcode-agent', 'updatePluginMarketplace', [
-      _ws(workspacePath: workspacePath, workspaceIdentity: workspaceIdentity,
-          extra: {if (marketplace != null) 'marketplace': marketplace})
+      _ws(
+        workspacePath: workspacePath,
+        workspaceIdentity: workspaceIdentity,
+        extra: {if (marketplace != null) 'marketplace': marketplace},
+      ),
     ]);
   }
 

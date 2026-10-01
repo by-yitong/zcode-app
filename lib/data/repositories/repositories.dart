@@ -91,7 +91,9 @@ class AuthRepository {
         final part = h.split(';').first.trim();
         if (part.isNotEmpty) cookies.add(part);
       }
-      appLog.d('[Auth] _fetchCookie: HTTP ${res.statusCode}, set-cookie ${cookies.length} 条');
+      appLog.d(
+        '[Auth] _fetchCookie: HTTP ${res.statusCode}, set-cookie ${cookies.length} 条',
+      );
       return cookies.join('; ');
     } finally {
       client.close(force: true);
@@ -120,8 +122,10 @@ class AuthRepository {
     final idx = conns.indexWhere((c) => c.id == fresh.id);
     if (idx >= 0) {
       // 保留用户改过的 label, 更新 URL 与时间
-      conns[idx] = conns[idx]
-          .copyWith(loginUrl: fresh.loginUrl, lastUsedAt: DateTime.now());
+      conns[idx] = conns[idx].copyWith(
+        loginUrl: fresh.loginUrl,
+        lastUsedAt: DateTime.now(),
+      );
     } else {
       conns.insert(0, fresh);
     }
@@ -130,8 +134,10 @@ class AuthRepository {
 
   Future<void> deleteConnection(String id) async {
     final conns = await _storage.getConnections();
-    await _storage
-        .saveConnections([for (final c in conns) if (c.id != id) c]);
+    await _storage.saveConnections([
+      for (final c in conns)
+        if (c.id != id) c,
+    ]);
   }
 
   Future<void> renameConnection(String id, String label) async {

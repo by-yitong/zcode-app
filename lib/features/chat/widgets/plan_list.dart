@@ -9,11 +9,7 @@ class ErrorBanner extends StatelessWidget {
   final ThemeData theme;
   final VoidCallback? onRetry;
 
-  const ErrorBanner({
-    required this.message,
-    required this.theme,
-    this.onRetry,
-  });
+  const ErrorBanner({required this.message, required this.theme, this.onRetry});
 
   @override
   Widget build(BuildContext context) {

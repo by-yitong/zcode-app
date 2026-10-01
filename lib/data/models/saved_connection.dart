@@ -41,36 +41,35 @@ class SavedConnection {
     String? label,
     DateTime? lastUsedAt,
     String? loginUrl,
-  }) =>
-      SavedConnection(
-        id: id,
-        label: label ?? this.label,
-        loginUrl: loginUrl ?? this.loginUrl,
-        mid: mid,
-        name: name,
-        createdAt: createdAt,
-        lastUsedAt: lastUsedAt ?? this.lastUsedAt,
-      );
+  }) => SavedConnection(
+    id: id,
+    label: label ?? this.label,
+    loginUrl: loginUrl ?? this.loginUrl,
+    mid: mid,
+    name: name,
+    createdAt: createdAt,
+    lastUsedAt: lastUsedAt ?? this.lastUsedAt,
+  );
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'label': label,
-        'loginUrl': loginUrl,
-        'mid': mid,
-        'name': name,
-        'createdAt': createdAt.toIso8601String(),
-        'lastUsedAt': lastUsedAt.toIso8601String(),
-      };
+    'id': id,
+    'label': label,
+    'loginUrl': loginUrl,
+    'mid': mid,
+    'name': name,
+    'createdAt': createdAt.toIso8601String(),
+    'lastUsedAt': lastUsedAt.toIso8601String(),
+  };
 
   static SavedConnection fromJson(Map<String, dynamic> j) => SavedConnection(
-        id: (j['id'] ?? '').toString(),
-        label: (j['label'] ?? j['name'] ?? '未知设备').toString(),
-        loginUrl: (j['loginUrl'] ?? '').toString(),
-        mid: (j['mid'] ?? '').toString(),
-        name: (j['name'] ?? '').toString(),
-        createdAt: DateTime.tryParse((j['createdAt'] ?? '').toString()) ??
-            DateTime.now(),
-        lastUsedAt: DateTime.tryParse((j['lastUsedAt'] ?? '').toString()) ??
-            DateTime.now(),
-      );
+    id: (j['id'] ?? '').toString(),
+    label: (j['label'] ?? j['name'] ?? '未知设备').toString(),
+    loginUrl: (j['loginUrl'] ?? '').toString(),
+    mid: (j['mid'] ?? '').toString(),
+    name: (j['name'] ?? '').toString(),
+    createdAt:
+        DateTime.tryParse((j['createdAt'] ?? '').toString()) ?? DateTime.now(),
+    lastUsedAt:
+        DateTime.tryParse((j['lastUsedAt'] ?? '').toString()) ?? DateTime.now(),
+  );
 }

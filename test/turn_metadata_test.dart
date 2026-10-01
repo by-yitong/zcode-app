@@ -75,8 +75,7 @@ void main() {
         toolName: 'Read',
         status: 'success',
       );
-      expect(streaming.isRunning, isTrue,
-          reason: '工具参数流式写入中不应判定为完成');
+      expect(streaming.isRunning, isTrue, reason: '工具参数流式写入中不应判定为完成');
       expect(pending.isRunning, isTrue, reason: '等待用户批准不应判定为完成');
       expect(done.isRunning, isFalse);
     });
@@ -93,5 +92,4 @@ void main() {
       expect(row.isPendingApproval, isTrue);
     });
   });
-
 }

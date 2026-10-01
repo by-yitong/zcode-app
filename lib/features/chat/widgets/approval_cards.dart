@@ -465,11 +465,7 @@ class QuestionPendingBar extends StatelessWidget {
           ),
           child: Row(
             children: [
-              const Icon(
-                Icons.help_outline,
-                size: 18,
-                color: AppColors.accent,
-              ),
+              const Icon(Icons.help_outline, size: 18, color: AppColors.accent),
               const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: Text(

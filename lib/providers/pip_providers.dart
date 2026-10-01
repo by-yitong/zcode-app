@@ -211,12 +211,15 @@ class PipPushScheduler {
     }
   }
 
-  /// 行数设置变化: resize 窗口 + 立即重推
+  /// 行数设置变化: resize 窗口 + 立即重推。
+  /// 注意: 插件 resizeOverlay 原生侧对入参做 dp→px 换算 (与 showOverlay 的
+  /// 原始 px 语义不一致), 必须传逻辑 dp, 否则窗口被放大 devicePixelRatio 倍。
   Future<void> onLinesChanged(int lines) async {
     if (!_ref.read(pipOverlayActiveProvider)) return;
+    final widthDp = (_windowWidthPx / _devicePixelRatio).round();
     await _ref
         .read(pipServiceProvider)
-        .resize(_windowWidthPx, pipWindowHeightPx(lines, _devicePixelRatio));
+        .resize(widthDp, pipWindowHeight(lines).round());
     await pushNow();
   }
 

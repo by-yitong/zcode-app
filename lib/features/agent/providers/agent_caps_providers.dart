@@ -38,8 +38,7 @@ class NoWorkspaceException implements Exception {
 // 技能
 // ================================================================
 
-class SkillsCapsNotifier
-    extends StateNotifier<AsyncValue<List<SkillEntry>>> {
+class SkillsCapsNotifier extends StateNotifier<AsyncValue<List<SkillEntry>>> {
   SkillsCapsNotifier(this._ref) : super(const AsyncValue.loading()) {
     if (_ref.read(relayClientProvider) != null) load();
   }
@@ -50,13 +49,15 @@ class SkillsCapsNotifier
     try {
       final (client, path, identity) = _ctx(_ref);
       final resp = await client.getSkills(
-          workspacePath: path, workspaceIdentity: identity);
+        workspacePath: path,
+        workspaceIdentity: identity,
+      );
       final raw = resp['skills'];
       final list = raw is List
           ? raw
-              .whereType<Map>()
-              .map((m) => SkillEntry.fromJson(Map<String, dynamic>.from(m)))
-              .toList()
+                .whereType<Map>()
+                .map((m) => SkillEntry.fromJson(Map<String, dynamic>.from(m)))
+                .toList()
           : <SkillEntry>[];
       state = AsyncValue.data(list);
     } catch (e, st) {
@@ -108,13 +109,19 @@ class SkillsCapsNotifier
     await load();
   }
 
-  Future<void> _mutate(SkillEntry skill, bool enabled, Future<void> Function(
-      RelayClient, String, String?) action) async {
+  Future<void> _mutate(
+    SkillEntry skill,
+    bool enabled,
+    Future<void> Function(RelayClient, String, String?) action,
+  ) async {
     // 乐观更新
     state.whenData((list) {
       state = AsyncValue.data([
         for (final s in list)
-          if (identical(s, skill) || s.id == skill.id) s.copyWith(enabled: enabled) else s
+          if (identical(s, skill) || s.id == skill.id)
+            s.copyWith(enabled: enabled)
+          else
+            s,
       ]);
     });
     try {
@@ -131,7 +138,8 @@ class SkillsCapsNotifier
 
 final skillsCapsProvider =
     StateNotifierProvider<SkillsCapsNotifier, AsyncValue<List<SkillEntry>>>(
-        (ref) => SkillsCapsNotifier(ref));
+      (ref) => SkillsCapsNotifier(ref),
+    );
 
 // ================================================================
 // 子智能体
@@ -148,13 +156,17 @@ class SubagentsNotifier extends StateNotifier<AsyncValue<List<SubagentEntry>>> {
     try {
       final (client, path, identity) = _ctx(_ref);
       final resp = await client.listSubagents(
-          workspacePath: path, workspaceIdentity: identity);
+        workspacePath: path,
+        workspaceIdentity: identity,
+      );
       final raw = resp['agents'];
       final list = raw is List
           ? raw
-              .whereType<Map>()
-              .map((m) => SubagentEntry.fromJson(Map<String, dynamic>.from(m)))
-              .toList()
+                .whereType<Map>()
+                .map(
+                  (m) => SubagentEntry.fromJson(Map<String, dynamic>.from(m)),
+                )
+                .toList()
           : <SubagentEntry>[];
       state = AsyncValue.data(list);
     } catch (e, st) {
@@ -168,17 +180,29 @@ class SubagentsNotifier extends StateNotifier<AsyncValue<List<SubagentEntry>>> {
         for (final a in list)
           if (a.id == agent.id)
             SubagentEntry(
-              id: a.id, name: a.name, description: a.description,
-              systemPrompt: a.systemPrompt, color: a.color, model: a.model,
-              thoughtLevel: a.thoughtLevel, tools: a.tools,
-              disallowedTools: a.disallowedTools, skills: a.skills,
-              permissionMode: a.permissionMode, maxTurns: a.maxTurns,
-              background: a.background, injectAgentsMd: a.injectAgentsMd,
-              mcpServers: a.mcpServers, path: a.path, scope: a.scope,
-              source: a.source, enabled: enabled, readOnly: a.readOnly,
+              id: a.id,
+              name: a.name,
+              description: a.description,
+              systemPrompt: a.systemPrompt,
+              color: a.color,
+              model: a.model,
+              thoughtLevel: a.thoughtLevel,
+              tools: a.tools,
+              disallowedTools: a.disallowedTools,
+              skills: a.skills,
+              permissionMode: a.permissionMode,
+              maxTurns: a.maxTurns,
+              background: a.background,
+              injectAgentsMd: a.injectAgentsMd,
+              mcpServers: a.mcpServers,
+              path: a.path,
+              scope: a.scope,
+              source: a.source,
+              enabled: enabled,
+              readOnly: a.readOnly,
             )
           else
-            a
+            a,
       ]);
     });
     try {
@@ -194,10 +218,16 @@ class SubagentsNotifier extends StateNotifier<AsyncValue<List<SubagentEntry>>> {
 
   /// 内置 agent 的模型/思考级别覆盖; model=null 清除覆盖
   Future<void> setBuiltInOverride(
-      String agentName, String? model, String? thoughtLevel) async {
+    String agentName,
+    String? model,
+    String? thoughtLevel,
+  ) async {
     final (client, _, _) = _ctx(_ref);
     await client.setSubagentBuiltInModelOverride(
-        agentName: agentName, model: model, thoughtLevel: thoughtLevel);
+      agentName: agentName,
+      model: model,
+      thoughtLevel: thoughtLevel,
+    );
     await load();
   }
 
@@ -210,21 +240,24 @@ class SubagentsNotifier extends StateNotifier<AsyncValue<List<SubagentEntry>>> {
   Future<void> update(SubagentEntry agent, Map<String, dynamic> config) async {
     final (client, _, _) = _ctx(_ref);
     await client.updateSubagent(
-        agentId: agent.id, config: config, oldFilePath: agent.path);
+      agentId: agent.id,
+      config: config,
+      oldFilePath: agent.path,
+    );
     await load();
   }
 
   Future<void> delete(SubagentEntry agent) async {
     final (client, _, _) = _ctx(_ref);
-    await client.deleteSubagent(
-        agentId: agent.id, filePath: agent.path ?? '');
+    await client.deleteSubagent(agentId: agent.id, filePath: agent.path ?? '');
     await load();
   }
 }
 
 final subagentsProvider =
     StateNotifierProvider<SubagentsNotifier, AsyncValue<List<SubagentEntry>>>(
-        (ref) => SubagentsNotifier(ref));
+      (ref) => SubagentsNotifier(ref),
+    );
 
 // ================================================================
 // 命令
@@ -241,14 +274,18 @@ class CommandsNotifier extends StateNotifier<AsyncValue<List<CommandEntry>>> {
     try {
       final (client, path, identity) = _ctx(_ref);
       final resp = await client.listCommands(
-          workspacePath: path, workspaceIdentity: identity);
+        workspacePath: path,
+        workspaceIdentity: identity,
+      );
       final merged = <CommandEntry>[];
       for (final key in ['commands', 'userCommands', 'pluginCommands']) {
         final raw = resp[key];
         if (raw is List) {
-          merged.addAll(raw
-              .whereType<Map>()
-              .map((m) => CommandEntry.fromJson(Map<String, dynamic>.from(m))));
+          merged.addAll(
+            raw.whereType<Map>().map(
+              (m) => CommandEntry.fromJson(Map<String, dynamic>.from(m)),
+            ),
+          );
         }
       }
       state = AsyncValue.data(merged);
@@ -266,9 +303,10 @@ class CommandsNotifier extends StateNotifier<AsyncValue<List<CommandEntry>>> {
   Future<void> update(CommandEntry cmd, Map<String, dynamic> config) async {
     final (client, _, path) = _ctx(_ref);
     await client.updateCommandFile(
-        config: config,
-        oldFilePath: cmd.filePath ?? '',
-        workspacePath: path);
+      config: config,
+      oldFilePath: cmd.filePath ?? '',
+      workspacePath: path,
+    );
     await load();
   }
 
@@ -282,12 +320,15 @@ class CommandsNotifier extends StateNotifier<AsyncValue<List<CommandEntry>>> {
     state.whenData((list) {
       state = AsyncValue.data([
         for (final c in list)
-          if (c.id == cmd.id) c.copyWith(enabled: enabled) else c
+          if (c.id == cmd.id) c.copyWith(enabled: enabled) else c,
       ]);
     });
     try {
       final (client, _, _) = _ctx(_ref);
-      await client.setCommandEnabled(filePath: cmd.filePath ?? '', enabled: enabled);
+      await client.setCommandEnabled(
+        filePath: cmd.filePath ?? '',
+        enabled: enabled,
+      );
     } catch (e) {
       appLog.w('[AgentCaps] 命令启停失败: $e');
       rethrow;
@@ -297,7 +338,8 @@ class CommandsNotifier extends StateNotifier<AsyncValue<List<CommandEntry>>> {
 
 final commandsProvider =
     StateNotifierProvider<CommandsNotifier, AsyncValue<List<CommandEntry>>>(
-        (ref) => CommandsNotifier(ref));
+      (ref) => CommandsNotifier(ref),
+    );
 
 // ================================================================
 // 钩子
@@ -314,13 +356,15 @@ class HooksNotifier extends StateNotifier<AsyncValue<List<HookEntry>>> {
     try {
       final (client, path, identity) = _ctx(_ref);
       final resp = await client.loadHooks(
-          workspacePath: path, workspaceIdentity: identity);
+        workspacePath: path,
+        workspaceIdentity: identity,
+      );
       final raw = resp['hooks'];
       final list = raw is List
           ? raw
-              .whereType<Map>()
-              .map((m) => HookEntry.fromJson(Map<String, dynamic>.from(m)))
-              .toList()
+                .whereType<Map>()
+                .map((m) => HookEntry.fromJson(Map<String, dynamic>.from(m)))
+                .toList()
           : <HookEntry>[];
       state = AsyncValue.data(list);
     } catch (e, st) {
@@ -343,7 +387,7 @@ class HooksNotifier extends StateNotifier<AsyncValue<List<HookEntry>>> {
     final list = state.valueOrNull ?? const <HookEntry>[];
     await saveAll([
       for (final h in list)
-        if (h.id == hook.id) h.copyWith(enabled: enabled) else h
+        if (h.id == hook.id) h.copyWith(enabled: enabled) else h,
     ]);
   }
 
@@ -365,13 +409,17 @@ class HooksNotifier extends StateNotifier<AsyncValue<List<HookEntry>>> {
 
   Future<void> delete(HookEntry hook) async {
     final list = state.valueOrNull ?? const <HookEntry>[];
-    await saveAll([for (final h in list) if (h.id != hook.id) h]);
+    await saveAll([
+      for (final h in list)
+        if (h.id != hook.id) h,
+    ]);
   }
 }
 
 final hooksProvider =
     StateNotifierProvider<HooksNotifier, AsyncValue<List<HookEntry>>>(
-        (ref) => HooksNotifier(ref));
+      (ref) => HooksNotifier(ref),
+    );
 
 // ================================================================
 // MCP
@@ -394,19 +442,25 @@ class McpNotifier extends StateNotifier<AsyncValue<McpState>> {
     try {
       final (client, path, identity) = _ctx(_ref);
       final resp = await client.loadMcpServers(
-          workspacePath: path, workspaceIdentity: identity);
+        workspacePath: path,
+        workspaceIdentity: identity,
+      );
       final raw = resp['servers'];
       final servers = raw is List
           ? raw
-              .whereType<Map>()
-              .map((m) => McpServerEntry.fromJson(Map<String, dynamic>.from(m)))
-              .toList()
+                .whereType<Map>()
+                .map(
+                  (m) => McpServerEntry.fromJson(Map<String, dynamic>.from(m)),
+                )
+                .toList()
           : <McpServerEntry>[];
       var statuses = <String, McpServerStatus>{};
       if (withStatus && servers.isNotEmpty) {
         try {
           final st = await client.listMcpServerStatuses(
-              workspacePath: path, workspaceIdentity: identity);
+            workspacePath: path,
+            workspaceIdentity: identity,
+          );
           statuses = _parseStatuses(st);
         } catch (e) {
           appLog.i('[AgentCaps] MCP 状态获取失败(忽略): $e');
@@ -435,7 +489,8 @@ class McpNotifier extends StateNotifier<AsyncValue<McpState>> {
           v.forEach((name, st) {
             if (st is Map) {
               out[name.toString()] = McpServerStatus.fromJson(
-                  Map<String, dynamic>.from(st));
+                Map<String, dynamic>.from(st),
+              );
             }
           });
           return out;
@@ -477,13 +532,15 @@ class McpNotifier extends StateNotifier<AsyncValue<McpState>> {
   Future<void> setEnabled(McpServerEntry server, bool enabled) async {
     // 乐观
     state.whenData((s) {
-      state = AsyncValue.data(McpState(
-        servers: [
-          for (final e in s.servers)
-            if (e.name == server.name) e.copyWith(enabled: enabled) else e
-        ],
-        statuses: s.statuses,
-      ));
+      state = AsyncValue.data(
+        McpState(
+          servers: [
+            for (final e in s.servers)
+              if (e.name == server.name) e.copyWith(enabled: enabled) else e,
+          ],
+          statuses: s.statuses,
+        ),
+      );
     });
     try {
       final (client, _, _) = _ctx(_ref);
@@ -501,7 +558,8 @@ class McpNotifier extends StateNotifier<AsyncValue<McpState>> {
 }
 
 final mcpProvider = StateNotifierProvider<McpNotifier, AsyncValue<McpState>>(
-    (ref) => McpNotifier(ref));
+  (ref) => McpNotifier(ref),
+);
 
 // ================================================================
 // 插件 (overview schema: installedPlugins / availablePlugins / marketplaces)
@@ -531,39 +589,44 @@ class PluginsNotifier extends StateNotifier<AsyncValue<PluginsState>> {
       // 已安装以 listPlugins 为准 (含官方内置 seed 插件;
       // overview 的 installedPlugins 只登记市场安装, 会漏)
       final listResp = await client.listPlugins(
-          workspacePath: path, workspaceIdentity: identity);
-      final installed =
-          _list(listResp, 'plugins', PluginEntry.fromJson);
+        workspacePath: path,
+        workspaceIdentity: identity,
+      );
+      final installed = _list(listResp, 'plugins', PluginEntry.fromJson);
 
       // 市场数据用 overview; 失败不阻塞已安装展示
       Map<String, dynamic>? overview;
       try {
         overview = await client.getPluginsOverview(
-            workspacePath: path, workspaceIdentity: identity);
+          workspacePath: path,
+          workspaceIdentity: identity,
+        );
       } catch (e) {
         appLog.i('[AgentCaps] overview 失败(仅市场数据受影响): $e');
       }
       final ovState = _parse(overview ?? {});
 
       // 用 overview 的同 id 条目补 icon/分类/更新状态
-      final ovInstalled = {
-        for (final p in ovState.installed) p.id: p
-      };
-      state = AsyncValue.data(PluginsState(
-        installed: [
-          for (final p in installed)
-            ovInstalled[p.id]?.mergeOverview(p) ?? p
-        ],
-        available: ovState.available,
-        marketplaces: ovState.marketplaces,
-      ));
+      final ovInstalled = {for (final p in ovState.installed) p.id: p};
+      state = AsyncValue.data(
+        PluginsState(
+          installed: [
+            for (final p in installed) ovInstalled[p.id]?.mergeOverview(p) ?? p,
+          ],
+          available: ovState.available,
+          marketplaces: ovState.marketplaces,
+        ),
+      );
     } catch (e, st) {
       state = AsyncValue.error(e, st);
     }
   }
 
-  static List<T> _list<T>(Map<String, dynamic> m, String key,
-      T Function(Map<String, dynamic>) fromJson) {
+  static List<T> _list<T>(
+    Map<String, dynamic> m,
+    String key,
+    T Function(Map<String, dynamic>) fromJson,
+  ) {
     final v = m[key];
     if (v is! List) return const [];
     return v
@@ -590,7 +653,9 @@ class PluginsNotifier extends StateNotifier<AsyncValue<PluginsState>> {
     try {
       final (client, path, identity) = _ctx(_ref);
       final resp = await client.listPlugins(
-          workspacePath: path, workspaceIdentity: identity);
+        workspacePath: path,
+        workspaceIdentity: identity,
+      );
       final installed = _list(resp, 'plugins', PluginEntry.fromJson);
       state = AsyncValue.data(PluginsState(installed: installed));
     } catch (e, st) {
@@ -601,8 +666,11 @@ class PluginsNotifier extends StateNotifier<AsyncValue<PluginsState>> {
   Future<void> setEnabled(PluginEntry plugin, bool enabled) async {
     final (client, path, identity) = _ctx(_ref);
     await client.setPluginEnabled(
-        workspacePath: path, workspaceIdentity: identity,
-        pluginId: plugin.id, enabled: enabled);
+      workspacePath: path,
+      workspaceIdentity: identity,
+      pluginId: plugin.id,
+      enabled: enabled,
+    );
     await load();
   }
 
@@ -634,7 +702,10 @@ class PluginsNotifier extends StateNotifier<AsyncValue<PluginsState>> {
   Future<void> addMarketplace(String source) async {
     final (client, path, identity) = _ctx(_ref);
     await client.addPluginMarketplace(
-        workspacePath: path, workspaceIdentity: identity, source: source);
+      workspacePath: path,
+      workspaceIdentity: identity,
+      source: source,
+    );
     await load();
   }
 
@@ -673,7 +744,8 @@ class PluginsNotifier extends StateNotifier<AsyncValue<PluginsState>> {
 
 final pluginsProvider =
     StateNotifierProvider<PluginsNotifier, AsyncValue<PluginsState>>(
-        (ref) => PluginsNotifier(ref));
+      (ref) => PluginsNotifier(ref),
+    );
 
 // ================================================================
 // 外部 Agent 导入
@@ -721,13 +793,16 @@ class ImportNotifier extends StateNotifier<AsyncValue<List<ImportAgent>>> {
       final sourceScope = item['sourceScope']?.toString();
       if (agent.isEmpty || category.isEmpty || resourcePath.isEmpty) continue;
       final gk = '$agent|$category|${sourceScope ?? ''}';
-      final g = groups.putIfAbsent(gk, () => {
-            'agent': agent,
-            'category': category,
-            if (sourceScope != null) 'sourceScope': sourceScope,
-            'targetScope': targetScope,
-            'importMode': importMode,
-          });
+      final g = groups.putIfAbsent(
+        gk,
+        () => {
+          'agent': agent,
+          'category': category,
+          if (sourceScope != null) 'sourceScope': sourceScope,
+          'targetScope': targetScope,
+          'importMode': importMode,
+        },
+      );
       final listKey = switch (category) {
         'skills' => 'skillPaths',
         'commands' => 'commandPaths',
@@ -748,4 +823,5 @@ class ImportNotifier extends StateNotifier<AsyncValue<List<ImportAgent>>> {
 
 final importProvider =
     StateNotifierProvider<ImportNotifier, AsyncValue<List<ImportAgent>>>(
-        (ref) => ImportNotifier(ref));
+      (ref) => ImportNotifier(ref),
+    );

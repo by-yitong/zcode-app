@@ -49,7 +49,11 @@ class CommandsTabState extends ConsumerState<CommandsTab>
       emptySubtitle: '斜杠命令可在对话中快速调用',
       header: Padding(
         padding: const EdgeInsets.fromLTRB(
-            AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, AppSpacing.sm),
+          AppSpacing.lg,
+          AppSpacing.sm,
+          AppSpacing.lg,
+          AppSpacing.sm,
+        ),
         child: TextField(
           controller: _search,
           onChanged: (v) => setState(() => _query = v),
@@ -57,14 +61,18 @@ class CommandsTabState extends ConsumerState<CommandsTab>
           cursorColor: AppColors.accent,
           decoration: InputDecoration(
             hintText: '搜索命令…',
-            prefixIcon: Icon(Icons.search_rounded,
-                size: 20, color: cs.onSurfaceVariant),
+            prefixIcon: Icon(
+              Icons.search_rounded,
+              size: 20,
+              color: cs.onSurfaceVariant,
+            ),
             isDense: true,
             filled: true,
             fillColor: cs.surfaceContainerHigh,
             border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(AppRadius.lg),
-                borderSide: BorderSide.none),
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+              borderSide: BorderSide.none,
+            ),
           ),
         ),
       ),
@@ -73,45 +81,56 @@ class CommandsTabState extends ConsumerState<CommandsTab>
         var filtered = q.isEmpty
             ? list
             : list
-                .where((c) =>
-                    c.name.toLowerCase().contains(q) ||
-                    c.description.toLowerCase().contains(q))
-                .toList();
+                  .where(
+                    (c) =>
+                        c.name.toLowerCase().contains(q) ||
+                        c.description.toLowerCase().contains(q),
+                  )
+                  .toList();
         final local = filtered.where((c) => !c.isPlugin).toList();
         final plugin = filtered.where((c) => c.isPlugin).toList();
         return RefreshIndicator(
           onRefresh: () => ref.read(commandsProvider.notifier).load(),
           child: ListView(
             padding: const EdgeInsets.fromLTRB(
-              AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.xxl),
+              AppSpacing.lg,
+              0,
+              AppSpacing.lg,
+              AppSpacing.xxl,
+            ),
             children: [
-                  if (local.isNotEmpty) ...[
-                    AppSectionHeader(
-                      title: '本地命令',
-                      action: TextButton.icon(
-                        onPressed: () => capsSheet(context,
-                            child: ImportSheet(
-                                category: 'commands',
-                                onImported: () => ref
-                                    .read(commandsProvider.notifier)
-                                    .load())),
-                        icon: const Icon(Icons.download_rounded, size: 16),
-                        label: const Text('导入'),
-                        style: TextButton.styleFrom(
-                            visualDensity: VisualDensity.compact),
+              if (local.isNotEmpty) ...[
+                AppSectionHeader(
+                  title: '本地命令',
+                  action: TextButton.icon(
+                    onPressed: () => capsSheet(
+                      context,
+                      child: ImportSheet(
+                        category: 'commands',
+                        onImported: () =>
+                            ref.read(commandsProvider.notifier).load(),
                       ),
                     ),
-                    AppTileGroup(
-                        tiles: [for (final c in local) _tile(theme, cs, c)]),
-                  ],
-                  if (plugin.isNotEmpty) ...[
-                    const SizedBox(height: AppSpacing.md),
-                    const AppSectionHeader(title: '插件提供'),
-                    AppTileGroup(
-                        tiles: [for (final c in plugin) _tile(theme, cs, c)]),
-                  ],
+                    icon: const Icon(Icons.download_rounded, size: 16),
+                    label: const Text('导入'),
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                ),
+                AppTileGroup(
+                  tiles: [for (final c in local) _tile(theme, cs, c)],
+                ),
               ],
-            ),
+              if (plugin.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.md),
+                const AppSectionHeader(title: '插件提供'),
+                AppTileGroup(
+                  tiles: [for (final c in plugin) _tile(theme, cs, c)],
+                ),
+              ],
+            ],
+          ),
         );
       },
     );
@@ -215,9 +234,11 @@ class _CommandEditorState extends ConsumerState<_CommandEditor> {
   }
 
   Future<void> _delete() async {
-    final ok = await capsConfirm(context,
-        title: '删除命令',
-        message: '确定删除「/${widget.existing!.name}」？');
+    final ok = await capsConfirm(
+      context,
+      title: '删除命令',
+      message: '确定删除「/${widget.existing!.name}」？',
+    );
     if (!ok) return;
     try {
       await ref.read(commandsProvider.notifier).delete(widget.existing!);
@@ -229,7 +250,8 @@ class _CommandEditorState extends ConsumerState<_CommandEditor> {
 
   void _snack(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating));
+      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
+    );
   }
 
   @override
@@ -241,74 +263,96 @@ class _CommandEditorState extends ConsumerState<_CommandEditor> {
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(
-          AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
+        AppSpacing.lg,
+        0,
+        AppSpacing.lg,
+        AppSpacing.lg,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            Expanded(
-              child: Text(isEdit ? '编辑命令' : '新建命令',
-                  style: theme.textTheme.titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w600)),
-            ),
-            if (isPlugin) const CapsBadge('插件 · 只读'),
-          ]),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  isEdit ? '编辑命令' : '新建命令',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              if (isPlugin) const CapsBadge('插件 · 只读'),
+            ],
+          ),
           const SizedBox(height: AppSpacing.md),
           CapsField(
-              controller: _name,
-              label: '名称',
-              hint: '如 commit (输入 /commit 调用)'),
+            controller: _name,
+            label: '名称',
+            hint: '如 commit (输入 /commit 调用)',
+          ),
           const SizedBox(height: AppSpacing.md),
           CapsField(controller: _desc, label: '描述 (可选)'),
           const SizedBox(height: AppSpacing.md),
           CapsField(controller: _hint, label: '参数提示 (可选)', hint: '如 [消息]'),
           const SizedBox(height: AppSpacing.md),
           CapsField(
-              controller: _prompt,
-              label: '命令内容 (Prompt 模板)',
-              hint: r'发送给 AI 的提示词, 可用 $1 $2 引用参数',
-              maxLines: 8,
-              mono: true),
+            controller: _prompt,
+            label: '命令内容 (Prompt 模板)',
+            hint: r'发送给 AI 的提示词, 可用 $1 $2 引用参数',
+            maxLines: 8,
+            mono: true,
+          ),
           if (widget.existing?.filePath != null) ...[
             const SizedBox(height: AppSpacing.xs),
-            Text(widget.existing!.filePath!,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: AppText.mono(context,
-                    size: AppTextSizes.monoXs,
-                    color: cs.onSurfaceVariant.withValues(alpha: 0.6))),
+            Text(
+              widget.existing!.filePath!,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppText.mono(
+                context,
+                size: AppTextSizes.monoXs,
+                color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+              ),
+            ),
           ],
           const SizedBox(height: AppSpacing.md),
-          Row(children: [
-            if (isEdit && !isPlugin)
-              Expanded(
-                child: OutlinedButton.icon(
-                  style:
-                      OutlinedButton.styleFrom(foregroundColor: AppColors.danger),
-                  onPressed: _delete,
-                  icon: const Icon(Icons.delete_outline_rounded, size: 18),
-                  label: const Text('删除'),
+          Row(
+            children: [
+              if (isEdit && !isPlugin)
+                Expanded(
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.danger,
+                    ),
+                    onPressed: _delete,
+                    icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                    label: const Text('删除'),
+                  ),
                 ),
-              ),
-            if (isEdit && !isPlugin) const SizedBox(width: AppSpacing.md),
-            if (!isPlugin)
-              Expanded(
-                flex: 2,
-                child: FilledButton(
-                  onPressed: _saving ? null : _save,
-                  style:
-                      FilledButton.styleFrom(backgroundColor: AppColors.accent),
-                  child: _saving
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white))
-                      : const Text('保存'),
+              if (isEdit && !isPlugin) const SizedBox(width: AppSpacing.md),
+              if (!isPlugin)
+                Expanded(
+                  flex: 2,
+                  child: FilledButton(
+                    onPressed: _saving ? null : _save,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.accent,
+                    ),
+                    child: _saving
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text('保存'),
+                  ),
                 ),
-              ),
-          ]),
+            ],
+          ),
         ],
       ),
     );

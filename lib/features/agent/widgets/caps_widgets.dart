@@ -31,7 +31,8 @@ class CapsAsyncView<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return value.when(
-      loading: () => const Center(child: CircularProgressIndicator(strokeWidth: 2.5)),
+      loading: () =>
+          const Center(child: CircularProgressIndicator(strokeWidth: 2.5)),
       error: (e, _) => AppEmptyState(
         icon: Icons.cloud_off_rounded,
         title: '加载失败',
@@ -101,7 +102,11 @@ class CapsFilterBar extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.fromLTRB(
-          AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, AppSpacing.sm),
+        AppSpacing.lg,
+        AppSpacing.sm,
+        AppSpacing.lg,
+        AppSpacing.sm,
+      ),
       child: Column(
         children: [
           TextField(
@@ -113,14 +118,23 @@ class CapsFilterBar extends StatelessWidget {
             decoration: InputDecoration(
               hintText: '搜索…',
               hintStyle: TextStyle(
-                  fontSize: AppTextSizes.bodySm, color: cs.onSurfaceVariant),
-              prefixIcon: Icon(Icons.search_rounded,
-                  size: 20, color: cs.onSurfaceVariant),
-              prefixIconConstraints:
-                  const BoxConstraints(minWidth: 40, minHeight: 40),
+                fontSize: AppTextSizes.bodySm,
+                color: cs.onSurfaceVariant,
+              ),
+              prefixIcon: Icon(
+                Icons.search_rounded,
+                size: 20,
+                color: cs.onSurfaceVariant,
+              ),
+              prefixIconConstraints: const BoxConstraints(
+                minWidth: 40,
+                minHeight: 40,
+              ),
               isDense: true,
               contentPadding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.md, vertical: AppSpacing.sm + 2),
+                horizontal: AppSpacing.md,
+                vertical: AppSpacing.sm + 2,
+              ),
               filled: true,
               fillColor: cs.surfaceContainerHigh,
               border: OutlineInputBorder(
@@ -130,12 +144,14 @@ class CapsFilterBar extends StatelessWidget {
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(AppRadius.lg),
                 borderSide: BorderSide(
-                    color: cs.outlineVariant.withValues(alpha: 0.5)),
+                  color: cs.outlineVariant.withValues(alpha: 0.5),
+                ),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(AppRadius.lg),
-                borderSide:
-                    BorderSide(color: AppColors.accent.withValues(alpha: 0.5)),
+                borderSide: BorderSide(
+                  color: AppColors.accent.withValues(alpha: 0.5),
+                ),
               ),
             ),
           ),
@@ -162,14 +178,18 @@ class CapsFilterBar extends StatelessWidget {
     final selected = _normalize(filter) == value;
     final cs = Theme.of(context).colorScheme;
     return GestureDetector(
-      onTap: () => onFilter(value == 'enabled'
-          ? 'enabled'
-          : value == 'disabled'
-              ? 'disabled'
-              : null),
+      onTap: () => onFilter(
+        value == 'enabled'
+            ? 'enabled'
+            : value == 'disabled'
+            ? 'disabled'
+            : null,
+      ),
       child: Container(
         padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.md, vertical: 5),
+          horizontal: AppSpacing.md,
+          vertical: 5,
+        ),
         decoration: BoxDecoration(
           color: selected ? AppColors.accent : cs.surfaceContainerHigh,
           borderRadius: BorderRadius.circular(AppRadius.pill),
@@ -205,7 +225,9 @@ class CapsBadge extends StatelessWidget {
     final c = color ?? cs.onSurfaceVariant;
     return Container(
       padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.sm + 1, vertical: 2),
+        horizontal: AppSpacing.sm + 1,
+        vertical: 2,
+      ),
       decoration: BoxDecoration(
         color: c.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(AppRadius.xs),
@@ -260,7 +282,8 @@ Future<T?> capsSheet<T>(BuildContext context, {required Widget child}) {
     isScrollControlled: true,
     showDragHandle: true,
     constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.85),
+      maxHeight: MediaQuery.of(context).size.height * 0.85,
+    ),
     builder: (_) => SafeArea(top: false, child: child),
   );
 }
@@ -310,10 +333,13 @@ class CapsSwitchListTile extends StatelessWidget {
       dense: true,
       title: Text(title),
       subtitle: subtitle != null
-          ? Text(subtitle!,
+          ? Text(
+              subtitle!,
               style: TextStyle(
-                  fontSize: AppTextSizes.caption,
-                  color: cs.onSurfaceVariant))
+                fontSize: AppTextSizes.caption,
+                color: cs.onSurfaceVariant,
+              ),
+            )
           : null,
       value: value,
       onChanged: onChanged,
@@ -350,30 +376,39 @@ class CapsField extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label,
-            style: TextStyle(
-                fontSize: AppTextSizes.label,
-                fontWeight: FontWeight.w600,
-                color: cs.onSurfaceVariant)),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: AppTextSizes.label,
+            fontWeight: FontWeight.w600,
+            color: cs.onSurfaceVariant,
+          ),
+        ),
         const SizedBox(height: AppSpacing.xs + 2),
         TextField(
           controller: controller,
           maxLines: maxLines,
           style: mono
-              ? AppText.mono(context,
-                  size: AppTextSizes.monoSm, color: cs.onSurface)
-              : Theme.of(context)
-                  .textTheme
-                  .bodyMedium
-                  ?.copyWith(color: cs.onSurface),
+              ? AppText.mono(
+                  context,
+                  size: AppTextSizes.monoSm,
+                  color: cs.onSurface,
+                )
+              : Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: cs.onSurface),
           keyboardType: keyboardType,
           decoration: InputDecoration(
             hintText: hint,
             hintStyle: TextStyle(
-                fontSize: AppTextSizes.bodySm, color: cs.onSurfaceVariant),
+              fontSize: AppTextSizes.bodySm,
+              color: cs.onSurfaceVariant,
+            ),
             isDense: true,
             contentPadding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.md, vertical: AppSpacing.sm + 2),
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.sm + 2,
+            ),
             filled: true,
             fillColor: cs.surfaceContainerHigh,
             border: OutlineInputBorder(
@@ -383,12 +418,14 @@ class CapsField extends StatelessWidget {
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(AppRadius.md),
               borderSide: BorderSide(
-                  color: cs.outlineVariant.withValues(alpha: 0.5)),
+                color: cs.outlineVariant.withValues(alpha: 0.5),
+              ),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(AppRadius.md),
-              borderSide:
-                  BorderSide(color: AppColors.accent.withValues(alpha: 0.6)),
+              borderSide: BorderSide(
+                color: AppColors.accent.withValues(alpha: 0.6),
+              ),
             ),
           ),
         ),
@@ -397,14 +434,18 @@ class CapsField extends StatelessWidget {
   }
 }
 
-
 /// 插件图标盒 — emoji / 网络图片 / 首字母兜底
 class PluginIconBox extends StatelessWidget {
   final String? icon; // emoji 或 URL
   final String name;
   final double size;
 
-  const PluginIconBox({super.key, required this.icon, required this.name, this.size = 36});
+  const PluginIconBox({
+    super.key,
+    required this.icon,
+    required this.name,
+    this.size = 36,
+  });
 
   bool get _isUrl =>
       icon != null &&
@@ -432,26 +473,21 @@ class PluginIconBox extends StatelessWidget {
                 ),
               )
             : _isUrl
-                ? Image.network(
-                    icon!,
-                    width: size,
-                    height: size,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Text(
-                      name.isNotEmpty
-                          ? name.substring(0, 1).toUpperCase()
-                          : '?',
-                      style: TextStyle(
-                        fontSize: size * 0.42,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.accent,
-                      ),
-                    ),
-                  )
-                : Text(
-                    icon!,
-                    style: TextStyle(fontSize: size * 0.5),
+            ? Image.network(
+                icon!,
+                width: size,
+                height: size,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Text(
+                  name.isNotEmpty ? name.substring(0, 1).toUpperCase() : '?',
+                  style: TextStyle(
+                    fontSize: size * 0.42,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.accent,
                   ),
+                ),
+              )
+            : Text(icon!, style: TextStyle(fontSize: size * 0.5)),
       ),
     );
   }

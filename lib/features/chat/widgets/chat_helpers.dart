@@ -4,7 +4,6 @@ bool isSameDay(DateTime a, DateTime b) {
   return a.year == b.year && a.month == b.month && a.day == b.day;
 }
 
-
 bool isPlanTool(ToolActivity a) {
   final n = a.toolName.toLowerCase();
   return n == 'exitplanmode' || n == 'switch_mode' || n == 'switchmode';

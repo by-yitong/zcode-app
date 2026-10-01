@@ -141,14 +141,18 @@ class UsageDetailSheet extends StatelessWidget {
             children: [
               Text(
                 '上下文',
-                style: theme.textTheme.bodyMedium
-                    ?.copyWith(fontWeight: FontWeight.w500),
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w500,
+                ),
               ),
               Text(
                 '${_fmt(u.input)} / ${u.max > 0 ? _fmt(u.max) : '未知'}',
-                style: AppText.mono(context,
-                    size: 13, weight: FontWeight.w600, color: _utilColor(
-                        u.max > 0 ? u.input / u.max * 100 : 0)),
+                style: AppText.mono(
+                  context,
+                  size: 13,
+                  weight: FontWeight.w600,
+                  color: _utilColor(u.max > 0 ? u.input / u.max * 100 : 0),
+                ),
               ),
             ],
           ),
@@ -335,22 +339,24 @@ class _QuotaTierRow extends StatelessWidget {
             Expanded(
               child: Text(
                 label,
-                style: theme.textTheme.bodyMedium
-                    ?.copyWith(fontWeight: FontWeight.w500),
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ),
             Text(
               '${UsageDetailSheet._fmtPct(tier.utilization)}%',
-              style: AppText.mono(context,
-                  size: 13, weight: FontWeight.w600, color: color),
+              style: AppText.mono(
+                context,
+                size: 13,
+                weight: FontWeight.w600,
+                color: color,
+              ),
             ),
           ],
         ),
         const SizedBox(height: 6),
-        _Bar(
-          value: tier.utilization / 100,
-          color: color,
-        ),
+        _Bar(value: tier.utilization / 100, color: color),
         if (tier.resetsAt != null)
           Padding(
             padding: const EdgeInsets.only(top: 4),
@@ -391,13 +397,18 @@ class _McpUsageSection extends StatelessWidget {
           children: [
             Text(
               '${mcp.used} / ${mcp.total} 次',
-              style: theme.textTheme.bodyMedium
-                  ?.copyWith(fontWeight: FontWeight.w500),
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w500,
+              ),
             ),
             Text(
               '${UsageDetailSheet._fmtPct(mcp.percentage)}%',
-              style: AppText.mono(context,
-                  size: 13, weight: FontWeight.w600, color: color),
+              style: AppText.mono(
+                context,
+                size: 13,
+                weight: FontWeight.w600,
+                color: color,
+              ),
             ),
           ],
         ),

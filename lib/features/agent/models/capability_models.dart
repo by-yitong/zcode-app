@@ -32,35 +32,37 @@ class SkillEntry {
   });
 
   static SkillEntry fromJson(Map<String, dynamic> j) => SkillEntry(
-        id: (j['id'] ?? j['name'] ?? '').toString(),
-        name: (j['name'] ?? '').toString(),
-        description: (j['description'] ?? j['desc'] ?? '').toString(),
-        body: (j['body'] ?? '').toString(),
-        path: j['path']?.toString(),
-        sourcePath: j['sourcePath']?.toString(),
-        scope: (j['scope'] ?? j['source'] ?? 'user').toString(),
-        enabled: j['enabled'] is bool ? j['enabled'] as bool : false,
-        pluginName: j['pluginName']?.toString(),
-      );
+    id: (j['id'] ?? j['name'] ?? '').toString(),
+    name: (j['name'] ?? '').toString(),
+    description: (j['description'] ?? j['desc'] ?? '').toString(),
+    body: (j['body'] ?? '').toString(),
+    path: j['path']?.toString(),
+    sourcePath: j['sourcePath']?.toString(),
+    scope: (j['scope'] ?? j['source'] ?? 'user').toString(),
+    enabled: j['enabled'] is bool ? j['enabled'] as bool : false,
+    pluginName: j['pluginName']?.toString(),
+  );
 
   /// 网页端分组: 工作区与个人技能 / Plugin 技能
   bool get isPlugin => scope == 'plugin' || id.startsWith('glm:plugin:');
 
   String get scopeLabel => isPlugin
-      ? (pluginName != null && pluginName!.isNotEmpty ? '插件 · $pluginName' : '插件')
+      ? (pluginName != null && pluginName!.isNotEmpty
+            ? '插件 · $pluginName'
+            : '插件')
       : (scope == 'workspace' ? '工作区' : '个人');
 
   SkillEntry copyWith({bool? enabled}) => SkillEntry(
-        id: id,
-        name: name,
-        description: description,
-        body: body,
-        path: path,
-        sourcePath: sourcePath,
-        scope: scope,
-        enabled: enabled ?? this.enabled,
-        pluginName: pluginName,
-      );
+    id: id,
+    name: name,
+    description: description,
+    body: body,
+    path: path,
+    sourcePath: sourcePath,
+    scope: scope,
+    enabled: enabled ?? this.enabled,
+    pluginName: pluginName,
+  );
 }
 
 // ================================================================
@@ -117,28 +119,29 @@ class SubagentEntry {
       : const [];
 
   static SubagentEntry fromJson(Map<String, dynamic> j) => SubagentEntry(
-        id: (j['id'] ?? j['name'] ?? '').toString(),
-        name: (j['name'] ?? '').toString(),
-        description: (j['description'] ?? '').toString(),
-        systemPrompt: (j['systemPrompt'] ?? '').toString(),
-        color: j['color']?.toString(),
-        model: j['model']?.toString(),
-        thoughtLevel: j['thoughtLevel']?.toString(),
-        tools: _strList(j['tools']),
-        disallowedTools: _strList(j['disallowedTools']),
-        skills: _strList(j['skills']),
-        permissionMode: j['permissionMode']?.toString(),
-        maxTurns: j['maxTurns'] is int ? j['maxTurns'] as int : null,
-        background: j['background'] is bool ? j['background'] as bool : null,
-        injectAgentsMd:
-            j['injectAgentsMd'] is bool ? j['injectAgentsMd'] as bool : null,
-        mcpServers: _strList(j['mcpServers']),
-        path: j['path']?.toString(),
-        scope: (j['scope'] ?? 'user').toString(),
-        source: (j['source'] ?? j['scope'] ?? 'user').toString(),
-        enabled: j['enabled'] is bool ? j['enabled'] as bool : true,
-        readOnly: j['readOnly'] is bool ? j['readOnly'] as bool : false,
-      );
+    id: (j['id'] ?? j['name'] ?? '').toString(),
+    name: (j['name'] ?? '').toString(),
+    description: (j['description'] ?? '').toString(),
+    systemPrompt: (j['systemPrompt'] ?? '').toString(),
+    color: j['color']?.toString(),
+    model: j['model']?.toString(),
+    thoughtLevel: j['thoughtLevel']?.toString(),
+    tools: _strList(j['tools']),
+    disallowedTools: _strList(j['disallowedTools']),
+    skills: _strList(j['skills']),
+    permissionMode: j['permissionMode']?.toString(),
+    maxTurns: j['maxTurns'] is int ? j['maxTurns'] as int : null,
+    background: j['background'] is bool ? j['background'] as bool : null,
+    injectAgentsMd: j['injectAgentsMd'] is bool
+        ? j['injectAgentsMd'] as bool
+        : null,
+    mcpServers: _strList(j['mcpServers']),
+    path: j['path']?.toString(),
+    scope: (j['scope'] ?? 'user').toString(),
+    source: (j['source'] ?? j['scope'] ?? 'user').toString(),
+    enabled: j['enabled'] is bool ? j['enabled'] as bool : true,
+    readOnly: j['readOnly'] is bool ? j['readOnly'] as bool : false,
+  );
 
   bool get isBuiltIn => scope == 'built-in' || source == 'built-in';
   bool get isPlugin => scope == 'plugin' || source == 'plugin';
@@ -157,30 +160,30 @@ class SubagentEntry {
   }
 
   String get thoughtLevelLabel => switch (thoughtLevel) {
-        'max' => '深度思考',
-        'medium' => '中等思考',
-        'nothink' => '不思考',
-        _ => '继承',
-      };
+    'max' => '深度思考',
+    'medium' => '中等思考',
+    'nothink' => '不思考',
+    _ => '继承',
+  };
 
   /// 生成 createAgent/updateAgent 的 config
   Map<String, dynamic> toConfig() => {
-        'name': name,
-        'description': description,
-        'systemPrompt': systemPrompt,
-        if (color != null) 'color': color,
-        if (model != null && model!.isNotEmpty) 'model': model,
-        if (thoughtLevel != null && thoughtLevel!.isNotEmpty)
-          'thoughtLevel': thoughtLevel,
-        if (tools.isNotEmpty) 'tools': tools,
-        if (disallowedTools.isNotEmpty) 'disallowedTools': disallowedTools,
-        if (skills.isNotEmpty) 'skills': skills,
-        if (permissionMode != null) 'permissionMode': permissionMode,
-        if (maxTurns != null) 'maxTurns': maxTurns,
-        if (background != null) 'background': background,
-        if (injectAgentsMd != null) 'injectAgentsMd': injectAgentsMd,
-        if (mcpServers.isNotEmpty) 'mcpServers': mcpServers,
-      };
+    'name': name,
+    'description': description,
+    'systemPrompt': systemPrompt,
+    if (color != null) 'color': color,
+    if (model != null && model!.isNotEmpty) 'model': model,
+    if (thoughtLevel != null && thoughtLevel!.isNotEmpty)
+      'thoughtLevel': thoughtLevel,
+    if (tools.isNotEmpty) 'tools': tools,
+    if (disallowedTools.isNotEmpty) 'disallowedTools': disallowedTools,
+    if (skills.isNotEmpty) 'skills': skills,
+    if (permissionMode != null) 'permissionMode': permissionMode,
+    if (maxTurns != null) 'maxTurns': maxTurns,
+    if (background != null) 'background': background,
+    if (injectAgentsMd != null) 'injectAgentsMd': injectAgentsMd,
+    if (mcpServers.isNotEmpty) 'mcpServers': mcpServers,
+  };
 }
 
 // ================================================================
@@ -211,30 +214,30 @@ class CommandEntry {
   });
 
   static CommandEntry fromJson(Map<String, dynamic> j) => CommandEntry(
-        id: (j['id'] ?? j['name'] ?? '').toString(),
-        name: (j['name'] ?? '').toString(),
-        description: (j['description'] ?? '').toString(),
-        argumentHint: j['argumentHint']?.toString(),
-        content: (j['content'] ?? j['prompt'] ?? j['body'] ?? '').toString(),
-        filePath: (j['filePath'] ?? j['path'])?.toString(),
-        source: (j['source'] ?? j['scope'] ?? 'user').toString(),
-        scope: (j['scope'] ?? 'user').toString(),
-        enabled: j['enabled'] is bool ? j['enabled'] as bool : true,
-      );
+    id: (j['id'] ?? j['name'] ?? '').toString(),
+    name: (j['name'] ?? '').toString(),
+    description: (j['description'] ?? '').toString(),
+    argumentHint: j['argumentHint']?.toString(),
+    content: (j['content'] ?? j['prompt'] ?? j['body'] ?? '').toString(),
+    filePath: (j['filePath'] ?? j['path'])?.toString(),
+    source: (j['source'] ?? j['scope'] ?? 'user').toString(),
+    scope: (j['scope'] ?? 'user').toString(),
+    enabled: j['enabled'] is bool ? j['enabled'] as bool : true,
+  );
 
   bool get isPlugin => source == 'plugin';
 
   CommandEntry copyWith({bool? enabled}) => CommandEntry(
-        id: id,
-        name: name,
-        description: description,
-        argumentHint: argumentHint,
-        content: content,
-        filePath: filePath,
-        source: source,
-        scope: scope,
-        enabled: enabled ?? this.enabled,
-      );
+    id: id,
+    name: name,
+    description: description,
+    argumentHint: argumentHint,
+    content: content,
+    filePath: filePath,
+    source: source,
+    scope: scope,
+    enabled: enabled ?? this.enabled,
+  );
 }
 
 // ================================================================
@@ -275,59 +278,59 @@ class HookEntry {
   });
 
   static HookEntry fromJson(Map<String, dynamic> j) => HookEntry(
-        id: (j['id'] ?? '').toString(),
-        event: (j['event'] ?? '').toString(),
-        matcher: j['matcher']?.toString(),
-        type: (j['type'] ?? 'command').toString(),
-        command: (j['command'] ?? '').toString(),
-        args: j['args'] is List
-            ? (j['args'] as List).map((e) => e.toString()).toList()
-            : const [],
-        runAsync: j['async'] is bool ? j['async'] as bool : false,
-        shell: j['shell']?.toString(),
-        statusMessage: j['statusMessage']?.toString(),
-        timeout: j['timeout'] is int ? j['timeout'] as int : null,
-        enabled: j['enabled'] is bool ? j['enabled'] as bool : false,
-        customJson: j['custom']?.toString(),
-        locationSource:
-            ((j['location'] ?? const {}) as Map)['source']?.toString() ?? 'zcode',
-        locationScope:
-            ((j['location'] ?? const {}) as Map)['scope']?.toString() ?? 'user',
-      );
+    id: (j['id'] ?? '').toString(),
+    event: (j['event'] ?? '').toString(),
+    matcher: j['matcher']?.toString(),
+    type: (j['type'] ?? 'command').toString(),
+    command: (j['command'] ?? '').toString(),
+    args: j['args'] is List
+        ? (j['args'] as List).map((e) => e.toString()).toList()
+        : const [],
+    runAsync: j['async'] is bool ? j['async'] as bool : false,
+    shell: j['shell']?.toString(),
+    statusMessage: j['statusMessage']?.toString(),
+    timeout: j['timeout'] is int ? j['timeout'] as int : null,
+    enabled: j['enabled'] is bool ? j['enabled'] as bool : false,
+    customJson: j['custom']?.toString(),
+    locationSource:
+        ((j['location'] ?? const {}) as Map)['source']?.toString() ?? 'zcode',
+    locationScope:
+        ((j['location'] ?? const {}) as Map)['scope']?.toString() ?? 'user',
+  );
 
   /// saveHooks 的 wire 条目
   Map<String, dynamic> toWireJson() => {
-        'id': id,
-        'event': event,
-        if (matcher != null && matcher!.isNotEmpty) 'matcher': matcher,
-        'type': type,
-        'command': command,
-        if (type == 'process' && args.isNotEmpty) 'args': args,
-        if (runAsync) 'async': true,
-        if (shell != null && shell!.isNotEmpty) 'shell': shell,
-        if (statusMessage != null && statusMessage!.isNotEmpty)
-          'statusMessage': statusMessage,
-        if (timeout != null) 'timeout': timeout,
-        'enabled': enabled,
-        'location': {'source': locationSource, 'scope': locationScope},
-      };
+    'id': id,
+    'event': event,
+    if (matcher != null && matcher!.isNotEmpty) 'matcher': matcher,
+    'type': type,
+    'command': command,
+    if (type == 'process' && args.isNotEmpty) 'args': args,
+    if (runAsync) 'async': true,
+    if (shell != null && shell!.isNotEmpty) 'shell': shell,
+    if (statusMessage != null && statusMessage!.isNotEmpty)
+      'statusMessage': statusMessage,
+    if (timeout != null) 'timeout': timeout,
+    'enabled': enabled,
+    'location': {'source': locationSource, 'scope': locationScope},
+  };
 
   HookEntry copyWith({bool? enabled}) => HookEntry(
-        id: id,
-        event: event,
-        matcher: matcher,
-        type: type,
-        command: command,
-        args: args,
-        runAsync: runAsync,
-        shell: shell,
-        statusMessage: statusMessage,
-        timeout: timeout,
-        enabled: enabled ?? this.enabled,
-        customJson: customJson,
-        locationSource: locationSource,
-        locationScope: locationScope,
-      );
+    id: id,
+    event: event,
+    matcher: matcher,
+    type: type,
+    command: command,
+    args: args,
+    runAsync: runAsync,
+    shell: shell,
+    statusMessage: statusMessage,
+    timeout: timeout,
+    enabled: enabled ?? this.enabled,
+    customJson: customJson,
+    locationSource: locationSource,
+    locationScope: locationScope,
+  );
 }
 
 /// 常见钩子事件 (zcode 支持)
@@ -392,11 +395,11 @@ class McpServerEntry {
       : const [];
 
   static McpServerType _typeOf(dynamic t) => switch (t?.toString()) {
-        'stdio' => McpServerType.stdio,
-        'sse' => McpServerType.sse,
-        'http' => McpServerType.http,
-        _ => McpServerType.unknown,
-      };
+    'stdio' => McpServerType.stdio,
+    'sse' => McpServerType.sse,
+    'http' => McpServerType.http,
+    _ => McpServerType.unknown,
+  };
 
   static McpServerEntry fromJson(Map<String, dynamic> j) {
     final cfg = (j['config'] ?? const {}) as Map;
@@ -421,23 +424,21 @@ class McpServerEntry {
 
   /// upsert 用的 config
   Map<String, dynamic> toConfig() => {
-        'type': type == McpServerType.unknown
-            ? 'stdio'
-            : type.name,
-        if (command != null && command!.isNotEmpty) 'command': command,
-        if (url != null && url!.isNotEmpty) 'url': url,
-        if (args.isNotEmpty) 'args': args,
-        if (env.isNotEmpty) 'env': env,
-        if (headers.isNotEmpty) 'headers': headers,
-        if (timeoutMs != null) 'timeoutMs': timeoutMs,
-      };
+    'type': type == McpServerType.unknown ? 'stdio' : type.name,
+    if (command != null && command!.isNotEmpty) 'command': command,
+    if (url != null && url!.isNotEmpty) 'url': url,
+    if (args.isNotEmpty) 'args': args,
+    if (env.isNotEmpty) 'env': env,
+    if (headers.isNotEmpty) 'headers': headers,
+    if (timeoutMs != null) 'timeoutMs': timeoutMs,
+  };
 
   String get typeLabel => switch (type) {
-        McpServerType.stdio => 'stdio',
-        McpServerType.sse => 'SSE',
-        McpServerType.http => 'HTTP',
-        McpServerType.unknown => '未知',
-      };
+    McpServerType.stdio => 'stdio',
+    McpServerType.sse => 'SSE',
+    McpServerType.http => 'HTTP',
+    McpServerType.unknown => '未知',
+  };
 
   /// 副标题: stdio 显示命令, 远程显示域名
   String get endpointLabel {
@@ -456,21 +457,21 @@ class McpServerEntry {
   }
 
   McpServerEntry copyWith({bool? enabled}) => McpServerEntry(
-        name: name,
-        scope: scope,
-        source: source,
-        type: type,
-        command: command,
-        url: url,
-        args: args,
-        env: env,
-        headers: headers,
-        timeoutMs: timeoutMs,
-        enabled: enabled ?? this.enabled,
-        filePath: filePath,
-        projectPath: projectPath,
-        rawConfig: rawConfig,
-      );
+    name: name,
+    scope: scope,
+    source: source,
+    type: type,
+    command: command,
+    url: url,
+    args: args,
+    env: env,
+    headers: headers,
+    timeoutMs: timeoutMs,
+    enabled: enabled ?? this.enabled,
+    filePath: filePath,
+    projectPath: projectPath,
+    rawConfig: rawConfig,
+  );
 }
 
 /// MCP 服务器运行状态 (listMcpServerStatuses 单项)
@@ -490,14 +491,14 @@ class McpServerStatus {
   });
 
   static McpServerStatus fromJson(Map<String, dynamic> j) => McpServerStatus(
-        name: (j['name'] ?? j['id'] ?? '').toString(),
-        status: (j['status'] ?? '').toString(),
-        toolCount: j['toolCount'] is int ? j['toolCount'] as int : null,
-        error: j['error']?.toString(),
-        authorizationUrl:
-            ((j['authorization'] ?? const {}) as Map)['authorizationUrl']
-                ?.toString(),
-      );
+    name: (j['name'] ?? j['id'] ?? '').toString(),
+    status: (j['status'] ?? '').toString(),
+    toolCount: j['toolCount'] is int ? j['toolCount'] as int : null,
+    error: j['error']?.toString(),
+    authorizationUrl:
+        ((j['authorization'] ?? const {}) as Map)['authorizationUrl']
+            ?.toString(),
+  );
 
   bool get isConnected =>
       status == 'active' || status == 'connected' || status == 'plugin.active';
@@ -559,19 +560,30 @@ List<ImportAgent> parseImportDiscovery(Map<String, dynamic> resp) {
     }
     // 兜底: agent 层直接挂 items
     _collectItems(a, agentKey, '', cands, skipKnownKeys: true);
-    if (cands.isNotEmpty) agents.add(ImportAgent(agent: agentKey, candidates: cands));
+    if (cands.isNotEmpty)
+      agents.add(ImportAgent(agent: agentKey, candidates: cands));
   }
   return agents;
 }
 
-void _collectItems(Map node, String agentKey, String category,
-    List<ImportCandidate> out,
-    {bool skipKnownKeys = false}) {
+void _collectItems(
+  Map node,
+  String agentKey,
+  String category,
+  List<ImportCandidate> out, {
+  bool skipKnownKeys = false,
+}) {
   for (final entry in node.entries) {
     final k = entry.key.toString();
     if (skipKnownKeys &&
-        ['agent', 'categories', 'name', 'key', 'id', 'importableCount']
-            .contains(k)) {
+        [
+          'agent',
+          'categories',
+          'name',
+          'key',
+          'id',
+          'importableCount',
+        ].contains(k)) {
       continue;
     }
     final v = entry.value;
@@ -587,51 +599,57 @@ void _collectItems(Map node, String agentKey, String category,
     for (final it in items) {
       if (it is! Map) continue;
       final path =
-          (it['resourcePath'] ?? it['sourcePath'] ?? it['path'] ?? it['directoryName'] ?? '')
+          (it['resourcePath'] ??
+                  it['sourcePath'] ??
+                  it['path'] ??
+                  it['directoryName'] ??
+                  '')
               .toString();
       if (path.isEmpty) continue;
-      out.add(ImportCandidate(
-        agent: agentKey,
-        category: cat == 'mcp' ? 'mcpServers' : cat,
-        sourceScope: it['sourceScope']?.toString() ??
-            node['sourceScope']?.toString(),
-        resourcePath: path,
-        name: (it['name'] ?? it['directoryName'] ?? path.split('/').last)
-            .toString(),
-        version: it['version']?.toString(),
-      ));
+      out.add(
+        ImportCandidate(
+          agent: agentKey,
+          category: cat == 'mcp' ? 'mcpServers' : cat,
+          sourceScope:
+              it['sourceScope']?.toString() ?? node['sourceScope']?.toString(),
+          resourcePath: path,
+          name: (it['name'] ?? it['directoryName'] ?? path.split('/').last)
+              .toString(),
+          version: it['version']?.toString(),
+        ),
+      );
     }
   }
 }
 
 /// 外部 Agent 显示名
 String importAgentLabel(String key) => switch (key) {
-      'claudeCode' => 'Claude Code',
-      'codexCli' => 'Codex CLI',
-      'openCode' => 'OpenCode',
-      'openClaw' => 'OpenClaw',
-      'augment' => 'Augment',
-      'continue' => 'Continue',
-      'goose' => 'Goose',
-      'qwenCode' => 'Qwen Code',
-      'qode' => 'Qode',
-      'qodeCn' => 'Qode CN',
-      'windsurf' => 'Windsurf',
-      'trae' => 'Trae',
-      'traeCn' => 'Trae CN',
-      'kiroCli' => 'Kiro CLI',
-      'roo' => 'Roo',
-      'codeBuddy' => 'CodeBuddy',
-      _ => key,
-    };
+  'claudeCode' => 'Claude Code',
+  'codexCli' => 'Codex CLI',
+  'openCode' => 'OpenCode',
+  'openClaw' => 'OpenClaw',
+  'augment' => 'Augment',
+  'continue' => 'Continue',
+  'goose' => 'Goose',
+  'qwenCode' => 'Qwen Code',
+  'qode' => 'Qode',
+  'qodeCn' => 'Qode CN',
+  'windsurf' => 'Windsurf',
+  'trae' => 'Trae',
+  'traeCn' => 'Trae CN',
+  'kiroCli' => 'Kiro CLI',
+  'roo' => 'Roo',
+  'codeBuddy' => 'CodeBuddy',
+  _ => key,
+};
 
 String importCategoryLabel(String category) => switch (category) {
-      'skills' => '技能',
-      'commands' => '命令',
-      'plugins' => '插件',
-      'mcpServers' => 'MCP 服务器',
-      _ => category,
-    };
+  'skills' => '技能',
+  'commands' => '命令',
+  'plugins' => '插件',
+  'mcpServers' => 'MCP 服务器',
+  _ => category,
+};
 
 // ================================================================
 // 插件 (overview schema: installedPlugins/availablePlugins/marketplaces)
@@ -680,12 +698,12 @@ class PluginEntry {
     this.homepage,
   });
 
-  String get label =>
-      displayName.isNotEmpty ? displayName : name;
+  String get label => displayName.isNotEmpty ? displayName : name;
 
   /// 展示用的组件类型 (overview 的 componentTypes 优先, 否则用推导)
-  List<String> get displayComponentTypes =>
-      componentTypes.isNotEmpty ? componentTypes : (componentTypesFromDetail ?? const []);
+  List<String> get displayComponentTypes => componentTypes.isNotEmpty
+      ? componentTypes
+      : (componentTypesFromDetail ?? const []);
 
   static List<String> _typesFromDetail(Map<String, dynamic> j) {
     final out = <String>[];
@@ -693,7 +711,8 @@ class PluginEntry {
     if (((j['commandRootCount'] as num?)?.toInt() ?? 0) > 0) {
       out.add('commands');
     }
-    if (j['mcpServerNames'] is List && (j['mcpServerNames'] as List).isNotEmpty) {
+    if (j['mcpServerNames'] is List &&
+        (j['mcpServerNames'] as List).isNotEmpty) {
       out.add('mcpServers');
     }
     if (j['hookDetails'] is List && (j['hookDetails'] as List).isNotEmpty) {
@@ -710,7 +729,8 @@ class PluginEntry {
         ? (rawAuthor['name'] ?? rawAuthor['url'])?.toString()
         : rawAuthor?.toString();
     final homepage =
-        (listing['homepage'] ?? (j['author'] is Map ? j['author']['url'] : null))
+        (listing['homepage'] ??
+                (j['author'] is Map ? j['author']['url'] : null))
             ?.toString();
     return PluginEntry(
       id: (j['id'] ?? j['name'] ?? '').toString(),
@@ -727,7 +747,9 @@ class PluginEntry {
       updateStatus: j['updateStatus']?.toString(),
       latestVersion: j['latestVersion']?.toString(),
       // listPlugins 来源没有 componentTypes — 从计数/名单推导
-      componentTypesFromDetail: j['componentTypes'] is List ? null : _typesFromDetail(j),
+      componentTypesFromDetail: j['componentTypes'] is List
+          ? null
+          : _typesFromDetail(j),
       // 官方市场的 marketplace.json 里这些字段在条目顶层而非 listing 下 — 两层兼容
       displayName:
           (listing['displayName'] ?? j['displayName'])?.toString() ?? '',
@@ -743,24 +765,24 @@ class PluginEntry {
 
   /// 用 overview 同 id 条目补齐展示元数据 (icon/分类/更新状态)
   PluginEntry mergeOverview(PluginEntry o) => PluginEntry(
-        id: id,
-        name: name,
-        marketplace: marketplace,
-        description: description.isNotEmpty ? description : o.description,
-        version: version ?? o.version,
-        installed: installed,
-        enabled: enabled,
-        scope: scope,
-        componentTypes: componentTypes,
-        componentTypesFromDetail: componentTypesFromDetail,
-        updateStatus: o.updateStatus ?? updateStatus,
-        latestVersion: o.latestVersion ?? latestVersion,
-        displayName: o.displayName.isNotEmpty ? o.displayName : displayName,
-        icon: o.icon ?? icon,
-        category: o.category ?? category,
-        author: o.author ?? author,
-        homepage: o.homepage ?? homepage,
-      );
+    id: id,
+    name: name,
+    marketplace: marketplace,
+    description: description.isNotEmpty ? description : o.description,
+    version: version ?? o.version,
+    installed: installed,
+    enabled: enabled,
+    scope: scope,
+    componentTypes: componentTypes,
+    componentTypesFromDetail: componentTypesFromDetail,
+    updateStatus: o.updateStatus ?? updateStatus,
+    latestVersion: o.latestVersion ?? latestVersion,
+    displayName: o.displayName.isNotEmpty ? o.displayName : displayName,
+    icon: o.icon ?? icon,
+    category: o.category ?? category,
+    author: o.author ?? author,
+    homepage: o.homepage ?? homepage,
+  );
 }
 
 /// 插件市场
@@ -784,19 +806,18 @@ class MarketplaceEntry {
   });
 
   static MarketplaceEntry fromJson(Map<String, dynamic> j) => MarketplaceEntry(
-        id: (j['id'] ?? j['name'] ?? '').toString(),
-        name: (j['name'] ?? '').toString(),
-        source: (j['source'] is Map)
-            ? ((j['source'] as Map)['source'] ?? j['source']).toString()
-            : (j['source'] ?? '').toString(),
-        pluginCount:
-            j['pluginCount'] is int ? j['pluginCount'] as int : 0,
-        isOfficial: j['isOfficial'] == true,
-        lastUpdated: j['lastUpdated']?.toString(),
-        featured: j['featured'] is List
-            ? (j['featured'] as List).map((e) => e.toString()).toList()
-            : const [],
-      );
+    id: (j['id'] ?? j['name'] ?? '').toString(),
+    name: (j['name'] ?? '').toString(),
+    source: (j['source'] is Map)
+        ? ((j['source'] as Map)['source'] ?? j['source']).toString()
+        : (j['source'] ?? '').toString(),
+    pluginCount: j['pluginCount'] is int ? j['pluginCount'] as int : 0,
+    isOfficial: j['isOfficial'] == true,
+    lastUpdated: j['lastUpdated']?.toString(),
+    featured: j['featured'] is List
+        ? (j['featured'] as List).map((e) => e.toString()).toList()
+        : const [],
+  );
 }
 
 /// 插件分类 (listing.category → 中文)
@@ -804,13 +825,13 @@ class MarketplaceEntry {
 /// ★ wire 值是 kebab-case (网页端 r0t 映射实测):
 /// developer-tools / productivity / utilities / guides / template / other
 String pluginCategoryLabel(String? category) => switch (category) {
-      'developer-tools' || 'developerTools' => '开发者工具',
-      'productivity' => '生产力',
-      'utilities' => '实用工具',
-      'guides' => '指南',
-      'template' => '模板',
-      _ => '其他',
-    };
+  'developer-tools' || 'developerTools' => '开发者工具',
+  'productivity' => '生产力',
+  'utilities' => '实用工具',
+  'guides' => '指南',
+  'template' => '模板',
+  _ => '其他',
+};
 
 /// 分类归一 (空值 → other, camelCase 兼容 → kebab)
 String pluginCategoryOf(String? category) {
@@ -850,11 +871,11 @@ const kRecommendedPlugins = <String>[
 
 /// 组件类型 → 中文
 String pluginComponentLabel(String type) => switch (type) {
-      'command' || 'commands' => '命令',
-      'skill' || 'skills' => '技能',
-      'hook' || 'hooks' => '钩子',
-      'mcp' || 'mcpServers' => 'MCP',
-      'agent' || 'agents' => '子智能体',
-      'lsp' => 'LSP',
-      _ => type,
-    };
+  'command' || 'commands' => '命令',
+  'skill' || 'skills' => '技能',
+  'hook' || 'hooks' => '钩子',
+  'mcp' || 'mcpServers' => 'MCP',
+  'agent' || 'agents' => '子智能体',
+  'lsp' => 'LSP',
+  _ => type,
+};

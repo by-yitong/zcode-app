@@ -32,15 +32,18 @@ class GlmQuotaService {
   final Dio _dio;
 
   GlmQuotaService({Dio? dio})
-      : _dio = dio ??
-            Dio(BaseOptions(
+    : _dio =
+          dio ??
+          Dio(
+            BaseOptions(
               connectTimeout: const Duration(seconds: 15),
               receiveTimeout: const Duration(seconds: 15),
               headers: {
                 'Content-Type': 'application/json',
                 'Accept-Language': 'en-US,en',
               },
-            ));
+            ),
+          );
 
   /// 路由 quota endpoint base
   ///
@@ -143,8 +146,10 @@ class GlmQuotaService {
     final tiers = _parseZhipuTokenTiers(data);
     final mcp = _parseZhipuMcpQuota(data);
     final level = data['level'] as String?;
-    appLog.i('[GLM] 配额查询成功: ${tiers.length} 个 tier, '
-        'mcp=${mcp != null ? '${mcp.used}/${mcp.total}' : '无'}, level=$level');
+    appLog.i(
+      '[GLM] 配额查询成功: ${tiers.length} 个 tier, '
+      'mcp=${mcp != null ? '${mcp.used}/${mcp.total}' : '无'}, level=$level',
+    );
 
     return GlmQuota(
       success: true,
@@ -180,10 +185,12 @@ class GlmQuotaService {
           if (d is! Map<String, dynamic>) continue;
           final code = d['modelCode'] as String?;
           if (code == null) continue;
-          details.add(GlmMcpUsageDetail(
-            modelCode: code,
-            usage: (d['usage'] is num) ? (d['usage'] as num).toInt() : 0,
-          ));
+          details.add(
+            GlmMcpUsageDetail(
+              modelCode: code,
+              usage: (d['usage'] is num) ? (d['usage'] as num).toInt() : 0,
+            ),
+          );
         }
       }
 
@@ -215,7 +222,8 @@ class GlmQuotaService {
     // 用可变 nullable 槽位收集, 末尾用 final 局部变量做类型收窄 (避免 promotion 警告)
     ({int? resetMs, double percentage, String? resetsAt})? fiveHourSlot;
     ({int? resetMs, double percentage, String? resetsAt})? weeklySlot;
-    final unclassified = <({int? resetMs, double percentage, String? resetsAt})>[];
+    final unclassified =
+        <({int? resetMs, double percentage, String? resetsAt})>[];
 
     for (final raw in limits) {
       if (raw is! Map<String, dynamic>) continue;
@@ -238,9 +246,7 @@ class GlmQuotaService {
 
       // unit 主分类
       final unit = raw['unit'];
-      final unitInt = unit is int
-          ? unit
-          : (unit is num ? unit.toInt() : null);
+      final unitInt = unit is int ? unit : (unit is num ? unit.toInt() : null);
       if (unitInt == 3 && fiveHourSlot == null) {
         fiveHourSlot = entry;
       } else if (unitInt == 6 && weeklySlot == null) {
@@ -273,19 +279,23 @@ class GlmQuotaService {
     // 拷贝到 final 局部变量, 让编译器在此处做确定的非空收窄
     final fiveHour = fiveHourSlot;
     if (fiveHour != null) {
-      tiers.add(GlmQuotaTier(
-        name: GlmQuotaTier.fiveHour,
-        utilization: fiveHour.percentage,
-        resetsAt: fiveHour.resetsAt,
-      ));
+      tiers.add(
+        GlmQuotaTier(
+          name: GlmQuotaTier.fiveHour,
+          utilization: fiveHour.percentage,
+          resetsAt: fiveHour.resetsAt,
+        ),
+      );
     }
     final weekly = weeklySlot;
     if (weekly != null) {
-      tiers.add(GlmQuotaTier(
-        name: GlmQuotaTier.weeklyLimit,
-        utilization: weekly.percentage,
-        resetsAt: weekly.resetsAt,
-      ));
+      tiers.add(
+        GlmQuotaTier(
+          name: GlmQuotaTier.weeklyLimit,
+          utilization: weekly.percentage,
+          resetsAt: weekly.resetsAt,
+        ),
+      );
     }
     return tiers;
   }

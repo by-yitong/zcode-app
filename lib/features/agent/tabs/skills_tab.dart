@@ -66,15 +66,20 @@ class SkillsTabState extends ConsumerState<SkillsTab>
           onRefresh: () => ref.read(skillsCapsProvider.notifier).load(),
           child: ListView(
             padding: const EdgeInsets.fromLTRB(
-              AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.xxl),
+              AppSpacing.lg,
+              0,
+              AppSpacing.lg,
+              AppSpacing.xxl,
+            ),
             children: [
               Padding(
-                padding:
-                    const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
                 child: Text(
                   '共 ${filtered.length} 个技能 · $enabledCount 个已启用',
                   style: TextStyle(
-                      fontSize: AppTextSizes.caption, color: cs.onSurfaceVariant),
+                    fontSize: AppTextSizes.caption,
+                    color: cs.onSurfaceVariant,
+                  ),
                 ),
               ),
               if (local.isNotEmpty) ...[
@@ -84,18 +89,20 @@ class SkillsTabState extends ConsumerState<SkillsTab>
                     for (final s in local)
                       AppTile(
                         icon: Icons.auto_awesome_outlined,
-                        iconTint: s.enabled ? AppColors.accent : cs.onSurfaceVariant,
+                        iconTint: s.enabled
+                            ? AppColors.accent
+                            : cs.onSurfaceVariant,
                         title: s.name,
-                        subtitle:
-                            s.description.isNotEmpty ? s.description : null,
+                        subtitle: s.description.isNotEmpty
+                            ? s.description
+                            : null,
                         subtitleMaxLines: 2,
                         showChevron: true,
                         onTap: () => _openDetail(context, s),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            CapsBadge(
-                                s.scope == 'workspace' ? '工作区' : '个人'),
+                            CapsBadge(s.scope == 'workspace' ? '工作区' : '个人'),
                             const SizedBox(width: AppSpacing.sm),
                             CapsSwitch(
                               value: s.enabled,
@@ -115,10 +122,13 @@ class SkillsTabState extends ConsumerState<SkillsTab>
                     for (final s in plugin)
                       AppTile(
                         icon: Icons.extension_outlined,
-                        iconTint: s.enabled ? AppColors.accent : cs.onSurfaceVariant,
+                        iconTint: s.enabled
+                            ? AppColors.accent
+                            : cs.onSurfaceVariant,
                         title: s.name,
-                        subtitle:
-                            s.description.isNotEmpty ? s.description : null,
+                        subtitle: s.description.isNotEmpty
+                            ? s.description
+                            : null,
                         subtitleMaxLines: 2,
                         showChevron: true,
                         onTap: () => _openDetail(context, s),
@@ -160,9 +170,11 @@ class SkillsTabState extends ConsumerState<SkillsTab>
     var out = list;
     if (q.isNotEmpty) {
       out = out
-          .where((s) =>
-              s.name.toLowerCase().contains(q) ||
-              s.description.toLowerCase().contains(q))
+          .where(
+            (s) =>
+                s.name.toLowerCase().contains(q) ||
+                s.description.toLowerCase().contains(q),
+          )
           .toList();
     }
     if (_filter == 'enabled') {
@@ -180,7 +192,11 @@ class SkillsTabState extends ConsumerState<SkillsTab>
       context,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
-            AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
+          AppSpacing.lg,
+          0,
+          AppSpacing.lg,
+          AppSpacing.lg,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -188,21 +204,27 @@ class SkillsTabState extends ConsumerState<SkillsTab>
             Row(
               children: [
                 Expanded(
-                  child: Text(skill.name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w600)),
+                  child: Text(
+                    skill.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
                 CapsBadge(skill.scopeLabel),
               ],
             ),
             if (skill.description.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.md),
-              Text(skill.description,
-                  style: TextStyle(
-                      fontSize: AppTextSizes.bodySm,
-                      color: cs.onSurfaceVariant)),
+              Text(
+                skill.description,
+                style: TextStyle(
+                  fontSize: AppTextSizes.bodySm,
+                  color: cs.onSurfaceVariant,
+                ),
+              ),
             ],
             const SizedBox(height: AppSpacing.md),
             // 启停
@@ -220,42 +242,67 @@ class SkillsTabState extends ConsumerState<SkillsTab>
               if (skill.scope == 'workspace')
                 _actionTile(theme, Icons.copy_rounded, '复制到通用目录', () async {
                   Navigator.pop(context);
-                  await _run('已复制到通用技能目录',
-                      () => ref.read(skillsCapsProvider.notifier).copyToCommon(skill));
+                  await _run(
+                    '已复制到通用技能目录',
+                    () => ref
+                        .read(skillsCapsProvider.notifier)
+                        .copyToCommon(skill),
+                  );
                 }),
               if (skill.scope != 'workspace' && skill.path != null)
-                _actionTile(theme, Icons.folder_off_outlined, '从通用目录移除', () async {
-                  Navigator.pop(context);
-                  await _run('已从通用技能移除', () => ref
-                      .read(skillsCapsProvider.notifier)
-                      .removeFromCommon(skill));
-                }),
-              const Divider(height: 1),
-              _actionTile(theme, Icons.delete_outline_rounded, '删除技能',
+                _actionTile(
+                  theme,
+                  Icons.folder_off_outlined,
+                  '从通用目录移除',
                   () async {
-                Navigator.pop(context);
-                final ok = await capsConfirm(context,
+                    Navigator.pop(context);
+                    await _run(
+                      '已从通用技能移除',
+                      () => ref
+                          .read(skillsCapsProvider.notifier)
+                          .removeFromCommon(skill),
+                    );
+                  },
+                ),
+              const Divider(height: 1),
+              _actionTile(
+                theme,
+                Icons.delete_outline_rounded,
+                '删除技能',
+                () async {
+                  Navigator.pop(context);
+                  final ok = await capsConfirm(
+                    context,
                     title: '删除技能',
-                    message: '确定删除「${skill.name}」？将从磁盘移除该技能目录，且无法撤销。');
-                if (!ok) return;
-                await _run('已删除', () => ref.read(skillsCapsProvider.notifier).delete(skill));
-              }, AppColors.danger),
+                    message: '确定删除「${skill.name}」？将从磁盘移除该技能目录，且无法撤销。',
+                  );
+                  if (!ok) return;
+                  await _run(
+                    '已删除',
+                    () => ref.read(skillsCapsProvider.notifier).delete(skill),
+                  );
+                },
+                AppColors.danger,
+              ),
             ] else ...[
               const Divider(height: 1),
               Padding(
-                padding:
-                    const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
                 child: Row(
                   children: [
-                    Icon(Icons.info_outline_rounded,
-                        size: 16, color: cs.onSurfaceVariant),
+                    Icon(
+                      Icons.info_outline_rounded,
+                      size: 16,
+                      color: cs.onSurfaceVariant,
+                    ),
                     const SizedBox(width: AppSpacing.sm),
                     Expanded(
                       child: Text(
                         '插件提供的技能不可单独删除，请卸载对应插件。',
                         style: TextStyle(
-                            fontSize: AppTextSizes.bodySm,
-                            color: cs.onSurfaceVariant),
+                          fontSize: AppTextSizes.bodySm,
+                          color: cs.onSurfaceVariant,
+                        ),
                       ),
                     ),
                   ],
@@ -275,20 +322,27 @@ class SkillsTabState extends ConsumerState<SkillsTab>
                 child: SingleChildScrollView(
                   child: Text(
                     skill.body,
-                    style: AppText.mono(context,
-                        size: AppTextSizes.monoSm, color: cs.onSurface),
+                    style: AppText.mono(
+                      context,
+                      size: AppTextSizes.monoSm,
+                      color: cs.onSurface,
+                    ),
                   ),
                 ),
               ),
             ],
             if (skill.path != null) ...[
               const SizedBox(height: AppSpacing.sm),
-              Text(skill.path!,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppText.mono(context,
-                      size: AppTextSizes.monoXs,
-                      color: cs.onSurfaceVariant.withValues(alpha: 0.6))),
+              Text(
+                skill.path!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppText.mono(
+                  context,
+                  size: AppTextSizes.monoXs,
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+                ),
+              ),
             ],
           ],
         ),
@@ -296,38 +350,49 @@ class SkillsTabState extends ConsumerState<SkillsTab>
     );
   }
 
-  Widget _actionRow(ThemeData theme,
-      {required IconData icon, required String label, required Widget trailing}) {
+  Widget _actionRow(
+    ThemeData theme, {
+    required IconData icon,
+    required String label,
+    required Widget trailing,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
       child: Row(
         children: [
           Icon(icon, size: 20, color: theme.colorScheme.onSurfaceVariant),
           const SizedBox(width: AppSpacing.md),
-          Expanded(
-              child: Text(label, style: theme.textTheme.bodyMedium)),
+          Expanded(child: Text(label, style: theme.textTheme.bodyMedium)),
           trailing,
         ],
       ),
     );
   }
 
-  Widget _actionTile(ThemeData theme, IconData icon, String label,
-      VoidCallback onTap, [Color? color]) {
+  Widget _actionTile(
+    ThemeData theme,
+    IconData icon,
+    String label,
+    VoidCallback onTap, [
+    Color? color,
+  ]) {
     return InkWell(
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm + 2),
         child: Row(
           children: [
-            Icon(icon,
-                size: 20,
-                color: color ?? theme.colorScheme.onSurfaceVariant),
+            Icon(
+              icon,
+              size: 20,
+              color: color ?? theme.colorScheme.onSurfaceVariant,
+            ),
             const SizedBox(width: AppSpacing.md),
             Expanded(
-              child: Text(label,
-                  style: theme.textTheme.bodyMedium
-                      ?.copyWith(color: color)),
+              child: Text(
+                label,
+                style: theme.textTheme.bodyMedium?.copyWith(color: color),
+              ),
             ),
           ],
         ),
@@ -342,9 +407,12 @@ class SkillsTabState extends ConsumerState<SkillsTab>
     } catch (e) {
       appLog.w('[SkillsTab] 启停失败: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
             content: Text('操作失败: $e'),
-            behavior: SnackBarBehavior.floating));
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
       }
     }
   }
@@ -353,15 +421,19 @@ class SkillsTabState extends ConsumerState<SkillsTab>
     try {
       await action();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(okMsg), behavior: SnackBarBehavior.floating));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(okMsg), behavior: SnackBarBehavior.floating),
+        );
       }
     } catch (e) {
       appLog.w('[SkillsTab] 操作失败: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
             content: Text('操作失败: $e'),
-            behavior: SnackBarBehavior.floating));
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
       }
     }
   }

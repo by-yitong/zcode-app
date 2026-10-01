@@ -56,7 +56,8 @@ class NotificationService {
       // Android 13+ 通知运行时权限
       await _local
           .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>()
+            AndroidFlutterLocalNotificationsPlugin
+          >()
           ?.requestNotificationsPermission();
 
       // 前台服务配置: 常驻通知走 LOW 级静音通道
@@ -73,7 +74,8 @@ class NotificationService {
         foregroundTaskOptions: ForegroundTaskOptions(
           eventAction: ForegroundTaskEventAction.nothing(), // 纯保活, 无周期任务
           allowWakeLock: true,
-        ),      );
+        ),
+      );
       _initialized = true;
       appLog.i('[Notify] 通知服务初始化完成');
     } catch (e) {
@@ -186,7 +188,10 @@ class NotificationService {
       appLog.d('[Notify] 前台中, 抑制通知: $title'); // 前台时 UI 已展示, 不打扰
       return;
     }
-    final payload = jsonEncode({'taskId': taskId, 'workspaceKey': workspaceKey});
+    final payload = jsonEncode({
+      'taskId': taskId,
+      'workspaceKey': workspaceKey,
+    });
     _local.show(
       id: id,
       title: title,

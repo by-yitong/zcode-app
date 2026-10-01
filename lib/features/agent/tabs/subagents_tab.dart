@@ -59,9 +59,11 @@ class SubagentsTabState extends ConsumerState<SubagentsTab>
         var filtered = list;
         if (q.isNotEmpty) {
           filtered = filtered
-              .where((a) =>
-                  a.name.toLowerCase().contains(q) ||
-                  a.description.toLowerCase().contains(q))
+              .where(
+                (a) =>
+                    a.name.toLowerCase().contains(q) ||
+                    a.description.toLowerCase().contains(q),
+              )
               .toList();
         }
         if (_filter == 'enabled') {
@@ -69,8 +71,9 @@ class SubagentsTabState extends ConsumerState<SubagentsTab>
         } else if (_filter == 'disabled') {
           filtered = filtered.where((a) => !a.enabled).toList();
         }
-        final builtIn =
-            filtered.where((a) => a.isBuiltIn && !a.isPlugin).toList();
+        final builtIn = filtered
+            .where((a) => a.isBuiltIn && !a.isPlugin)
+            .toList();
         final user = filtered
             .where((a) => !a.isBuiltIn && !a.isPlugin)
             .toList();
@@ -79,30 +82,34 @@ class SubagentsTabState extends ConsumerState<SubagentsTab>
           onRefresh: () => ref.read(subagentsProvider.notifier).load(),
           child: ListView(
             padding: const EdgeInsets.fromLTRB(
-              AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.xxl),
-            children: [
-                  if (user.isNotEmpty) ...[
-                    const AppSectionHeader(title: '个人与工作区'),
-                    AppTileGroup(tiles: [
-                      for (final a in user) _agentTile(theme, cs, a),
-                    ]),
-                  ],
-                  if (builtIn.isNotEmpty) ...[
-                    const SizedBox(height: AppSpacing.md),
-                    const AppSectionHeader(title: '内置'),
-                    AppTileGroup(tiles: [
-                      for (final a in builtIn) _agentTile(theme, cs, a),
-                    ]),
-                  ],
-                  if (plugin.isNotEmpty) ...[
-                    const SizedBox(height: AppSpacing.md),
-                    const AppSectionHeader(title: '插件提供'),
-                    AppTileGroup(tiles: [
-                      for (final a in plugin) _agentTile(theme, cs, a),
-                    ]),
-                ],
-              ],
+              AppSpacing.lg,
+              0,
+              AppSpacing.lg,
+              AppSpacing.xxl,
             ),
+            children: [
+              if (user.isNotEmpty) ...[
+                const AppSectionHeader(title: '个人与工作区'),
+                AppTileGroup(
+                  tiles: [for (final a in user) _agentTile(theme, cs, a)],
+                ),
+              ],
+              if (builtIn.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.md),
+                const AppSectionHeader(title: '内置'),
+                AppTileGroup(
+                  tiles: [for (final a in builtIn) _agentTile(theme, cs, a)],
+                ),
+              ],
+              if (plugin.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.md),
+                const AppSectionHeader(title: '插件提供'),
+                AppTileGroup(
+                  tiles: [for (final a in plugin) _agentTile(theme, cs, a)],
+                ),
+              ],
+            ],
+          ),
         );
       },
     );
@@ -111,7 +118,9 @@ class SubagentsTabState extends ConsumerState<SubagentsTab>
   AppTile _agentTile(ThemeData theme, ColorScheme cs, SubagentEntry a) {
     return AppTile(
       icon: Icons.smart_toy_outlined,
-      iconTint: _agentColor(a.color) ?? (a.enabled ? AppColors.accent : cs.onSurfaceVariant),
+      iconTint:
+          _agentColor(a.color) ??
+          (a.enabled ? AppColors.accent : cs.onSurfaceVariant),
       title: a.name,
       subtitle: a.description.isNotEmpty
           ? a.description
@@ -125,10 +134,16 @@ class SubagentsTabState extends ConsumerState<SubagentsTab>
     );
   }
 
-  void _openEditor(BuildContext context, {SubagentEntry? agent, bool isNew = false}) {
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => SubagentEditorPage(agent: agent, isNew: isNew),
-    ));
+  void _openEditor(
+    BuildContext context, {
+    SubagentEntry? agent,
+    bool isNew = false,
+  }) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => SubagentEditorPage(agent: agent, isNew: isNew),
+      ),
+    );
   }
 
   /// 新建子智能体 (页面右上角入口)
@@ -137,19 +152,26 @@ class SubagentsTabState extends ConsumerState<SubagentsTab>
 
 /// zcode agent 颜色名 → Material 色
 Color? _agentColor(String? name) => switch (name) {
-      'blue' => const Color(0xFF3B82F6),
-      'green' => const Color(0xFF22C55E),
-      'purple' => const Color(0xFF8B5CF6),
-      'orange' => const Color(0xFFF97316),
-      'red' => const Color(0xFFEF4444),
-      'pink' => const Color(0xFFEC4899),
-      'cyan' => const Color(0xFF06B6D4),
-      'yellow' => const Color(0xFFEAB308),
-      _ => null,
-    };
+  'blue' => const Color(0xFF3B82F6),
+  'green' => const Color(0xFF22C55E),
+  'purple' => const Color(0xFF8B5CF6),
+  'orange' => const Color(0xFFF97316),
+  'red' => const Color(0xFFEF4444),
+  'pink' => const Color(0xFFEC4899),
+  'cyan' => const Color(0xFF06B6D4),
+  'yellow' => const Color(0xFFEAB308),
+  _ => null,
+};
 
 const kAgentColors = <String>[
-  'blue', 'green', 'purple', 'orange', 'red', 'pink', 'cyan', 'yellow',
+  'blue',
+  'green',
+  'purple',
+  'orange',
+  'red',
+  'pink',
+  'cyan',
+  'yellow',
 ];
 
 // ================================================================
@@ -162,8 +184,7 @@ class SubagentEditorPage extends ConsumerStatefulWidget {
   const SubagentEditorPage({super.key, this.agent, this.isNew = false});
 
   @override
-  ConsumerState<SubagentEditorPage> createState() =>
-      _SubagentEditorPageState();
+  ConsumerState<SubagentEditorPage> createState() => _SubagentEditorPageState();
 }
 
 class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
@@ -192,15 +213,18 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
     _desc = TextEditingController(text: a?.description ?? '');
     _prompt = TextEditingController(text: a?.systemPrompt ?? '');
     _tools = TextEditingController(
-        text: a != null && a.tools.isNotEmpty && !a.tools.contains('*')
-            ? a.tools.join(', ')
-            : '');
-    _disallowed =
-        TextEditingController(text: a?.disallowedTools.join(', ') ?? '');
+      text: a != null && a.tools.isNotEmpty && !a.tools.contains('*')
+          ? a.tools.join(', ')
+          : '',
+    );
+    _disallowed = TextEditingController(
+      text: a?.disallowedTools.join(', ') ?? '',
+    );
     _mcp = TextEditingController(text: a?.mcpServers.join(', ') ?? '');
     _skillsList = TextEditingController(text: a?.skills.join(', ') ?? '');
     _maxTurns = TextEditingController(
-        text: a?.maxTurns != null ? '${a!.maxTurns}' : '');
+      text: a?.maxTurns != null ? '${a!.maxTurns}' : '',
+    );
     _modelOverride = a?.model;
     _thoughtLevel = a?.thoughtLevel;
     _color = a?.color ?? 'blue';
@@ -210,7 +234,14 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
   @override
   void dispose() {
     for (final c in [
-      _name, _desc, _prompt, _tools, _disallowed, _mcp, _skillsList, _maxTurns
+      _name,
+      _desc,
+      _prompt,
+      _tools,
+      _disallowed,
+      _mcp,
+      _skillsList,
+      _maxTurns,
     ]) {
       c.dispose();
     }
@@ -222,7 +253,9 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
       // 内置: 只保存模型/思考级别覆盖
       setState(() => _saving = true);
       try {
-        await ref.read(subagentsProvider.notifier).setBuiltInOverride(
+        await ref
+            .read(subagentsProvider.notifier)
+            .setBuiltInOverride(
               widget.agent!.name,
               _modelOverride,
               _thoughtLevel,
@@ -237,7 +270,8 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
     }
 
     final name = _name.text.trim();
-    if (name.length < 3 || name.length > 50 ||
+    if (name.length < 3 ||
+        name.length > 50 ||
         !RegExp(r'^[a-zA-Z0-9-]+$').hasMatch(name)) {
       _err('名称无效', '名称需 3-50 个字符, 仅字母/数字/连字符');
       return;
@@ -262,8 +296,7 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
       if (_skillsList.text.trim().isNotEmpty)
         'skills': _splitList(_skillsList.text),
       if (_permissionMode != null) 'permissionMode': _permissionMode,
-      if (int.tryParse(_maxTurns.text.trim()) case final mt?)
-        'maxTurns': mt,
+      if (int.tryParse(_maxTurns.text.trim()) case final mt?) 'maxTurns': mt,
       if (_mcp.text.trim().isNotEmpty) 'mcpServers': _splitList(_mcp.text),
     };
     try {
@@ -290,9 +323,12 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
   void _err(String title, Object e) {
     appLog.w('[SubagentEditor] $title: $e');
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
           content: Text('$title: $e'),
-          behavior: SnackBarBehavior.floating));
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
   }
 
@@ -304,9 +340,9 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.isNew
-            ? '新建子智能体'
-            : (_isBuiltIn ? '内置子智能体' : '编辑子智能体')),
+        title: Text(
+          widget.isNew ? '新建子智能体' : (_isBuiltIn ? '内置子智能体' : '编辑子智能体'),
+        ),
         actions: [
           if (!widget.isNew && !_isBuiltIn && a != null)
             IconButton(
@@ -319,7 +355,8 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
                 ? const SizedBox(
                     width: 16,
                     height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2))
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
                 : const Text('保存'),
           ),
         ],
@@ -331,13 +368,18 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
             _infoCard(theme, cs, a!),
             const SizedBox(height: AppSpacing.md),
           ] else ...[
-            CapsField(controller: _name, label: '名称', hint: 'my-agent (3-50 字符, 字母/数字/连字符)'),
+            CapsField(
+              controller: _name,
+              label: '名称',
+              hint: 'my-agent (3-50 字符, 字母/数字/连字符)',
+            ),
             const SizedBox(height: AppSpacing.md),
             CapsField(
-                controller: _desc,
-                label: '描述',
-                hint: '在 @ 提及列表中展示',
-                maxLines: 2),
+              controller: _desc,
+              label: '描述',
+              hint: '在 @ 提及列表中展示',
+              maxLines: 2,
+            ),
             const SizedBox(height: AppSpacing.md),
             _colorPicker(theme, cs),
             const SizedBox(height: AppSpacing.md),
@@ -348,26 +390,38 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
           if (!_isBuiltIn) ...[
             const SizedBox(height: AppSpacing.md),
             CapsField(
-                controller: _prompt,
-                label: '系统提示词',
-                hint: '定义该子智能体的行为…',
-                maxLines: 6),
+              controller: _prompt,
+              label: '系统提示词',
+              hint: '定义该子智能体的行为…',
+              maxLines: 6,
+            ),
             const SizedBox(height: AppSpacing.md),
             CapsField(
-                controller: _tools,
-                label: '可用工具 (留空 = 继承全部)',
-                hint: 'Bash, Read, Grep…'),
+              controller: _tools,
+              label: '可用工具 (留空 = 继承全部)',
+              hint: 'Bash, Read, Grep…',
+            ),
             const SizedBox(height: AppSpacing.sm),
             Wrap(
               spacing: AppSpacing.sm,
               runSpacing: AppSpacing.xs,
               children: [
                 for (final t in [
-                  'Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep',
-                  'WebFetch', 'WebSearch', 'TodoWrite'
+                  'Bash',
+                  'Read',
+                  'Edit',
+                  'Write',
+                  'Glob',
+                  'Grep',
+                  'WebFetch',
+                  'WebSearch',
+                  'TodoWrite',
                 ])
                   ActionChip(
-                    label: Text(t, style: const TextStyle(fontSize: AppTextSizes.caption)),
+                    label: Text(
+                      t,
+                      style: const TextStyle(fontSize: AppTextSizes.caption),
+                    ),
                     visualDensity: VisualDensity.compact,
                     onPressed: () {
                       final cur = _splitList(_tools.text);
@@ -381,25 +435,29 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
             ),
             const SizedBox(height: AppSpacing.md),
             CapsField(
-                controller: _disallowed,
-                label: '禁用工具 (可选)',
-                hint: '逗号分隔'),
+              controller: _disallowed,
+              label: '禁用工具 (可选)',
+              hint: '逗号分隔',
+            ),
             const SizedBox(height: AppSpacing.md),
             CapsField(
-                controller: _mcp,
-                label: 'MCP 服务器 (可选)',
-                hint: '逗号分隔 server 名'),
+              controller: _mcp,
+              label: 'MCP 服务器 (可选)',
+              hint: '逗号分隔 server 名',
+            ),
             const SizedBox(height: AppSpacing.md),
             CapsField(
-                controller: _skillsList,
-                label: '绑定技能 (可选)',
-                hint: '逗号分隔技能名'),
+              controller: _skillsList,
+              label: '绑定技能 (可选)',
+              hint: '逗号分隔技能名',
+            ),
             const SizedBox(height: AppSpacing.md),
             CapsField(
-                controller: _maxTurns,
-                label: '最大轮次 (可选)',
-                hint: '如 20',
-                keyboardType: TextInputType.number),
+              controller: _maxTurns,
+              label: '最大轮次 (可选)',
+              hint: '如 20',
+              keyboardType: TextInputType.number,
+            ),
             const SizedBox(height: AppSpacing.md),
             _permPicker(theme, cs),
           ],
@@ -419,23 +477,33 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            CapsBadge('内置 · 只读'),
-            const SizedBox(width: AppSpacing.sm),
-            Expanded(
-                child: Text(a.description,
-                    style: TextStyle(
-                        fontSize: AppTextSizes.bodySm,
-                        color: cs.onSurfaceVariant))),
-          ]),
+          Row(
+            children: [
+              CapsBadge('内置 · 只读'),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  a.description,
+                  style: TextStyle(
+                    fontSize: AppTextSizes.bodySm,
+                    color: cs.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
+          ),
           if (a.path != null) ...[
             const SizedBox(height: AppSpacing.xs),
-            Text(a.path!,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: AppText.mono(context,
-                    size: AppTextSizes.monoXs,
-                    color: cs.onSurfaceVariant.withValues(alpha: 0.6))),
+            Text(
+              a.path!,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppText.mono(
+                context,
+                size: AppTextSizes.monoXs,
+                color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+              ),
+            ),
           ],
         ],
       ),
@@ -446,11 +514,14 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('颜色',
-            style: TextStyle(
-                fontSize: AppTextSizes.label,
-                fontWeight: FontWeight.w600,
-                color: cs.onSurfaceVariant)),
+        Text(
+          '颜色',
+          style: TextStyle(
+            fontSize: AppTextSizes.label,
+            fontWeight: FontWeight.w600,
+            color: cs.onSurfaceVariant,
+          ),
+        ),
         const SizedBox(height: AppSpacing.sm),
         SizedBox(
           height: 36,
@@ -497,23 +568,29 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(_isBuiltIn ? '模型覆盖' : '模型',
-            style: TextStyle(
-                fontSize: AppTextSizes.label,
-                fontWeight: FontWeight.w600,
-                color: cs.onSurfaceVariant)),
+        Text(
+          _isBuiltIn ? '模型覆盖' : '模型',
+          style: TextStyle(
+            fontSize: AppTextSizes.label,
+            fontWeight: FontWeight.w600,
+            color: cs.onSurfaceVariant,
+          ),
+        ),
         const SizedBox(height: AppSpacing.xs + 2),
         InkWell(
           onTap: () => _pickModelSheet(models, labelOf),
           borderRadius: BorderRadius.circular(AppRadius.md),
           child: Container(
             padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.md, vertical: AppSpacing.sm + 2),
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.sm + 2,
+            ),
             decoration: BoxDecoration(
               color: cs.surfaceContainerHigh,
               borderRadius: BorderRadius.circular(AppRadius.md),
               border: Border.all(
-                  color: cs.outlineVariant.withValues(alpha: 0.5)),
+                color: cs.outlineVariant.withValues(alpha: 0.5),
+              ),
             ),
             child: Row(
               children: [
@@ -528,13 +605,18 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
                 if (current != null && current.isNotEmpty)
                   GestureDetector(
                     onTap: () => setState(() => _modelOverride = null),
-                    child: Icon(Icons.close_rounded,
-                        size: 18, color: cs.onSurfaceVariant),
+                    child: Icon(
+                      Icons.close_rounded,
+                      size: 18,
+                      color: cs.onSurfaceVariant,
+                    ),
                   )
                 else
-                  Icon(Icons.chevron_right_rounded,
-                      size: 20,
-                      color: cs.onSurfaceVariant.withValues(alpha: 0.5)),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 20,
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.5),
+                  ),
               ],
             ),
           ),
@@ -557,20 +639,28 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
   bool _overrideMatches(String modelId) =>
       _modelOverride == 'custom:${modelId.replaceAll('/', ':')}';
 
-  Future<void> _pickModelSheet(List<String> models, String Function(String) labelOf) {
+  Future<void> _pickModelSheet(
+    List<String> models,
+    String Function(String) labelOf,
+  ) {
     final cs = Theme.of(context).colorScheme;
     return capsSheet(
       context,
       child: ListView(
         shrinkWrap: true,
         padding: const EdgeInsets.fromLTRB(
-            AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
+          AppSpacing.lg,
+          0,
+          AppSpacing.lg,
+          AppSpacing.lg,
+        ),
         children: [
-          Text('选择模型',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w600)),
+          Text(
+            '选择模型',
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+          ),
           const SizedBox(height: AppSpacing.sm),
           ListTile(
             contentPadding: EdgeInsets.zero,
@@ -589,17 +679,23 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
               contentPadding: EdgeInsets.zero,
               dense: true,
               title: Text(labelOf(id)),
-              subtitle: Text(id,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppText.mono(context,
-                      size: AppTextSizes.monoXs,
-                      color: cs.onSurfaceVariant.withValues(alpha: 0.6))),
+              subtitle: Text(
+                id,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppText.mono(
+                  context,
+                  size: AppTextSizes.monoXs,
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+                ),
+              ),
               trailing: _overrideMatches(id)
                   ? Icon(Icons.check_rounded, size: 20, color: AppColors.accent)
                   : null,
               onTap: () {
-                setState(() => _modelOverride = 'custom:${id.replaceAll('/', ':')}');
+                setState(
+                  () => _modelOverride = 'custom:${id.replaceAll('/', ':')}',
+                );
                 Navigator.pop(context);
               },
             ),
@@ -618,11 +714,14 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('思考级别',
-            style: TextStyle(
-                fontSize: AppTextSizes.label,
-                fontWeight: FontWeight.w600,
-                color: cs.onSurfaceVariant)),
+        Text(
+          '思考级别',
+          style: TextStyle(
+            fontSize: AppTextSizes.label,
+            fontWeight: FontWeight.w600,
+            color: cs.onSurfaceVariant,
+          ),
+        ),
         const SizedBox(height: AppSpacing.xs + 2),
         SegmentedButton<String>(
           segments: [
@@ -649,11 +748,14 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('权限模式',
-            style: TextStyle(
-                fontSize: AppTextSizes.label,
-                fontWeight: FontWeight.w600,
-                color: cs.onSurfaceVariant)),
+        Text(
+          '权限模式',
+          style: TextStyle(
+            fontSize: AppTextSizes.label,
+            fontWeight: FontWeight.w600,
+            color: cs.onSurfaceVariant,
+          ),
+        ),
         const SizedBox(height: AppSpacing.xs + 2),
         Wrap(
           spacing: AppSpacing.sm,
@@ -661,11 +763,12 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
           children: [
             for (final e in options.entries)
               ChoiceChip(
-                label: Text(e.value,
-                    style: const TextStyle(fontSize: AppTextSizes.label)),
+                label: Text(
+                  e.value,
+                  style: const TextStyle(fontSize: AppTextSizes.label),
+                ),
                 selected: (_permissionMode ?? '') == (e.key ?? ''),
-                onSelected: (_) =>
-                    setState(() => _permissionMode = e.key),
+                onSelected: (_) => setState(() => _permissionMode = e.key),
                 visualDensity: VisualDensity.compact,
               ),
           ],
@@ -675,9 +778,11 @@ class _SubagentEditorPageState extends ConsumerState<SubagentEditorPage> {
   }
 
   Future<void> _delete(SubagentEntry a) async {
-    final ok = await capsConfirm(context,
-        title: '删除子智能体',
-        message: '确定删除「${a.name}」？将移除对应的 agent 文件，且无法撤销。');
+    final ok = await capsConfirm(
+      context,
+      title: '删除子智能体',
+      message: '确定删除「${a.name}」？将移除对应的 agent 文件，且无法撤销。',
+    );
     if (!ok) return;
     try {
       await ref.read(subagentsProvider.notifier).delete(a);

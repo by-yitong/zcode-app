@@ -191,12 +191,14 @@ class RpcCodec {
     final header = _deserialize(r) as List?;
     final body = _deserialize(r);
 
-    final typeCode =
-        (header != null && header.isNotEmpty) ? header[0] as int : -1;
+    final typeCode = (header != null && header.isNotEmpty)
+        ? header[0] as int
+        : -1;
     final id = (header != null && header.length > 1) ? header[1] : null;
     final channel = (header != null && header.length > 2) ? header[2] : null;
-    final methodOrEvent =
-        (header != null && header.length > 3) ? header[3] : null;
+    final methodOrEvent = (header != null && header.length > 3)
+        ? header[3]
+        : null;
 
     return RpcFrame(
       typeCode: typeCode,

@@ -13,29 +13,36 @@ class ZcodeApiClient {
   final Dio _dio;
 
   ZcodeApiClient({Dio? dio})
-      : _dio = dio ??
-            Dio(BaseOptions(
+    : _dio =
+          dio ??
+          Dio(
+            BaseOptions(
               baseUrl: AppConfig.relayOrigin,
               connectTimeout: const Duration(seconds: 15),
               receiveTimeout: const Duration(seconds: 30),
-              headers: {
-                'Content-Type': 'application/json',
-              },
-            )) {
-    _dio.interceptors.add(LogInterceptor(
-      requestBody: false,
-      responseBody: false,
-      requestHeader: false,
-    ));
+              headers: {'Content-Type': 'application/json'},
+            ),
+          ) {
+    _dio.interceptors.add(
+      LogInterceptor(
+        requestBody: false,
+        responseBody: false,
+        requestHeader: false,
+      ),
+    );
     // LogInterceptor 关闭了请求/响应体, 失败时只有 URL; 补一条带状态的错误日志
-    _dio.interceptors.add(InterceptorsWrapper(
-      onError: (e, handler) {
-        final req = e.requestOptions;
-        appLog.w('[Http] ${req.method} ${req.path} 失败 '
-            '(HTTP ${e.response?.statusCode ?? "-"}): ${e.message}');
-        handler.next(e);
-      },
-    ));
+    _dio.interceptors.add(
+      InterceptorsWrapper(
+        onError: (e, handler) {
+          final req = e.requestOptions;
+          appLog.w(
+            '[Http] ${req.method} ${req.path} 失败 '
+            '(HTTP ${e.response?.statusCode ?? "-"}): ${e.message}',
+          );
+          handler.next(e);
+        },
+      ),
+    );
   }
 
   /// Bootstrap — 获取工作区列表
@@ -54,10 +61,7 @@ class ZcodeApiClient {
   ) async {
     final response = await _dio.post(
       '${AppConfig.remoteControlApiPrefix}/platform/$token',
-      data: {
-        'method': method,
-        'args': args,
-      },
+      data: {'method': method, 'args': args},
     );
     final data = response.data as Map<String, dynamic>;
     return data['result'];

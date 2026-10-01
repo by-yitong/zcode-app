@@ -19,17 +19,15 @@ Future<void> showQuestionSheet(
     bool decline,
     Map<int, List<String>> selectedValues,
     Map<int, String> customAnswers,
-  }) onAnswer,
+  })
+  onAnswer,
 }) async {
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (ctx) => _QuestionSheet(
-      question: question,
-      theme: theme,
-      onAnswer: onAnswer,
-    ),
+    builder: (ctx) =>
+        _QuestionSheet(question: question, theme: theme, onAnswer: onAnswer),
   );
 }
 
@@ -40,7 +38,8 @@ class _QuestionSheet extends StatefulWidget {
     bool decline,
     Map<int, List<String>> selectedValues,
     Map<int, String> customAnswers,
-  }) onAnswer;
+  })
+  onAnswer;
 
   const _QuestionSheet({
     required this.question,
@@ -55,6 +54,7 @@ class _QuestionSheet extends StatefulWidget {
 class _QuestionSheetState extends State<_QuestionSheet> {
   /// 每题选中的选项 value 集合 (按题下标; 提交时按选项顺序重排)
   final Map<int, Set<String>> _selected = {};
+
   /// 每题自定义回答输入框
   late final List<TextEditingController> _customControllers;
 
@@ -159,8 +159,9 @@ class _QuestionSheetState extends State<_QuestionSheet> {
                 height: 4,
                 margin: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
                 decoration: BoxDecoration(
-                  color: theme.colorScheme.onSurfaceVariant
-                      .withValues(alpha: 0.4),
+                  color: theme.colorScheme.onSurfaceVariant.withValues(
+                    alpha: 0.4,
+                  ),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),

@@ -1,8 +1,7 @@
 /// 工作区类型
 enum WorkspaceKind {
   local('local'),
-  remote('remote'),
-  ;
+  remote('remote');
 
   final String value;
   const WorkspaceKind(this.value);
@@ -36,22 +35,22 @@ class Workspace {
   });
 
   factory Workspace.fromJson(Map<String, dynamic> json) {
-    final path = json['workspacePath'] as String? ??
-        json['path'] as String? ??
-        '';
+    final path =
+        json['workspacePath'] as String? ?? json['path'] as String? ?? '';
     return Workspace(
-      workspaceKey: path,  // workspaceKey = workspacePath (实测)
+      workspaceKey: path, // workspaceKey = workspacePath (实测)
       workspaceIdentity: json['workspaceIdentity'] as String? ?? path,
       workspacePath: path,
-      name: json['label'] as String? ??
-        json['name'] as String? ??
-        path.split('/').where((s) => s.isNotEmpty).lastOrNull ??
-        'Unknown',
+      name:
+          json['label'] as String? ??
+          json['name'] as String? ??
+          path.split('/').where((s) => s.isNotEmpty).lastOrNull ??
+          'Unknown',
       kind: WorkspaceKind.fromString(json['kind'] as String?),
       canBridge: json['canBridge'] as bool? ?? true,
       branch: json['branch'] as String?,
-      preferredTaskId: json['preferredTaskId'] as String? ??
-          json['taskId'] as String?,
+      preferredTaskId:
+          json['preferredTaskId'] as String? ?? json['taskId'] as String?,
     );
   }
 
@@ -101,14 +100,16 @@ class Task {
   factory Task.fromJson(Map<String, dynamic> json) {
     return Task(
       id: json['id'] as String? ?? json['taskId'] as String? ?? '',
-      workspaceKey: json['workspaceKey'] as String? ??
+      workspaceKey:
+          json['workspaceKey'] as String? ??
           json['workspacePath'] as String? ??
           json['workspace_key'] as String? ??
           '',
       title: json['title'] as String? ?? 'Untitled',
       // bootstrap 用 displayStatus, snapshot 用 status
       status: TaskStatus.fromString(
-          json['displayStatus'] as String? ?? json['status'] as String?),
+        json['displayStatus'] as String? ?? json['status'] as String?,
+      ),
       archived: json['archived'] as bool? ?? false,
       // 时间戳: 实测为 int 毫秒, 兼容 ISO 字符串
       updatedAt: _parseTime(json['updatedAt']),
@@ -146,8 +147,7 @@ enum TaskStatus {
   idle('idle'),
   running('running'),
   complete('complete'),
-  error('error'),
-  ;
+  error('error');
 
   final String value;
   const TaskStatus(this.value);
@@ -227,11 +227,7 @@ class DiffSummary {
   final int added;
   final int removed;
 
-  DiffSummary({
-    required this.filePath,
-    this.added = 0,
-    this.removed = 0,
-  });
+  DiffSummary({required this.filePath, this.added = 0, this.removed = 0});
 }
 
 /// Agent 编辑模式
@@ -239,8 +235,7 @@ enum AgentMode {
   confirm('confirm', '变更前确认', '编辑前先问我'),
   autoEdit('auto-edit', '自动编辑', '自动编辑文件'),
   plan('plan', '计划模式', '编辑前先出计划'),
-  fullAccess('full-access', '完全访问', '减少确认次数'),
-  ;
+  fullAccess('full-access', '完全访问', '减少确认次数');
 
   final String value;
   final String displayName;

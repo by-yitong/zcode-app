@@ -574,9 +574,7 @@ class ComposerSendButton extends StatelessWidget {
           width: 36,
           height: 36,
           decoration: BoxDecoration(
-            color: filled
-                ? color
-                : theme.colorScheme.surfaceContainerHighest,
+            color: filled ? color : theme.colorScheme.surfaceContainerHighest,
             shape: BoxShape.circle,
           ),
           // 图标色跟随主题: 禁用态在浅色背景上用深色, 白色箭头不可见

@@ -30,10 +30,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
       duration: const Duration(milliseconds: 800),
       vsync: this,
     );
-    _fadeAnimation = CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeIn,
-    );
+    _fadeAnimation = CurvedAnimation(parent: _controller, curve: Curves.easeIn);
     _controller.forward();
     _checkSession();
   }
@@ -154,8 +151,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                   child: LinearProgressIndicator(
                     minHeight: 4,
                     backgroundColor: Color.fromRGBO(255, 255, 255, 0.10),
-                    valueColor:
-                        AlwaysStoppedAnimation(Color.fromRGBO(255, 255, 255, 0.5)),
+                    valueColor: AlwaysStoppedAnimation(
+                      Color.fromRGBO(255, 255, 255, 0.5),
+                    ),
                   ),
                 ),
               ),

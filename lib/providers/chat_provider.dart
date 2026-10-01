@@ -115,8 +115,10 @@ class ToolActivity {
   final String toolName;
   final String status; // 'progress' | 'done' | 'error' | ... (payload.kind)
   final int? elapsedMs;
+
   /// 工具输入参数 (来自 payload.input, 可能含 command/path/query 等)
   final Map<String, dynamic>? input;
+
   /// 工具执行结果文本 (来自 payload.result 或 payload.output)
   final String? result;
 
@@ -196,7 +198,8 @@ class PermissionOption {
   final String name;
   final String? description;
   final String decision; // "allow" | "deny" | "escalate" | "modify"
-  final Map<String, dynamic> fullResponse; // 完整 response (含 reason, permissionUpdates)
+  final Map<String, dynamic>
+  fullResponse; // 完整 response (含 reason, permissionUpdates)
 
   const PermissionOption({
     required this.optionId,
@@ -237,7 +240,8 @@ class PendingPermission {
   final String toolName;
   final String reason;
   final String riskLevel; // "low" | "medium" | "high" | "critical"
-  final String traceId; // ★ permission 自己的 traceId (网页端用它做 runId 发 respond_permission)
+  final String
+  traceId; // ★ permission 自己的 traceId (网页端用它做 runId 发 respond_permission)
   final Map<String, dynamic> input;
   final List<PermissionOption> options;
 
@@ -254,21 +258,28 @@ class PendingPermission {
 
   factory PendingPermission.fromJson(Map<String, dynamic> json) {
     final optsRaw = json['options'] as List<dynamic>? ?? [];
-    final requestId = json['requestId'] as String? ??
-        json['permissionRequestId'] as String? ?? '';
+    final requestId =
+        json['requestId'] as String? ??
+        json['permissionRequestId'] as String? ??
+        '';
     return PendingPermission(
       id: requestId,
-      toolCallId: json['toolCallId'] as String? ??
-          (json['raw'] is Map ? (json['raw'] as Map)['toolCallId'] as String? : null) ?? '',
-      toolName: json['toolName'] as String? ??
-          json['kind'] as String? ?? '',
-      reason: json['reason'] as String? ??
-          json['description'] as String? ?? '',
+      toolCallId:
+          json['toolCallId'] as String? ??
+          (json['raw'] is Map
+              ? (json['raw'] as Map)['toolCallId'] as String?
+              : null) ??
+          '',
+      toolName: json['toolName'] as String? ?? json['kind'] as String? ?? '',
+      reason: json['reason'] as String? ?? json['description'] as String? ?? '',
       riskLevel: json['riskLevel'] as String? ?? 'medium',
       // ★ traceId 在 runtime.pendingPermissions 顶层, projection 里没有 (用 toolCallId 兜底)
       traceId: json['traceId'] as String? ?? '',
-      input: (json['input'] as Map<String, dynamic>?) ??
-          (json['raw'] is Map ? (json['raw'] as Map)['input'] as Map<String, dynamic>? : null) ??
+      input:
+          (json['input'] as Map<String, dynamic>?) ??
+          (json['raw'] is Map
+              ? (json['raw'] as Map)['input'] as Map<String, dynamic>?
+              : null) ??
           const {},
       options: optsRaw
           .whereType<Map>()
@@ -287,7 +298,11 @@ class QuestionOption {
   final String label;
   final String description;
 
-  const QuestionOption({this.value = '', required this.label, this.description = ''});
+  const QuestionOption({
+    this.value = '',
+    required this.label,
+    this.description = '',
+  });
 }
 
 /// AskUserQuestion 的单题
@@ -381,6 +396,7 @@ void appendTextPart(List<MessagePart> parts, String text) {
 /// 思考过程片段 (web part type: "reasoning" / "thought")
 class ThoughtPart extends MessagePart {
   final String text;
+
   /// 思考耗时 (wire: reasoning.durationMs), 完成后才有
   final int? durationMs;
   const ThoughtPart(this.text, {this.durationMs});
@@ -429,34 +445,33 @@ class SubagentPart extends MessagePart {
     String? summaryText,
     String? childSessionId,
     List<MessagePart>? children,
-  }) =>
-      SubagentPart(
-        subagentType: subagentType,
-        status: status ?? this.status,
-        summaryText: summaryText ?? this.summaryText,
-        childSessionId: childSessionId ?? this.childSessionId,
-        parentToolCallId: parentToolCallId,
-        rowIdKey: rowIdKey,
-        children: children ?? this.children,
-      );
+  }) => SubagentPart(
+    subagentType: subagentType,
+    status: status ?? this.status,
+    summaryText: summaryText ?? this.summaryText,
+    childSessionId: childSessionId ?? this.childSessionId,
+    parentToolCallId: parentToolCallId,
+    rowIdKey: rowIdKey,
+    children: children ?? this.children,
+  );
 }
 
 /// 子会话 parts 里是否仍有运行中的活动 (工具 running / 嵌套子代理 running)。
 /// 弹窗轮询的停止条件: 刷新后无运行活动即认为已结束。
 bool hasRunningActivity(List<MessagePart> parts) => parts.any((p) {
-      if (p is ToolPart) return p.activity.isRunning;
-      if (p is SubagentPart) return p.isRunning;
-      return false;
-    });
+  if (p is ToolPart) return p.activity.isRunning;
+  if (p is SubagentPart) return p.isRunning;
+  return false;
+});
 
 /// 消息里仍在运行的子代理 (输入框顶部"后台运行"指示条用)。
 /// 只认 parts 里的 SubagentPart.running — 与网页端一致,
 /// 快照 backgroundWorks 的 kind=='subagent' 条目不用于计数。
 List<SubagentPart> runningSubagentsIn(List<DisplayMessage> messages) => [
-      for (final m in messages)
-        for (final p in m.parts)
-          if (p is SubagentPart && p.isRunning) p
-    ];
+  for (final m in messages)
+    for (final p in m.parts)
+      if (p is SubagentPart && p.isRunning) p,
+];
 
 /// 显示用消息
 /// 服务端排队中的消息 (任务运行中发送, state.queue.items)
@@ -511,11 +526,11 @@ class PendingAttachment {
   });
 
   PendingAttachment copyWith({String? uploadedRef}) => PendingAttachment(
-        fileName: fileName,
-        mime: mime,
-        bytes: bytes,
-        uploadedRef: uploadedRef,
-      );
+    fileName: fileName,
+    mime: mime,
+    bytes: bytes,
+    uploadedRef: uploadedRef,
+  );
 }
 
 class DisplayMessage {
@@ -525,6 +540,7 @@ class DisplayMessage {
   final String? thought;
   final String? model;
   final bool isStreaming;
+
   /// 轮次被打断 (turnHeader.state == completedInterrupted)。
   /// 对齐桌面端: 打断轮次无尾段正文 → 过程整轮展开不折叠。
   final bool interrupted;
@@ -533,6 +549,7 @@ class DisplayMessage {
   /// 按序片段 (匹配 web 客户端 parts[])。非空时 UI 据此交错渲染,
   /// 否则回退到旧的 content/thought/activities 固定顺序渲染。
   final List<MessagePart> parts;
+
   /// 用户消息附件 (图片; 乐观回显带 localBytes, 行落地后带 ref)
   final List<UserAttachment> attachments;
 
@@ -540,8 +557,10 @@ class DisplayMessage {
   /// 本轮工作时长 (activeMs > endedAt-startedAt)。运行中为 null,
   /// UI 用 [turnStartedAt] 实时跳动显示 "工作中 X"。
   final int? workedMs;
+
   /// 轮次开始时间 (wire: turnHeader.startedAt)
   final DateTime? turnStartedAt;
+
   /// 本轮文件变更统计 (wire: turnHeader.fileChanges, 权威来源)
   final V4TurnFileChanges? fileChanges;
 
@@ -605,33 +624,44 @@ class ChatState {
   // 协议实测 (规格 §5.5): 只有这两种。新会话走 createSession.mode;
   // 已有会话可热切换 (zcode-session.setMode)。
   final String mode;
+
   /// 思考级别: 'max' | 'medium' | 'nothink'
   final String thoughtLevel;
+
   /// 当前会话的模型 ID (形如 providerId/slug), 来自 snapshot; null=未知。
   /// 供 UI 模型选择器显示真实模型名。
   final String? model;
+
   /// AI 向用户提问 (AskUserQuestion 工具), 需要用户选择后继续
   final AskUserQuestion? pendingQuestion;
+
   /// Token 用量 (累计 input/output; AI 回复完成后刷新, 累积保留)
   final ({int input, int output, int max})? tokenUsage;
+
   /// 当前会话标题 (来自 snapshot.meta.title; 供 UI 顶栏/历史抽屉显示)。
   /// null = 新会话尚未加载历史, UI 可回退到 task.title。
   final String? sessionTitle;
+
   /// AI 计划清单 (来自 snapshot.runtime.plan[], TodoWrite 工具产出)。
   /// 空列表 = 无计划。随 session 事件实时更新 (pending→in_progress→completed)。
   final List<PlanItem> plan;
+
   /// 待确认的工具调用 (build 模式下, runtime.pendingPermissions[])。
   /// 非空时 UI 弹确认卡, 用户批准/拒绝后清空对应项。
   final List<PendingPermission> pendingPermissions;
+
   /// 客户端子态: "计划模式" UI 选项的本地标记。
   /// wire 上 mode 仍为 'build' (后端只认 build/yolo), 仅用于 UI 区分与提示。
   final bool isPlanMode;
+
   /// AI 提议的计划 (ExitPlanMode 工具触发), 非空时 UI 弹批准/拒绝卡。
   /// 内容用最近 assistant 消息文本兜底 (plan 原文 wire 上 inputOmitted)。
   final String? pendingPlan;
+
   /// 服务端排队中的消息 (任务运行中发送, state.queue.items)。
   /// 非空时输入框上方显示队列条 (立即/编辑/删除)。
   final List<QueuedMessage> queuedMessages;
+
   /// 后台工作 (V4 snapshot.backgroundWorks / state patch: bash 终端 + 子代理)。
   /// 指示条只消费 kind=='bash' 且 status=='running' 的条目。
   final List<V4BackgroundWork> backgroundWorks;
@@ -688,8 +718,8 @@ class ChatState {
       pendingQuestion: identical(pendingQuestion, _clearPendingQuestion)
           ? null
           : (pendingQuestion is AskUserQuestion
-              ? pendingQuestion
-              : this.pendingQuestion),
+                ? pendingQuestion
+                : this.pendingQuestion),
       tokenUsage: tokenUsage ?? this.tokenUsage,
       sessionTitle: sessionTitle ?? this.sessionTitle,
       // List 字段直接赋值 (允许传空列表清空, 不用 ?? 保留旧值)
@@ -701,9 +731,7 @@ class ChatState {
       // pendingPlan: sentinel 区分"不传"(保留旧值) 和"传null"(清空)
       pendingPlan: identical(pendingPlan, _clearPendingPlan)
           ? null
-          : (pendingPlan is String
-              ? pendingPlan
-              : this.pendingPlan),
+          : (pendingPlan is String ? pendingPlan : this.pendingPlan),
     );
   }
 }
@@ -746,25 +774,33 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// 轮次缓存: 消息 id → (DisplayMessage, 轮次最大 rowId)。
   /// 只缓存完成态 (isStreaming=false) 的轮次。
   final Map<String, (DisplayMessage, int)> _stableTurns = {};
+
   /// 自上次重建以来被 delta 触达的最小 rowId (含其所属轮的轮首);
   /// i64 max = 全部干净。低于水位的完成轮直接复用缓存实例。
   int _dirtyFrom = 0x7FFFFFFFFFFFFFFF;
+
   /// turnId → turnHeader rowId (脏水位定位到轮首, 保证含脏行的轮次必重扫)
   final Map<String, int> _turnHeaderRowIds = {};
 
   // ── 行日志加载 (网页端模式: conversationRowsRangeV4) ──
   /// 流快照窗口的第一行 id (窗口之前还有更早历史)
   int? _rowsFirstRowId;
+
   /// 行日志总行数 (totalCount > 已有行数 = 有更早历史可翻)
   int _rowsTotalCount = 0;
+
   /// 完成时刻元数据补读的防抖 (一轮只补读一次)
   bool _metaRefreshQueued = false;
+
   /// notifier 是否已销毁
   bool _disposedNotifier = false;
+
   /// rowsRange 响应标记的 hasMore (更早方向)
   bool _hasMoreOlder = false;
+
   /// 翻页进行中标志
   bool _loadingOlder = false;
+
   /// 流首帧快照到达信号 (历史加载等它先渲染尾部窗口)
   Completer<void>? _streamSnapshotDone;
 
@@ -774,17 +810,22 @@ class ChatNotifier extends StateNotifier<ChatState> {
   Timer? _rebuildDebounce;
   bool _rebuildPending = false;
   int _rebuildCoalesced = 0;
+
   /// 加载期间已有屏上内容时静默翻页 (见 _loadHistory 头注释)
   bool _silentPagination = false;
+
   /// isResponding 落 false 的延迟确认 (control patch 闪断防抖, 见 _applyStatePatch)
   Timer? _respondingFallTimer;
+
   /// 已发出但 row 尚未到达的乐观用户消息文本。
   /// _rebuildMessagesFromRows 从 rows 重建会丢掉乐观消息, 用它补回,
   /// 避免"发送后消息闪没"; 对应 row 到达时清除 (不再依赖 isResponding —
   /// 闪断会把乐观消息和"思考中"占位一起删掉, 列表高度骤变导致视口跳动)。
   String? _pendingUserText;
+
   /// _pendingUserText 的附件 (乐观回显本地缩略图; row 到达后由行上 ref 接管)
   List<UserAttachment> _pendingUserAttachments = const [];
+
   /// _pendingUserText 的设置时间: 任务已确认结束但 row 始终未到 (协议异常) 的兜底清除
   DateTime? _pendingUserTextAt;
 
@@ -814,8 +855,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
     return resp;
   }
 
-
-
   ChatNotifier(
     this._relay,
     this._ref, {
@@ -824,10 +863,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
     required void Function(Set<String>) mergeDiscovered,
     this._onSessionCreated,
     this._onTitleUpdated,
-  })  : _preferredModelReader = preferredModelReader,
-        _preferredModelSetter = preferredModelSetter,
-        _mergeDiscovered = mergeDiscovered,
-        super(const ChatState()) {
+  }) : _preferredModelReader = preferredModelReader,
+       _preferredModelSetter = preferredModelSetter,
+       _mergeDiscovered = mergeDiscovered,
+       super(const ChatState()) {
     _taskId = _ref.taskId;
     // 已有 taskId: 立即加载历史+订阅; 新会话: 等首发消息
     if (_taskId != null) {
@@ -849,7 +888,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
     });
   }
 
-  String _newMsgId() => 'local_${DateTime.now().millisecondsSinceEpoch}_${_msgCounter++}';
+  String _newMsgId() =>
+      'local_${DateTime.now().millisecondsSinceEpoch}_${_msgCounter++}';
 
   /// 是否是新会话 (还没创建)
   bool get isNewChat => _taskId == null;
@@ -868,9 +908,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
         workspacePath: _ref.workspacePath,
         workspaceIdentity: _ref.workspaceIdentity,
         commandType: 'switchCollaborationMode',
-              sessionId: _taskId,
-              baseRevision: _v4Revision,
-              baseLogEpoch: _v4LogEpoch,
+        sessionId: _taskId,
+        baseRevision: _v4Revision,
+        baseLogEpoch: _v4LogEpoch,
         // wire zod: payload 平铺 {mode} — 外层再包命令名会报 proto.invalidPayload
         payload: {'mode': mode},
       );
@@ -894,9 +934,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
         workspacePath: _ref.workspacePath,
         workspaceIdentity: _ref.workspaceIdentity,
         commandType: 'switchModelConfig',
-              sessionId: _taskId,
-              baseRevision: _v4Revision,
-              baseLogEpoch: _v4LogEpoch,
+        sessionId: _taskId,
+        baseRevision: _v4Revision,
+        baseLogEpoch: _v4LogEpoch,
         // wire zod: payload 平铺 (外层包命令名会被拒)
         payload: {
           'provider': parts.length > 1 ? parts[0] : '',
@@ -924,9 +964,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
         workspacePath: _ref.workspacePath,
         workspaceIdentity: _ref.workspaceIdentity,
         commandType: 'compact',
-              sessionId: _taskId,
-              baseRevision: _v4Revision,
-              baseLogEpoch: _v4LogEpoch,
+        sessionId: _taskId,
+        baseRevision: _v4Revision,
+        baseLogEpoch: _v4LogEpoch,
       );
     } catch (e) {
       appLog.w('[Chat] 压缩失败: $e');
@@ -957,8 +997,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
       if (rad != null) _trackRevision(rad);
       final status = resp['status'];
       if (status != 'accepted') {
-        appLog.w('[Chat] 立即发送被拒绝: status=$status '
-            'reason=${resp['reasonCode']}');
+        appLog.w(
+          '[Chat] 立即发送被拒绝: status=$status '
+          'reason=${resp['reasonCode']}',
+        );
         state = state.copyWith(error: '立即发送被拒绝 ($status)');
       }
     } catch (e) {
@@ -984,8 +1026,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
       if (rad != null) _trackRevision(rad);
       final status = resp['status'];
       if (status != 'accepted') {
-        appLog.w('[Chat] 删除排队项被拒绝: status=$status '
-            'reason=${resp['reasonCode']}');
+        appLog.w(
+          '[Chat] 删除排队项被拒绝: status=$status '
+          'reason=${resp['reasonCode']}',
+        );
         state = state.copyWith(error: '删除排队项被拒绝 ($status)');
       }
     } catch (e) {
@@ -1006,9 +1050,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
         workspacePath: _ref.workspacePath,
         workspaceIdentity: _ref.workspaceIdentity,
         commandType: 'switchModelConfig',
-              sessionId: _taskId,
-              baseRevision: _v4Revision,
-              baseLogEpoch: _v4LogEpoch,
+        sessionId: _taskId,
+        baseRevision: _v4Revision,
+        baseLogEpoch: _v4LogEpoch,
         // wire zod: payload 平铺 (外层包命令名会被拒)
         payload: {
           'provider': parts.length > 1 ? parts[0] : '',
@@ -1068,16 +1112,19 @@ class ChatNotifier extends StateNotifier<ChatState> {
       // 双路竞速: 订阅流 snapshot / 行日志直读并行, 先到先渲染。
       // 流路不 await — 大会话的流快照可能迟到/缺席; _loadHistory 里
       // 会短暂等它, 然后用 conversationRowsRangeV4 补齐更早历史。
-      unawaited(_streamSnapshotDone!.future.then((_) {
-        appLog.d('[Chat] _init: 流 snapshot 到达');
-      }).catchError((_) {}));
+      unawaited(
+        _streamSnapshotDone!.future
+            .then((_) {
+              appLog.d('[Chat] _init: 流 snapshot 到达');
+            })
+            .catchError((_) {}),
+      );
 
       // 上报当前查看的会话 (桌面端设备信号里显示"正在看的对话")
       unawaited(() async {
         try {
           _relay.sendMobileViewState(
-            activeWorkspaceKey:
-                _ref.workspaceIdentity ?? _ref.workspacePath,
+            activeWorkspaceKey: _ref.workspaceIdentity ?? _ref.workspacePath,
             activeTaskId: _taskId,
             deviceInfo: await DeviceInfoService.build(),
           );
@@ -1086,7 +1133,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
       final histSw = Stopwatch()..start();
       await _loadHistory();
-      appLog.i('[Chat] _init: done (总 ${sw.elapsedMilliseconds}ms, 历史 ${histSw.elapsedMilliseconds}ms, messages: ${state.messages.length})');
+      appLog.i(
+        '[Chat] _init: done (总 ${sw.elapsedMilliseconds}ms, 历史 ${histSw.elapsedMilliseconds}ms, messages: ${state.messages.length})',
+      );
       _initDone = true;
     } catch (e, st) {
       appLog.e('[Chat] _init: FAILED', e, st);
@@ -1130,8 +1179,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
       // 不依赖 provider registry — 避开「模型供应商未就绪」整类问题。
       // 先短暂等订阅流的首帧快照 (它自带尾部窗口), 再补读窗口之前的更早行。
       try {
-        await _streamSnapshotDone?.future
-            .timeout(const Duration(milliseconds: 1200));
+        await _streamSnapshotDone?.future.timeout(
+          const Duration(milliseconds: 1200),
+        );
       } catch (_) {}
       try {
         var rowsLoaded = false;
@@ -1153,14 +1203,18 @@ class ChatNotifier extends StateNotifier<ChatState> {
               _rowsFirstRowId! > 1 &&
               pages < 200) {
             final ok = await _fetchRowsRange(
-                beforeRowId: _rowsFirstRowId, rebuild: !_silentPagination);
+              beforeRowId: _rowsFirstRowId,
+              rebuild: !_silentPagination,
+            );
             if (!ok) break;
             pages++;
           }
           _silentPagination = false;
           _rebuildMessagesFromRows();
-          appLog.d('[Chat] 全量历史: ${_rows.length}/$_rowsTotalCount 行 '
-              '($pages 页追加)');
+          appLog.d(
+            '[Chat] 全量历史: ${_rows.length}/$_rowsTotalCount 行 '
+            '($pages 页追加)',
+          );
           _cacheCurrentMessages();
           state = state.copyWith(isLoadingHistory: false);
           return;
@@ -1174,7 +1228,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
       final resp = await _fetchSnapshotWithRetry();
       final snapshot = resp['snapshot'] as Map<String, dynamic>?;
       if (snapshot == null) {
-        appLog.w('[Chat] _loadHistory: 响应无 snapshot, 保留现有内容 (keys=${resp.keys.toList()})');
+        appLog.w(
+          '[Chat] _loadHistory: 响应无 snapshot, 保留现有内容 (keys=${resp.keys.toList()})',
+        );
         state = state.copyWith(isLoadingHistory: false);
         return;
       }
@@ -1216,12 +1272,16 @@ class ChatNotifier extends StateNotifier<ChatState> {
           final parts = (m['parts'] as List?) ?? [];
           final partTypes = parts
               .whereType<Map>()
-              .map((p) =>
-                  '${p['type'] ?? p['kind'] ?? '?'}(${(p['text'] ?? p['content'] ?? '').toString().length})')
+              .map(
+                (p) =>
+                    '${p['type'] ?? p['kind'] ?? '?'}(${(p['text'] ?? p['content'] ?? '').toString().length})',
+              )
               .join(',');
-          appLog.d('[Chat] v3[$i]: role=${m['role']} '
-              'parts=[$partTypes] tools=${(m['tools'] as List?)?.length ?? 0} '
-              'textLen=${messages[i].content.length} keys=${m.keys.toList()}');
+          appLog.d(
+            '[Chat] v3[$i]: role=${m['role']} '
+            'parts=[$partTypes] tools=${(m['tools'] as List?)?.length ?? 0} '
+            'textLen=${messages[i].content.length} keys=${m.keys.toList()}',
+          );
         }
         final meta = snapshot['meta'] as Map<String, dynamic>?;
         state = state.copyWith(
@@ -1232,12 +1292,15 @@ class ChatNotifier extends StateNotifier<ChatState> {
           mode: meta?['mode'] as String? ?? 'build',
           thoughtLevel: meta?['thoughtLevel'] as String? ?? 'max',
         );
-        appLog.d('[Chat] _loadHistory: ${messages.length} messages (v3 format)');
+        appLog.d(
+          '[Chat] _loadHistory: ${messages.length} messages (v3 format)',
+        );
         if (_taskId != null) _memCacheSave(_taskId!, messages);
       } else {
         // 不可解析的快照形状: 打日志定位, 不清空已有内容
         appLog.w(
-            '[Chat] _loadHistory: 快照无 rows/messages (keys=${snapshot.keys.toList()})');
+          '[Chat] _loadHistory: 快照无 rows/messages (keys=${snapshot.keys.toList()})',
+        );
         state = state.copyWith(isLoadingHistory: false);
       }
     } catch (e) {
@@ -1262,8 +1325,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// [beforeRowId] 为空 = 从尾部取; 否则取该 rowId 之前的更早行。
   /// 响应 {rows[], atSeq, atLogEpoch, hasMore} — atLogEpoch 与本地纪元
   /// 不一致时整批丢弃 (服务端 schema 注明的陈旧读防护)。
-  Future<bool> _fetchRowsRange(
-      {int? beforeRowId, int limit = 200, bool rebuild = true}) async {
+  Future<bool> _fetchRowsRange({
+    int? beforeRowId,
+    int limit = 200,
+    bool rebuild = true,
+  }) async {
     final resp = await _relay.conversationRowsRangeV4(
       workspacePath: _ref.workspacePath,
       workspaceIdentity: _ref.workspaceIdentity,
@@ -1291,17 +1357,21 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
     // 翻页合并的是更早的行, 直接压满水位走一次全量重建 (翻页本来也全量重建)
     if (rowsJson.isNotEmpty) _dirtyFrom = 0;
-    final first = rowsJson.whereType<Map>()
+    final first = rowsJson
+        .whereType<Map>()
         .map((r) => (r['rowId'] as num?)?.toInt())
         .whereType<int>()
         .fold<int?>(null, (a, b) => a == null ? b : (a < b ? a : b));
-    if (first != null && (_rowsFirstRowId == null || first < _rowsFirstRowId!)) {
+    if (first != null &&
+        (_rowsFirstRowId == null || first < _rowsFirstRowId!)) {
       _rowsFirstRowId = first;
     }
     _hasMoreOlder = resp['hasMore'] == true;
     if (rebuild) _rebuildMessagesFromRows();
-    appLog.d('[Chat] rowsRange: +$merged 行 (before=$beforeRowId '
-        '共${_rows.length} hasMore=$_hasMoreOlder)');
+    appLog.d(
+      '[Chat] rowsRange: +$merged 行 (before=$beforeRowId '
+      '共${_rows.length} hasMore=$_hasMoreOlder)',
+    );
     return rowsJson.isNotEmpty;
   }
 
@@ -1338,7 +1408,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// 就绪; 桌面端刚重启/registry 同步中会瞬时拒绝 (zcode-server 实测), 重试可恢复。
   Future<Map<String, dynamic>> _fetchSnapshotWithRetry() async {
     const attempts = 3;
-    for (var i = 1;; i++) {
+    for (var i = 1; ; i++) {
       try {
         return await _relay.getTaskSnapshot(
           taskId: _taskId!,
@@ -1388,7 +1458,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
     // 清理已解决的权限 id, 防止集合无限增长
     _notifiedPermIds.removeWhere(
-        (id) => !next.pendingPermissions.any((p) => p.id == id));
+      (id) => !next.pendingPermissions.any((p) => p.id == id),
+    );
 
     // 2. AI 提问 (pendingQuestion null→非空)
     if (prev.pendingQuestion == null && next.pendingQuestion != null) {
@@ -1421,20 +1492,26 @@ class ChatNotifier extends StateNotifier<ChatState> {
     for (final pi in snap.pendingInteractions) {
       if (pi.kind == 'permission' && pi.permission != null) {
         final p = pi.permission!;
-        perms.add(PendingPermission(
-          id: pi.interactionId,
-          toolCallId: p.toolCallId,
-          toolName: p.toolName,
-          reason: p.summary,
-          input: p.detail,
-          options: p.options.map((o) => PermissionOption(
-            optionId: o.optionId,
-            kind: o.kind,
-            name: o.label,
-            decision: o.response['decision'] as String? ?? 'allow',
-            fullResponse: o.response,
-          )).toList(),
-        ));
+        perms.add(
+          PendingPermission(
+            id: pi.interactionId,
+            toolCallId: p.toolCallId,
+            toolName: p.toolName,
+            reason: p.summary,
+            input: p.detail,
+            options: p.options
+                .map(
+                  (o) => PermissionOption(
+                    optionId: o.optionId,
+                    kind: o.kind,
+                    name: o.label,
+                    decision: o.response['decision'] as String? ?? 'allow',
+                    fullResponse: o.response,
+                  ),
+                )
+                .toList(),
+          ),
+        );
       } else if (pi.kind == 'userInput' && pi.userInput != null) {
         final u = pi.userInput!;
         if (u.questions.isNotEmpty) {
@@ -1444,14 +1521,18 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
 
     // plan
-    final plan = snap.plan.map((p) => PlanItem(
-      content: p.content,
-      status: switch (p.status) {
-        'completed' => TodoStatus.completed,
-        'inProgress' || 'in_progress' => TodoStatus.inProgress,
-        _ => TodoStatus.pending,
-      },
-    )).toList();
+    final plan = snap.plan
+        .map(
+          (p) => PlanItem(
+            content: p.content,
+            status: switch (p.status) {
+              'completed' => TodoStatus.completed,
+              'inProgress' || 'in_progress' => TodoStatus.inProgress,
+              _ => TodoStatus.pending,
+            },
+          ),
+        )
+        .toList();
 
     // 快照是权威全量状态, 直接采用 (取消可能挂起的 control 闪断防抖确认)
     _respondingFallTimer?.cancel();
@@ -1482,18 +1563,22 @@ class ChatNotifier extends StateNotifier<ChatState> {
           pendingQuestion: AskUserQuestion(
             callId: question.interactionId,
             questions: u.questions
-                .map((q) => QuestionItem(
-                      question: q.question,
-                      header: q.header,
-                      multiSelect: q.multiSelect,
-                      options: q.options
-                          .map((o) => QuestionOption(
-                                value: o.value,
-                                label: o.label,
-                                description: o.description ?? '',
-                              ))
-                          .toList(),
-                    ))
+                .map(
+                  (q) => QuestionItem(
+                    question: q.question,
+                    header: q.header,
+                    multiSelect: q.multiSelect,
+                    options: q.options
+                        .map(
+                          (o) => QuestionOption(
+                            value: o.value,
+                            label: o.label,
+                            description: o.description ?? '',
+                          ),
+                        )
+                        .toList(),
+                  ),
+                )
                 .toList(),
           ),
           isResponding: false,
@@ -1523,13 +1608,20 @@ class ChatNotifier extends StateNotifier<ChatState> {
     if (tools != null) {
       for (final t in tools.whereType<Map>()) {
         final tm = Map<String, dynamic>.from(t);
-        activities.add(ToolActivity(
-          toolCallId: (tm['raw'] is Map ? (tm['raw'] as Map)['toolCallId'] : null)?.toString() ?? '',
-          toolName: tm['toolName'] as String? ?? tm['kind'] as String? ?? '',
-          status: tm['status'] as String? ?? '',
-          input: tm['input'] is Map ? Map<String, dynamic>.from(tm['input'] as Map) : null,
-          result: tm['output'] is String ? tm['output'] : null,
-        ));
+        activities.add(
+          ToolActivity(
+            toolCallId:
+                (tm['raw'] is Map ? (tm['raw'] as Map)['toolCallId'] : null)
+                    ?.toString() ??
+                '',
+            toolName: tm['toolName'] as String? ?? tm['kind'] as String? ?? '',
+            status: tm['status'] as String? ?? '',
+            input: tm['input'] is Map
+                ? Map<String, dynamic>.from(tm['input'] as Map)
+                : null,
+            result: tm['output'] is String ? tm['output'] : null,
+          ),
+        );
       }
     }
 
@@ -1566,7 +1658,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
   void _onV4Frame(V4Frame frame) {
     // topic = conversation/<sessionId>: 只处理本会话的帧,
     // 防止工作区级推送的其他会话快照/增量串台覆盖当前显示
-    if (_taskId != null && frame.topic.isNotEmpty &&
+    if (_taskId != null &&
+        frame.topic.isNotEmpty &&
         !frame.topic.endsWith('/$_taskId')) {
       appLog.w('[Chat] V4 帧串台忽略: topic=${frame.topic} (当前 $_taskId)');
       return;
@@ -1581,8 +1674,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
       // 空 window 的快照 (会话未物化/订阅退化) 不清空已渲染内容,
       // 否则点击历史会话时会闪掉缓存变成"新会话"空屏
       if (snap.rows.window.isEmpty && _rows.isNotEmpty) {
-        appLog.w('[Chat] V4 空快照到达, 忽略 (topic=${frame.topic} '
-            'sub=${frame.subscriptionId} 现有 ${_rows.length} rows)');
+        appLog.w(
+          '[Chat] V4 空快照到达, 忽略 (topic=${frame.topic} '
+          'sub=${frame.subscriptionId} 现有 ${_rows.length} rows)',
+        );
         return;
       }
       // 清空并重建 rows
@@ -1610,12 +1705,16 @@ class ChatNotifier extends StateNotifier<ChatState> {
       // 否则这里会把整屏缩成尾部窗口, 随后翻页再撑回来, 视图来回跳。
       _applySnapshotState(snap);
       if (_silentPagination) {
-        appLog.d('[Chat] V4 snapshot: ${_rows.length} rows (静默合并, '
-            'first=${_rowsFirstRowId ?? '-'} total=${snap.rows.totalCount})');
+        appLog.d(
+          '[Chat] V4 snapshot: ${_rows.length} rows (静默合并, '
+          'first=${_rowsFirstRowId ?? '-'} total=${snap.rows.totalCount})',
+        );
       } else {
         _rebuildMessagesFromRows();
-        appLog.d('[Chat] V4 snapshot: ${_rows.length} rows '
-            '(first=${_rowsFirstRowId ?? '-'} total=${snap.rows.totalCount})');
+        appLog.d(
+          '[Chat] V4 snapshot: ${_rows.length} rows '
+          '(first=${_rowsFirstRowId ?? '-'} total=${snap.rows.totalCount})',
+        );
       }
     } else if (frame.payload is V4DeltasPayload) {
       final deltas = (frame.payload as V4DeltasPayload).deltas;
@@ -1709,13 +1808,15 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// 若完成态的 endedAt/activeMs 为 '-', 说明 host 没下发 → 显示"已处理"的根因。
   void _logTurnHeaderRow(V4Row row, String src) {
     if (row is V4TurnHeaderRow) {
-      appLog.d('[Chat] turnHeader($src): rowId=${row.rowId} '
-          'turn=${row.turnId.isEmpty ? '-' : row.turnId} '
-          'state=${row.state} '
-          'startedAt=${row.startedAt ?? '-'} '
-          'endedAt=${row.endedAt ?? '-'} '
-          'activeMs=${row.activeMs ?? '-'} '
-          'fileChanges=${row.fileChanges == null ? '-' : '${row.fileChanges!.files}f'}');
+      appLog.d(
+        '[Chat] turnHeader($src): rowId=${row.rowId} '
+        'turn=${row.turnId.isEmpty ? '-' : row.turnId} '
+        'state=${row.state} '
+        'startedAt=${row.startedAt ?? '-'} '
+        'endedAt=${row.endedAt ?? '-'} '
+        'activeMs=${row.activeMs ?? '-'} '
+        'fileChanges=${row.fileChanges == null ? '-' : '${row.fileChanges!.files}f'}',
+      );
     }
   }
 
@@ -1727,9 +1828,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
       case V4ReasoningRow():
         if (path == 'text') return row.copyWith(text: row.text + append);
       case V4ToolCallRow():
-        if (path == 'inputText') return row.copyWith(inputText: row.inputText + append);
+        if (path == 'inputText')
+          return row.copyWith(inputText: row.inputText + append);
         if (path == 'output.text') {
-          final out = row.output?.copyWith(text: row.output!.text + append) ??
+          final out =
+              row.output?.copyWith(text: row.output!.text + append) ??
               V4ToolOutput(text: append);
           return row.copyWith(output: out);
         }
@@ -1748,7 +1851,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
   void _applyStatePatch(Map<String, dynamic> patch) {
     final prevState = state;
     if (patch.containsKey('control')) {
-      final ctrl = V4Control.fromJson(patch['control'] as Map<String, dynamic>? ?? {});
+      final ctrl = V4Control.fromJson(
+        patch['control'] as Map<String, dynamic>? ?? {},
+      );
       final wasResponding = state.isResponding;
       if (ctrl.isRunning) {
         // running 到达即生效; 取消可能挂起的"完成确认"
@@ -1772,7 +1877,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
       }
     }
     if (patch.containsKey('config')) {
-      final cfg = V4Config.fromJson(patch['config'] as Map<String, dynamic>? ?? {});
+      final cfg = V4Config.fromJson(
+        patch['config'] as Map<String, dynamic>? ?? {},
+      );
       state = state.copyWith(
         mode: cfg.mode,
         thoughtLevel: cfg.thought,
@@ -1792,7 +1899,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
       }
     }
     if (patch.containsKey('meta')) {
-      final meta = V4Meta.fromJson(patch['meta'] as Map<String, dynamic>? ?? {});
+      final meta = V4Meta.fromJson(
+        patch['meta'] as Map<String, dynamic>? ?? {},
+      );
       if (meta.title.isNotEmpty) {
         state = state.copyWith(sessionTitle: meta.title);
         if (_taskId != null) _onTitleUpdated?.call(_taskId!, meta.title);
@@ -1801,8 +1910,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
     if (patch.containsKey('queue')) {
       final q = V4Queue.fromJson(patch['queue'] as Map<String, dynamic>? ?? {});
       state = state.copyWith(
-          queuedMessages:
-              q.items.map((e) => QueuedMessage(id: e.queueItemId, text: e.text)).toList());
+        queuedMessages: q.items
+            .map((e) => QueuedMessage(id: e.queueItemId, text: e.text))
+            .toList(),
+      );
     }
     if (patch.containsKey('backgroundWorks')) {
       state = state.copyWith(
@@ -1814,25 +1925,36 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
     if (patch.containsKey('pendingInteractions')) {
       final raw = patch['pendingInteractions'] as List<dynamic>? ?? [];
-      final interactions = raw.whereType<Map>()
-          .map((e) => V4PendingInteraction.fromJson(Map<String, dynamic>.from(e)))
+      final interactions = raw
+          .whereType<Map>()
+          .map(
+            (e) => V4PendingInteraction.fromJson(Map<String, dynamic>.from(e)),
+          )
           .toList();
       final perms = <PendingPermission>[];
       for (final pi in interactions) {
         if (pi.kind == 'permission' && pi.permission != null) {
           final p = pi.permission!;
-          perms.add(PendingPermission(
-            id: pi.interactionId,
-            toolCallId: p.toolCallId,
-            toolName: p.toolName,
-            reason: p.summary,
-            input: p.detail,
-            options: p.options.map((o) => PermissionOption(
-              optionId: o.optionId, kind: o.kind, name: o.label,
-              decision: o.response['decision'] as String? ?? 'allow',
-              fullResponse: o.response,
-            )).toList(),
-          ));
+          perms.add(
+            PendingPermission(
+              id: pi.interactionId,
+              toolCallId: p.toolCallId,
+              toolName: p.toolName,
+              reason: p.summary,
+              input: p.detail,
+              options: p.options
+                  .map(
+                    (o) => PermissionOption(
+                      optionId: o.optionId,
+                      kind: o.kind,
+                      name: o.label,
+                      decision: o.response['decision'] as String? ?? 'allow',
+                      fullResponse: o.response,
+                    ),
+                  )
+                  .toList(),
+            ),
+          );
         }
       }
       state = state.copyWith(pendingPermissions: perms);
@@ -1843,11 +1965,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
       state = state.copyWith(
         plan: items.whereType<Map>().map((e) {
           final p = V4PlanItem.fromJson(Map<String, dynamic>.from(e));
-          return PlanItem(content: p.content, status: switch (p.status) {
-            'completed' => TodoStatus.completed,
-            'inProgress' || 'in_progress' => TodoStatus.inProgress,
-            _ => TodoStatus.pending,
-          });
+          return PlanItem(
+            content: p.content,
+            status: switch (p.status) {
+              'completed' => TodoStatus.completed,
+              'inProgress' || 'in_progress' => TodoStatus.inProgress,
+              _ => TodoStatus.pending,
+            },
+          );
         }).toList(),
       );
     }
@@ -1910,7 +2035,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
       // 中断完成态是权威信号: 打断时行状态可能永远停在 streaming
       // (服务端不下发终态), 不压制的话该轮永远显示"思考中"。
       final interruptedTurn = header?.isInterrupted ?? false;
-      final isRunning = !olderTurn &&
+      final isRunning =
+          !olderTurn &&
           !interruptedTurn &&
           ((header?.isRunning ?? false) ||
               lastTextState == 'streaming' ||
@@ -1919,9 +2045,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
       // "仅 turnHeader" 的空壳消息是思考中错位的来源, 运行态指示
       // 统一由紧贴 user 的占位与真实内容轮承担。
       // (thought 非空的"思考中"轮不是空壳, 正常产出)
-      final hasBody = parts.isNotEmpty ||
-          thoughtBuf.isNotEmpty ||
-          contentBuf.isNotEmpty;
+      final hasBody =
+          parts.isNotEmpty || thoughtBuf.isNotEmpty || contentBuf.isNotEmpty;
       if (!hasBody) {
         header = null;
         return;
@@ -2043,14 +2168,16 @@ class ChatNotifier extends StateNotifier<ChatState> {
           //   该轮最终 flush 的完整消息自然位于 user 之后 (顺序正确),
           //   且保住真实 header (rowId/startedAt/workedMs)。
           if (row.turnId != turnId || header == null) flushTurn();
-          messages.add(DisplayMessage(
-            id: 'row_${row.rowId}',
-            role: 'user',
-            content: row.text,
-            attachments: [
-              for (final a in row.attachments) UserAttachment.wire(a),
-            ],
-          ));
+          messages.add(
+            DisplayMessage(
+              id: 'row_${row.rowId}',
+              role: 'user',
+              content: row.text,
+              attachments: [
+                for (final a in row.attachments) UserAttachment.wire(a),
+              ],
+            ),
+          );
         case V4AssistantTextRow():
           if (skipping) {
             // turnId 漂移 (无头行的异常路径) → 停止跳过, 恢复累积
@@ -2103,14 +2230,16 @@ class ChatNotifier extends StateNotifier<ChatState> {
           }
           ensureTurn(row.turnId);
           // 子代理 → SubagentPart (AgentCard 渲染, 保留 wire 四态/嵌套句柄)
-          parts.add(SubagentPart(
-            subagentType: row.subagentType,
-            status: row.status,
-            summaryText: row.summaryText,
-            childSessionId: row.childSessionId,
-            parentToolCallId: row.parentToolCallId,
-            rowIdKey: 'subagent_${row.rowId}',
-          ));
+          parts.add(
+            SubagentPart(
+              subagentType: row.subagentType,
+              status: row.status,
+              summaryText: row.summaryText,
+              childSessionId: row.childSessionId,
+              parentToolCallId: row.parentToolCallId,
+              rowIdKey: 'subagent_${row.rowId}',
+            ),
+          );
           // 无 parts 的回退路径 (v3 快照) 仍以合成 ToolActivity 兼容
           final activity = ToolActivity(
             toolCallId: 'subagent_${row.rowId}',
@@ -2140,15 +2269,17 @@ class ChatNotifier extends StateNotifier<ChatState> {
               }
             }
             final createdMs = (row.raw['createdAt'] as num?)?.toInt();
-            messages.add(DisplayMessage(
-              id: 'row_${row.rowId}',
-              role: 'marker',
-              content: label,
-              isStreaming: status == 'running',
-              createdAt: createdMs != null
-                  ? DateTime.fromMillisecondsSinceEpoch(createdMs)
-                  : null,
-            ));
+            messages.add(
+              DisplayMessage(
+                id: 'row_${row.rowId}',
+                role: 'marker',
+                content: label,
+                isStreaming: status == 'running',
+                createdAt: createdMs != null
+                    ? DateTime.fromMillisecondsSinceEpoch(createdMs)
+                    : null,
+              ),
+            );
           }
         case V4UnknownRow():
           continue;
@@ -2162,9 +2293,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
     // 仅在任务确认结束超过 10s 仍未落行 (协议异常) 时兜底清除。
     if (_pendingUserText != null) {
       final pending = _pendingUserText!;
-      final arrived =
-          messages.any((m) => m.role == 'user' && m.content == pending);
-      final stale = !state.isResponding &&
+      final arrived = messages.any(
+        (m) => m.role == 'user' && m.content == pending,
+      );
+      final stale =
+          !state.isResponding &&
           _pendingUserTextAt != null &&
           DateTime.now().difference(_pendingUserTextAt!) >
               const Duration(seconds: 10);
@@ -2173,12 +2306,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
         _pendingUserTextAt = null;
         _pendingUserAttachments = const [];
       } else {
-        messages.add(DisplayMessage(
-          id: 'pending_user',
-          role: 'user',
-          content: pending,
-          attachments: _pendingUserAttachments,
-        ));
+        messages.add(
+          DisplayMessage(
+            id: 'pending_user',
+            role: 'user',
+            content: pending,
+            attachments: _pendingUserAttachments,
+          ),
+        );
       }
     }
 
@@ -2198,18 +2333,24 @@ class ChatNotifier extends StateNotifier<ChatState> {
     //   排队消息出队后列表末尾是 user 行, 但前一个轮次仍在流式 —
     //   若只看 last 会再叠一个占位, 出现两个"思考中"。
     // 压缩进行中除外 — 压缩标记药丸已在展示进度, 再叠"思考中"就重复了。
-    if (state.isResponding && messages.isNotEmpty && messages.last.role == 'user') {
-      final compactRunning =
-          messages.any((m) => m.role == 'marker' && m.isStreaming);
-      final anyStreamingAi =
-          messages.any((m) => m.role == 'assistant' && m.isStreaming);
+    if (state.isResponding &&
+        messages.isNotEmpty &&
+        messages.last.role == 'user') {
+      final compactRunning = messages.any(
+        (m) => m.role == 'marker' && m.isStreaming,
+      );
+      final anyStreamingAi = messages.any(
+        (m) => m.role == 'assistant' && m.isStreaming,
+      );
       if (!anyStreamingAi && !compactRunning) {
-        messages.add(DisplayMessage(
-          id: 'thinking_placeholder',
-          role: 'assistant',
-          content: '',
-          isStreaming: true,
-        ));
+        messages.add(
+          DisplayMessage(
+            id: 'thinking_placeholder',
+            role: 'assistant',
+            content: '',
+            isStreaming: true,
+          ),
+        );
       }
     }
 
@@ -2225,14 +2366,16 @@ class ChatNotifier extends StateNotifier<ChatState> {
       final tail = messages.length <= 3
           ? messages.map((m) => '${m.role}:${m.id}${m.isStreaming ? "*" : ""}')
           : messages
-              .sublist(messages.length - 3)
-              .map((m) => '${m.role}:${m.id}${m.isStreaming ? "*" : ""}');
+                .sublist(messages.length - 3)
+                .map((m) => '${m.role}:${m.id}${m.isStreaming ? "*" : ""}');
       final streaming = messages
           .where((m) => m.isStreaming)
           .map((m) => m.id)
           .toList();
-      appLog.d('[Chat] rebuild诊断: n=${messages.length} '
-          'tail=[${tail.join(' | ')}] streaming=$streaming');
+      appLog.d(
+        '[Chat] rebuild诊断: n=${messages.length} '
+        'tail=[${tail.join(' | ')}] streaming=$streaming',
+      );
     }
 
     state = state.copyWith(messages: messages);
@@ -2255,7 +2398,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   /// 发送消息
   Future<void> sendMessage(String content) async {
-    appLog.d('[Chat] sendMessage: "${content.length > 100 ? '${content.substring(0, 100)}…' : content}" taskId=$_taskId model=${_preferredModelReader()} mode=${state.mode}');
+    appLog.d(
+      '[Chat] sendMessage: "${content.length > 100 ? '${content.substring(0, 100)}…' : content}" taskId=$_taskId model=${_preferredModelReader()} mode=${state.mode}',
+    );
     if (content.trim().isEmpty || _creating) return;
 
     // 任务运行中发送 → 服务端排队 (followupMode=queue), 不本地拦截。
@@ -2297,7 +2442,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         workspacePath: _ref.workspacePath,
         workspaceIdentity: _ref.workspaceIdentity,
         commandType: 'sendText',
-              sessionId: _taskId,
+        sessionId: _taskId,
         payload: {'text': content},
       );
     } catch (e) {
@@ -2307,10 +2452,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       _pendingUserAttachments = const [];
       _respondingFallTimer?.cancel();
       _respondingFallTimer = null;
-      state = state.copyWith(
-        isResponding: false,
-        error: '发送失败: $e',
-      );
+      state = state.copyWith(isResponding: false, error: '发送失败: $e');
       _rebuildMessagesFromRows();
     } finally {
       _creating = false;
@@ -2324,8 +2466,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     if (_taskId != null) return;
     _creating = true;
     // bridge 复用 (打开工作区时已开) + 幂等握手
-    await _relay.ensureBridgeOpen(
-        _ref.workspaceIdentity ?? _ref.workspacePath);
+    await _relay.ensureBridgeOpen(_ref.workspaceIdentity ?? _ref.workspacePath);
     // V4 命令前必须先握手 (3.7.7 实测顺序: hello → initialize → createSession,
     // 否则服务端报 fault.connection.handshakeRequired)
     await _relay.v4Handshake();
@@ -2350,14 +2491,16 @@ class ChatNotifier extends StateNotifier<ChatState> {
         appLog.w('[Chat] 新会话热切换模型失败 ($desiredModel): $e');
       }
     }
-    _onSessionCreated?.call(Task(
-      id: _taskId!,
-      workspaceKey: _ref.workspacePath,
-      title: taskTitle,
-      status: TaskStatus.running,
-      createdAt: DateTime.now(),
-      updatedAt: DateTime.now(),
-    ));
+    _onSessionCreated?.call(
+      Task(
+        id: _taskId!,
+        workspaceKey: _ref.workspacePath,
+        title: taskTitle,
+        status: TaskStatus.running,
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      ),
+    );
     // 订阅新会话 (V4 握手已在 createSession 前完成)
     final stream = await _relay.subscribeConversationV4(
       workspacePath: _ref.workspacePath,
@@ -2378,7 +2521,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// 不自动降级 base64。排队路径 (任务运行中) 无乐观回显, 队列条由
   /// 服务端 queue 状态渲染 (与纯文本排队一致)。
   Future<(bool sent, List<String?> refs)> sendMessageWithAttachments(
-      String content, List<PendingAttachment> attachments) async {
+    String content,
+    List<PendingAttachment> attachments,
+  ) async {
     if (_creating || attachments.isEmpty) return (false, <String?>[]);
     final queued = state.isResponding && _taskId != null;
     if (!queued) {
@@ -2403,7 +2548,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
     final refs = List<String?>.filled(attachments.length, null);
     try {
       await _ensureSessionReady(
-        taskTitle: content.trim().isEmpty ? attachments.first.fileName : content,
+        taskTitle: content.trim().isEmpty
+            ? attachments.first.fileName
+            : content,
       );
       for (var i = 0; i < attachments.length; i++) {
         final a = attachments[i];
@@ -2515,7 +2662,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
     if (q == null || _taskId == null) return;
     _respondingFallTimer?.cancel();
     _respondingFallTimer = null;
-    state = state.copyWith(pendingQuestion: _clearPendingQuestion, isResponding: true);
+    state = state.copyWith(
+      pendingQuestion: _clearPendingQuestion,
+      isResponding: true,
+    );
     try {
       await _relay.sendConversationCommandV4(
         workspacePath: _ref.workspacePath,
@@ -2531,7 +2681,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
               : {
                   'action': 'accept',
                   'content': buildQuestionAnswerContent(
-                      q.questions, selectedValues, customAnswers),
+                    q.questions,
+                    selectedValues,
+                    customAnswers,
+                  ),
                 },
         },
       );
@@ -2541,10 +2694,15 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
-
   /// 回答工具权限确认 — V4 通过 sendConversationCommandV4(resolveInteraction)
-  Future<void> answerPermission(String permissionId, String optionId, String decision,
-      {Map<String, dynamic>? permInput, List<PermissionOption>? permOptions, String? permTraceId}) async {
+  Future<void> answerPermission(
+    String permissionId,
+    String optionId,
+    String decision, {
+    Map<String, dynamic>? permInput,
+    List<PermissionOption>? permOptions,
+    String? permTraceId,
+  }) async {
     if (_taskId == null) return;
 
     Map<String, dynamic> fullResponse = {'decision': decision};
@@ -2558,7 +2716,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
     _respondingFallTimer?.cancel();
     _respondingFallTimer = null;
     state = state.copyWith(
-      pendingPermissions: state.pendingPermissions.where((x) => x.id != permissionId).toList(),
+      pendingPermissions: state.pendingPermissions
+          .where((x) => x.id != permissionId)
+          .toList(),
       isResponding: true,
     );
 
@@ -2567,9 +2727,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
         workspacePath: _ref.workspacePath,
         workspaceIdentity: _ref.workspaceIdentity,
         commandType: 'resolveInteraction',
-              sessionId: _taskId,
-              baseRevision: _v4Revision,
-              baseLogEpoch: _v4LogEpoch,
+        sessionId: _taskId,
+        baseRevision: _v4Revision,
+        baseLogEpoch: _v4LogEpoch,
         // wire zod: payload 平铺 {interactionId, answer} — 外层再包命令名
         // 会报 proto.invalidPayload (同 switchCollaborationMode 的坑)。
         // answer 合并 option 的完整 response (含 reason/permissionUpdates,
@@ -2584,7 +2744,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
         },
       );
     } catch (e) {
-      appLog.w('[Chat] 权限确认失败 (permission=$permissionId, option=$optionId): $e');
+      appLog.w(
+        '[Chat] 权限确认失败 (permission=$permissionId, option=$optionId): $e',
+      );
       state = state.copyWith(isResponding: false, error: '权限确认失败: $e');
     }
   }
@@ -2600,8 +2762,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
         workspacePath: _ref.workspacePath,
         workspaceIdentity: _ref.workspaceIdentity,
         commandType: 'sendText',
-              sessionId: _taskId,
-        payload: {'text': approved ? 'User approved the plan, proceed' : 'User rejected the plan'},
+        sessionId: _taskId,
+        payload: {
+          'text': approved
+              ? 'User approved the plan, proceed'
+              : 'User rejected the plan',
+        },
       );
     } catch (e) {
       appLog.w('[Chat] plan 回答失败 (approved=$approved): $e');
@@ -2619,7 +2785,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
           workspacePath: _ref.workspacePath,
           workspaceIdentity: _ref.workspaceIdentity,
           commandType: 'stop',
-                sessionId: _taskId,
+          sessionId: _taskId,
         );
       } catch (e) {
         appLog.w('[Chat] stop 失败: $e');
@@ -2638,9 +2804,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
         workspacePath: _ref.workspacePath,
         workspaceIdentity: _ref.workspaceIdentity,
         commandType: 'applyFileRewind',
-              sessionId: _taskId,
-              baseRevision: _v4Revision,
-              baseLogEpoch: _v4LogEpoch,
+        sessionId: _taskId,
+        baseRevision: _v4Revision,
+        baseLogEpoch: _v4LogEpoch,
         payload: {'target': 'lastTurn'},
       );
       await _loadHistory(forceReload: true);
@@ -2775,23 +2941,31 @@ class ChatNotifier extends StateNotifier<ChatState> {
         case V4ReasoningRow() when row.text.isNotEmpty:
           parts.add(ThoughtPart(row.text));
         case V4ToolCallRow():
-          parts.add(ToolPart(ToolActivity(
-            toolCallId: row.toolCallId,
-            toolName: row.toolName,
-            status: row.status,
-            input: row.input ?? _tryParseInputText(row.inputText),
-            result: row.output?.text,
-          )));
+          parts.add(
+            ToolPart(
+              ToolActivity(
+                toolCallId: row.toolCallId,
+                toolName: row.toolName,
+                status: row.status,
+                input: row.input ?? _tryParseInputText(row.inputText),
+                result: row.output?.text,
+              ),
+            ),
+          );
         case V4SubagentRow():
           // 深度内保留嵌套句柄 (其 children 由嵌套 AgentCard 再懒加载)
-          parts.add(SubagentPart(
-            subagentType: row.subagentType,
-            status: row.status,
-            summaryText: row.summaryText,
-            childSessionId: depth < _subagentDepthMax ? row.childSessionId : null,
-            parentToolCallId: row.parentToolCallId,
-            rowIdKey: 'subagent_${row.rowId}',
-          ));
+          parts.add(
+            SubagentPart(
+              subagentType: row.subagentType,
+              status: row.status,
+              summaryText: row.summaryText,
+              childSessionId: depth < _subagentDepthMax
+                  ? row.childSessionId
+                  : null,
+              parentToolCallId: row.parentToolCallId,
+              rowIdKey: 'subagent_${row.rowId}',
+            ),
+          );
         default:
           break;
       }
@@ -2803,8 +2977,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// 弹窗轮询入口: 强制刷新子会话内容 + 返回子代理行实时状态。
   /// status 为 null = 主行流里找不到该子代理 (嵌套子代理), 调用方自行降级。
   Future<({List<MessagePart> parts, String? status})> refreshSubagentDetail(
-      String childSessionId) async {
-    final parts = await loadSubagentChildren(childSessionId, forceRefresh: true);
+    String childSessionId,
+  ) async {
+    final parts = await loadSubagentChildren(
+      childSessionId,
+      forceRefresh: true,
+    );
     return (parts: parts, status: findSubagentStatus(childSessionId));
   }
 
@@ -2842,38 +3020,40 @@ class ChatNotifier extends StateNotifier<ChatState> {
 /// 对话 Provider (按 taskId+workspacePath 区分)
 final chatProvider = StateNotifierProvider.autoDispose
     .family<ChatNotifier, ChatState, ChatRef>((ref, chatRef) {
-  final relay = ref.watch(relayClientProvider);
-  if (relay == null) {
-    // 无 relay client 时返回一个空 notifier (不应发生, UI 应保证已登录)
-    throw StateError('RelayClient not available');
-  }
-  return ChatNotifier(
-    relay,
-    chatRef,
-    preferredModelReader: () => ref.read(preferredModelProvider),
-    preferredModelSetter: (m) =>
-        ref.read(preferredModelProvider.notifier).state = m,
-    mergeDiscovered: (ids) =>
-        ref.read(modelListProvider.notifier).mergeDiscoveredIds(ids),
-    onSessionCreated: (task) {
-      // 新会话加到 allTasksProvider 头部, 历史抽屉即时显示
-      appLog.i('[Chat] onSessionCreated: ${task.id} ("${task.title}") 加入任务列表');
-      final tasks = List<Task>.from(ref.read(allTasksProvider));
-      if (!tasks.any((t) => t.id == task.id)) {
-        ref.read(allTasksProvider.notifier).state = [task, ...tasks];
+      final relay = ref.watch(relayClientProvider);
+      if (relay == null) {
+        // 无 relay client 时返回一个空 notifier (不应发生, UI 应保证已登录)
+        throw StateError('RelayClient not available');
       }
-    },
-    onTitleUpdated: (taskId, newTitle) {
-      // 服务端标题更新 (snapshot.meta.title): 用 copyWith 刷新对应 task,
-      // 历史抽屉 (_HistoryDrawer) 等所有订阅 allTasksProvider 的 UI 自动重绘。
-      appLog.d('[Chat] onTitleUpdated: $taskId → "$newTitle"');
-      final tasks = ref.read(allTasksProvider);
-      final idx = tasks.indexWhere((t) => t.id == taskId);
-      if (idx < 0) return;
-      if (tasks[idx].title == newTitle) return; // 无变化, 跳过
-      final updated = List<Task>.from(tasks);
-      updated[idx] = updated[idx].copyWith(title: newTitle);
-      ref.read(allTasksProvider.notifier).state = updated;
-    },
-  );
-});
+      return ChatNotifier(
+        relay,
+        chatRef,
+        preferredModelReader: () => ref.read(preferredModelProvider),
+        preferredModelSetter: (m) =>
+            ref.read(preferredModelProvider.notifier).state = m,
+        mergeDiscovered: (ids) =>
+            ref.read(modelListProvider.notifier).mergeDiscoveredIds(ids),
+        onSessionCreated: (task) {
+          // 新会话加到 allTasksProvider 头部, 历史抽屉即时显示
+          appLog.i(
+            '[Chat] onSessionCreated: ${task.id} ("${task.title}") 加入任务列表',
+          );
+          final tasks = List<Task>.from(ref.read(allTasksProvider));
+          if (!tasks.any((t) => t.id == task.id)) {
+            ref.read(allTasksProvider.notifier).state = [task, ...tasks];
+          }
+        },
+        onTitleUpdated: (taskId, newTitle) {
+          // 服务端标题更新 (snapshot.meta.title): 用 copyWith 刷新对应 task,
+          // 历史抽屉 (_HistoryDrawer) 等所有订阅 allTasksProvider 的 UI 自动重绘。
+          appLog.d('[Chat] onTitleUpdated: $taskId → "$newTitle"');
+          final tasks = ref.read(allTasksProvider);
+          final idx = tasks.indexWhere((t) => t.id == taskId);
+          if (idx < 0) return;
+          if (tasks[idx].title == newTitle) return; // 无变化, 跳过
+          final updated = List<Task>.from(tasks);
+          updated[idx] = updated[idx].copyWith(title: newTitle);
+          ref.read(allTasksProvider.notifier).state = updated;
+        },
+      );
+    });

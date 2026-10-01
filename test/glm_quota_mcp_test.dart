@@ -23,9 +23,13 @@ class _FakeAdapter implements HttpClientAdapter {
     Future<void>? cancelFuture,
   ) async {
     final bytes = utf8.encode(jsonEncode(body));
-    return ResponseBody.fromBytes(bytes, 200, headers: {
-      Headers.contentTypeHeader: [Headers.jsonContentType],
-    });
+    return ResponseBody.fromBytes(
+      bytes,
+      200,
+      headers: {
+        Headers.contentTypeHeader: [Headers.jsonContentType],
+      },
+    );
   }
 }
 
@@ -107,9 +111,9 @@ void main() {
     };
 
     final dio = Dio()..httpClientAdapter = _FakeAdapter(body);
-    final quota = await GlmQuotaService(dio: dio).fetch(
-      const GlmCredential(baseUrl: 'https://api.z.ai', apiKey: 'k'),
-    );
+    final quota = await GlmQuotaService(
+      dio: dio,
+    ).fetch(const GlmCredential(baseUrl: 'https://api.z.ai', apiKey: 'k'));
 
     expect(quota.success, true);
     expect(quota.mcp, isNull);

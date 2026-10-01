@@ -132,14 +132,8 @@ class _UpdateDialogState extends State<_UpdateDialog> {
             onPressed: () => Navigator.of(context).pop(true),
             child: const Text('本次忽略'),
           ),
-          TextButton(
-            onPressed: _openBrowser,
-            child: const Text('浏览器下载'),
-          ),
-          FilledButton(
-            onPressed: _startDownload,
-            child: const Text('应用内更新'),
-          ),
+          TextButton(onPressed: _openBrowser, child: const Text('浏览器下载')),
+          FilledButton(onPressed: _startDownload, child: const Text('应用内更新')),
         ] else ...[
           if (_progress! < 0.99)
             TextButton(

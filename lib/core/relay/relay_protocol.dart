@@ -26,8 +26,7 @@ enum ZcodeMessageType {
 
   // 移动端
   mobileDiagnostic('mobile-diagnostic'),
-  mobileViewStateUpdate('mobile-view-state-update'),
-  ;
+  mobileViewStateUpdate('mobile-view-state-update');
 
   final String value;
   const ZcodeMessageType(this.value);

@@ -70,8 +70,10 @@ class GlmQuotaTier {
 
   /// 窗口名 (GlmQuotaTier.fiveHour / GlmQuotaTier.weeklyLimit)
   final String name;
+
   /// 已用百分比 (0-100, 解析层不裁剪)
   final double utilization;
+
   /// 重置时间 (ISO 8601, 可空: 0% 状态可能无 reset)
   final String? resetsAt;
 
@@ -89,12 +91,16 @@ class GlmQuotaTier {
 class GlmMcpQuota {
   /// 月总额度 (次), 如 4000
   final int total;
+
   /// 已用次数 (currentValue), 如 1020
   final int used;
+
   /// 已用百分比 (0-100, 解析层不裁剪)
   final double percentage;
+
   /// 重置时间 (ISO 8601, 可空)
   final String? resetsAt;
+
   /// 各 MCP 使用明细
   final List<GlmMcpUsageDetail> details;
 
@@ -111,6 +117,7 @@ class GlmMcpQuota {
 class GlmMcpUsageDetail {
   /// MCP 标识 (search-prime / web-reader / zread ...)
   final String modelCode;
+
   /// 已用次数
   final int usage;
 
@@ -119,15 +126,11 @@ class GlmMcpUsageDetail {
 
 /// MCP modelCode → 展示名 (未匹配的 code 原样展示)
 String glmMcpDisplayName(String code) => switch (code) {
-      'search-prime' => '联网搜索',
-      'web-reader' => '网页读取',
-      'zread' => '开源仓库',
-      _ => code,
-    };
+  'search-prime' => '联网搜索',
+  'web-reader' => '网页读取',
+  'zread' => '开源仓库',
+  _ => code,
+};
 
 /// 凭据状态 (对齐 cc-switch CredentialStatus)
-enum GlmCredentialStatus {
-  valid,
-  expired,
-  notFound,
-}
+enum GlmCredentialStatus { valid, expired, notFound }

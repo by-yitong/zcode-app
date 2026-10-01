@@ -13,8 +13,9 @@ Future<Workspace?> pickEntryWorkspace(List<Workspace> workspaces) async {
       return workspaces.firstWhere((w) => w.workspaceKey == last);
     }
   } catch (_) {}
-  final def = workspaces
-      .where((w) => w.workspacePath.endsWith('.zcode/workspace/default'));
+  final def = workspaces.where(
+    (w) => w.workspacePath.endsWith('.zcode/workspace/default'),
+  );
   if (def.isNotEmpty) return def.first;
   return workspaces.first;
 }

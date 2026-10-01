@@ -66,8 +66,11 @@ class RunningWorkBar extends StatelessWidget {
                     const _BreathDot(),
                     const SizedBox(width: AppSpacing.sm),
                     if (subagentCount > 0) ...[
-                      Icon(Icons.account_tree_outlined,
-                          size: 15, color: iconColor),
+                      Icon(
+                        Icons.account_tree_outlined,
+                        size: 15,
+                        color: iconColor,
+                      ),
                       const SizedBox(width: 4),
                       Text('$subagentCount 个智能体', style: textStyle),
                     ],
@@ -224,8 +227,9 @@ class _RunningWorksSheet extends StatelessWidget {
                 height: 4,
                 margin: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
                 decoration: BoxDecoration(
-                  color: theme.colorScheme.onSurfaceVariant
-                      .withValues(alpha: 0.4),
+                  color: theme.colorScheme.onSurfaceVariant.withValues(
+                    alpha: 0.4,
+                  ),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -303,15 +307,15 @@ class _RunningWorksSheet extends StatelessWidget {
   }
 
   Widget _sectionLabel(String s) => Padding(
-        padding: const EdgeInsets.only(bottom: AppSpacing.xs),
-        child: Text(
-          s,
-          style: theme.textTheme.labelMedium?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      );
+    padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+    child: Text(
+      s,
+      style: theme.textTheme.labelMedium?.copyWith(
+        color: theme.colorScheme.onSurfaceVariant,
+        fontWeight: FontWeight.w600,
+      ),
+    ),
+  );
 
   /// 子代理行: 类型 + 摘要一行截断 + 运行点, 点击进详情弹窗
   Widget _subagentRow(BuildContext context, SubagentPart s) {
@@ -343,10 +347,7 @@ class _RunningWorksSheet extends StatelessWidget {
                       ),
                     ),
                     if (s.summaryText.isNotEmpty) ...[
-                      TextSpan(
-                        text: '  ',
-                        style: theme.textTheme.bodyMedium,
-                      ),
+                      TextSpan(text: '  ', style: theme.textTheme.bodyMedium),
                       TextSpan(
                         text: s.summaryText,
                         style: theme.textTheme.bodyMedium?.copyWith(
@@ -370,8 +371,11 @@ class _RunningWorksSheet extends StatelessWidget {
 
   /// 后台终端行: 命令 (mono 一行截断, 空 title 回退 workId 前 8 位) + 取消
   Widget _bashRow(V4BackgroundWork w) {
-    final title =
-        w.title.isNotEmpty ? w.title : w.workId.length > 8 ? w.workId.substring(0, 8) : w.workId;
+    final title = w.title.isNotEmpty
+        ? w.title
+        : w.workId.length > 8
+        ? w.workId.substring(0, 8)
+        : w.workId;
     return Padding(
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.xs,

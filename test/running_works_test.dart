@@ -4,19 +4,15 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zcode_app/providers/chat_provider.dart';
 
-DisplayMessage _msg(String id, List<MessagePart> parts) => DisplayMessage(
-      id: id,
-      role: 'assistant',
-      content: '',
-      parts: parts,
-    );
+DisplayMessage _msg(String id, List<MessagePart> parts) =>
+    DisplayMessage(id: id, role: 'assistant', content: '', parts: parts);
 
 SubagentPart _subagent(String rowIdKey, String status) => SubagentPart(
-      subagentType: 'Explore',
-      status: status,
-      summaryText: '',
-      rowIdKey: rowIdKey,
-    );
+  subagentType: 'Explore',
+  status: status,
+  summaryText: '',
+  rowIdKey: rowIdKey,
+);
 
 void main() {
   test('空消息列表 → 空', () {
@@ -25,7 +21,9 @@ void main() {
 
   test('含 running SubagentPart → 含它', () {
     final s = _subagent('subagent_1', 'running');
-    final out = runningSubagentsIn([_msg('m1', [s])]);
+    final out = runningSubagentsIn([
+      _msg('m1', [s]),
+    ]);
     expect(out, hasLength(1));
     expect(out.first, same(s));
   });
@@ -55,11 +53,9 @@ void main() {
   test('ToolPart running 不算', () {
     final out = runningSubagentsIn([
       _msg('m1', [
-        ToolPart(ToolActivity(
-          toolCallId: 'tc_1',
-          toolName: 'Bash',
-          status: 'running',
-        )),
+        ToolPart(
+          ToolActivity(toolCallId: 'tc_1', toolName: 'Bash', status: 'running'),
+        ),
       ]),
     ]);
     expect(out, isEmpty);

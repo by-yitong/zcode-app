@@ -58,16 +58,17 @@ class DeviceInfoService {
       'languages': const ['zh-CN', 'zh'],
       // 网页端此处是 navigator.platform (如 "Linux x86_64"), 桌面端把它当
       // 设备标识显示 — 放 "品牌 机型" 让桌面端直接认出手机型号
-      'browserPlatform':
-          brand.isEmpty ? model : '$brand $model',
+      'browserPlatform': brand.isEmpty ? model : '$brand $model',
       'viewport': {'width': w, 'height': h, 'devicePixelRatio': dpr},
       'screen': {'width': w, 'height': h},
       'timezone': _timezone(),
       'online': true,
       'updatedAt': now,
     };
-    appLog.d('[DeviceInfo] model=$model brand=$brand os=$osVersion '
-        'platform=${_cached!['browserPlatform']}');
+    appLog.d(
+      '[DeviceInfo] model=$model brand=$brand os=$osVersion '
+      'platform=${_cached!['browserPlatform']}',
+    );
     return _cached!;
   }
 

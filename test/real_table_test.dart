@@ -11,7 +11,8 @@ void main() {
     const part1 =
         '| 订单号 | 下单时间 | 客户姓名 | 商品名称 | 数量 | 单价(元) | 总金额(元) | 支付方式 | 配送方式 | 订单状态 |\n'
         '|--------|----------|----------|----------|------|-----------|-------------|----------|----------|----------|\n';
-    const part2 = '| A20260929001 | 2026-09-29 09:15 | 张三 | 机械键盘 | 1 | '
+    const part2 =
+        '| A20260929001 | 2026-09-29 09:15 | 张三 | 机械键盘 | 1 | '
         '399.00 | 399.00 | 微信支付 | 顺丰速运 | 已发货 |\n'
         '| A20260929002 | 2026-09-29 10:32 | 李四 | 显示器 | 2 | 1299.00 | '
         '2598.00 | 支付宝 | 京东物流 | 待发货 |\n';
@@ -30,21 +31,23 @@ void main() {
     appendTextPart(merged, part2);
     expect(merged.length, 1, reason: '连续 text 增量应合并为单个 TextPart');
     expect((merged.single as TextPart).text, part1 + part2);
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: SingleChildScrollView(
-          child: SizedBox(
-            width: 380,
-            child: MessageBubble(
-              message: msg,
-              theme: ThemeData.light(),
-              isLastUserMessage: false,
-              isResponding: false,
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: SizedBox(
+              width: 380,
+              child: MessageBubble(
+                message: msg,
+                theme: ThemeData.light(),
+                isLastUserMessage: false,
+                isResponding: false,
+              ),
             ),
           ),
         ),
       ),
-    ));
+    );
     await tester.pumpAndSettle();
     // 合并渲染 → 完整表格被解析成 Table 且包在横向滚动容器里
     expect(find.byType(Table), findsOneWidget);
