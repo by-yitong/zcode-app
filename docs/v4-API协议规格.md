@@ -1203,3 +1203,44 @@ subscribeConversationV4(sessionId) →
 | `zcode-session.createSession` | 创建会话 (但 V4 推荐 createSession command) |
 | `zcode-session.readSession` | 读取会话详情 |
 | `zcode-session.setModel` / `setThoughtLevel` | 旧接口 (仍可用,但 V4 推荐 switchModelConfig) |
+
+## Git 通道 (channel: "git")
+
+Git 工具复刻的 RPC 通道。服务端实现在桌面 host 进程, 以下 wire 字段名经
+「桌面端 3.14.4 host bundle 逆向核实」, 与 spec §4 一致。
+
+客户端接入: `RelayClient.rpcCallMap(channel, method, args)` (通用 Map 缝隙,
+body 为 Map 时返回拷贝, 否则包一层 `{'raw': body}`) → `GitApi`
+(`lib/core/relay/git_api.dart`) typed 封装。服务端 zod 严格校验,
+客户端严格按下表字段发送, 不多传 (可选字段缺省时不发送)。
+
+### 已接入方法 (14 个, GitApi 全覆盖)
+
+| 方法 | 请求参数 (wire) | 响应 (wire) | GitApi 方法 |
+|------|----------------|-------------|-------------|
+| `getRepositorySummary` | `{workspacePath}` | `summary`: `{branchName?, trackingBranchName?, headRefType?, ahead, behind, …}` (`headRefType=="branch"` 才是正常分支, 其余视为 detached) | `getRepositorySummary` |
+| `refresh` | `{workspacePath}` (简用; 桌面端另有 `includeIdentity?`/`includeBranchComparison?`, 未传) | summary (+identity/comparison, 未用) | `refresh` |
+| `getChanges` | `{workspacePath, sourceId}` (`sourceId`: `"unstaged"`/`"staged"`/`"branch"`) | `{changes: change[]}`; `change`: `{path, repoRelativePath, workspaceRelativePath, x, y, kind, section, added, removed, isStaged, isUntracked, isConflicted}` (kind: modified/added/deleted/renamed…; section: unstaged/staged/untracked/conflicted) | `getChanges` |
+| `getDiff` | `{workspacePath, path, sourceId}` | `{patch?, summary?}` | `getDiff` |
+| `getLocalBranches` | `{workspacePath}` | `{headRefType?, currentBranchName?, branches[]}`; 条目 `{name, isCurrent, upstreamName?, commitHash?, commitTimestampMs?}` (服务端已按当前在前/时间倒序排好) | `getLocalBranches` |
+| `switchBranch` | `{workspacePath, targetBranchName}` | 结果对象: `{action, branchName?, didChange, created, summary?, issues[]}`; `issues` 条目 `{code, message}`, 非空 = 未成功 (此时 `didChange=false`) | `switchBranch` |
+| `createBranchAndSwitch` | `{workspacePath, branchName, startPoint?}` (startPoint 为空字符串时不发送) | 同 `switchBranch` 结果对象 | `createBranchAndSwitch` |
+| `getCommitGraph` | `{workspacePath, maxCount, skip}` | `{commits[], hasMore}`; 条目 `{hash, parents[], refs[], subject, authorName?, authoredAtMs?}` (git log `%H %P %an %at %s %D` 解析) | `getCommitGraph` |
+| `stagePaths` | `{workspacePath, paths[]}` | void | `stagePaths` |
+| `unstagePaths` | `{workspacePath, paths[]}` | void | `unstagePaths` |
+| `discardPaths` | `{workspacePath, paths[], staged?}` (staged 默认 false, 缺省不发送) | void | `discardPaths` |
+| `generateCommitMessage` | `{workspacePath, includeUnstaged, locale?}` (简参; 桌面端另有 `workspaceIdentity?`/`currentSessionFilePaths?`/`conversationContext?`, 未传) | `{message, …}` (AI 生成在桌面端执行, App 只收结果) | `generateCommitMessage` |
+| `commit` | `{workspacePath, message, paths?, stagedOnly?}` (paths 空/false 时不发送) | `{commitHash, summary?}` | `commit` |
+| `push` | `{workspacePath}` | 结果对象 (键名实现期核对, App 原样透传 Map) | `push` |
+
+### 未接入 (v1 排除, 4 个)
+
+| 方法 | wire 契约 (预留) | 状态 |
+|------|-----------------|------|
+| `getIdentity` | `{workspacePath}` → `{userName, userEmail, nameSource?, emailSource?}` | 未接入 |
+| `getIgnoredPaths` | `{workspacePath, paths[]}` | 未接入 |
+| `getBranchComparison` | `{workspacePath}` → `{baseRef, headRef, comparisonLabel, changes[]}` | 未接入 |
+| `getWorkspaceRepositoryInfo` | `{workspacePath}` | 未接入 |
+
+wire 契约测试: `test/git_api_test.dart` (9 例, 锁定通道名 `git`、方法名、
+参数键名与响应解析)。

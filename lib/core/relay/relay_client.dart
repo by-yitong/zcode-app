@@ -836,6 +836,18 @@ class RelayClient {
     return completer.future;
   }
 
+  /// 通用 RPC 调用, body 为 Map 时返回其拷贝, 否则包一层 {'raw': body}。
+  /// 供通道级封装 (GitApi) 复用; 测试通过对 GitApi 注入替代函数打桩。
+  Future<Map<String, dynamic>> rpcCallMap(
+    String channel,
+    String method,
+    dynamic args,
+  ) async {
+    final resp = await _rpcCall(channel, method, args);
+    if (resp.body is Map) return Map<String, dynamic>.from(resp.body as Map);
+    return {'raw': resp.body};
+  }
+
   /// 订阅 RPC 事件流
   ///
   /// 返回事件 Stream, 同时注册全局 onSessionEvent。
