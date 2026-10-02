@@ -324,7 +324,8 @@ args: [{ workspacePath, workspaceIdentity?, taskId, ifNoneMatch?: string }]
 
 ```typescript
 // 1. 开始上传 — uploadId = "upload-<uuid>" (客户端生成);
-//    checksum = 全文件 SHA-256 hex 小写 (服务端按它去重);
+//    checksum = "sha256:<全文件 SHA-256 hex 小写>" — 必须带 sha256: 前缀
+//    (服务端 zod 严格校验 /^sha256:[0-9a-f]{64}$/, 裸 hex 直接拒);
 //    totalChunks = ceil(totalBytes / 393216)  // 分片固定 384*1024
 attachmentBeginV4({ workspacePath, workspaceIdentity?, sessionId, uploadId, fileName, mime, totalBytes, totalChunks, checksum })
 → { state: "awaitingChunks"|"committed", nextChunkIndex?, ref? }

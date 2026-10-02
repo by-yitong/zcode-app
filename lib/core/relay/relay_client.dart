@@ -1756,8 +1756,10 @@ class RelayClient {
     required Uint8List bytes,
   }) async {
     final uploadId = 'upload-${const Uuid().v4()}';
-    // 全文件 SHA-256 hex 小写 — 服务端按它去重
-    final checksum = crypto.sha256.convert(bytes).toString();
+    // 全文件 SHA-256 hex 小写 — 服务端按它去重。
+    // wire 格式必须带 sha256: 前缀 (服务端 zod 严格校验 /^sha256:[0-9a-f]{64}$/,
+    // 网页端同款), 裸 hex 会被 attachmentBeginV4 直接拒绝。
+    final checksum = 'sha256:${crypto.sha256.convert(bytes).toString()}';
     final totalChunks = (bytes.length / attachmentChunkSize).ceil();
     var began = false;
     try {
