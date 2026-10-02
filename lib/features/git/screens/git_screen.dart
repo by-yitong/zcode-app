@@ -7,12 +7,14 @@ import '../../../core/relay/git_api.dart';
 import '../../../providers/git_provider.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 import '../widgets/commit_sheet.dart';
+import '../widgets/git_branches_tab.dart';
 import '../widgets/git_change_list.dart';
+import '../widgets/git_history_tab.dart';
 import 'git_diff_screen.dart' show GitDiffScreen, confirmDiscard;
 
 /// Git 全屏页 — 更改 / 分支 / 历史 三 Tab。
 ///
-/// Task 3: 骨架 + 更改 Tab 完整操作; 分支 / 历史 Tab 为占位, 下一任务接入。
+/// Task 3: 骨架 + 更改 Tab; Task 5: 分支 Tab (切换/新建) + 历史 Tab (分页)。
 class GitScreen extends ConsumerStatefulWidget {
   final GitRef gitRef;
 
@@ -82,6 +84,7 @@ class _GitScreenState extends ConsumerState<GitScreen>
             controller: ref.read(gitProvider(widget.gitRef).notifier),
             state: state,
             tabController: _tab,
+            gitRef: widget.gitRef,
             onCommitTap: () => showCommitSheet(context, ref, widget.gitRef),
             onDiscardConfirm: confirmDiscard,
             onOpenDiff: (change) => Navigator.of(context).push(
@@ -142,6 +145,7 @@ class _ReadyView extends StatelessWidget {
   final GitController controller;
   final GitState state;
   final TabController tabController;
+  final GitRef gitRef;
   final VoidCallback onCommitTap;
   final void Function(
     BuildContext context, {
@@ -155,6 +159,7 @@ class _ReadyView extends StatelessWidget {
     required this.controller,
     required this.state,
     required this.tabController,
+    required this.gitRef,
     required this.onCommitTap,
     required this.onDiscardConfirm,
     required this.onOpenDiff,
@@ -173,8 +178,8 @@ class _ReadyView extends StatelessWidget {
               controller: tabController,
               children: [
                 _changesTab(context),
-                const _PlaceholderTab('分支'),
-                const _PlaceholderTab('历史'),
+                GitBranchesTab(gitRef: gitRef),
+                GitHistoryTab(gitRef: gitRef),
               ],
             ),
           ),
@@ -342,29 +347,3 @@ class _Badge extends StatelessWidget {
   }
 }
 
-/// 分支 / 历史 Tab 占位 (下一任务接入)。
-class _PlaceholderTab extends StatelessWidget {
-  final String label;
-
-  const _PlaceholderTab(this.label);
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return ListView(
-      children: [
-        SizedBox(
-          height: 160,
-          child: Center(
-            child: Text(
-              '$label 面板在下一任务接入',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
