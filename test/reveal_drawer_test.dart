@@ -222,4 +222,72 @@ void main() {
     await tester.pumpAndSettle();
     expect(key.currentState!.isOpen, isFalse);
   });
+
+  testWidgets('开态页面左拖跨过半程不冻住 → 全程跟手直到合上 (回归)', (tester) async {
+    _usePhoneViewport(tester);
+    final key = GlobalKey<RevealDrawerState>();
+    await tester.pumpWidget(
+      _host(key, const Scaffold(body: Center(child: Text('PAGE')))),
+    );
+    key.currentState!.open();
+    await tester.pumpAndSettle();
+    expect(_pagePushDx(tester), closeTo(288, 1));
+
+    // 在页面露出区 (x≈330) 左拖: -40 → -100 → -100, 累计 240, 跨过 0.5
+    final gesture = await tester.startGesture(const Offset(330, 400));
+    await gesture.moveBy(const Offset(-40, 0));
+    await tester.pump(const Duration(milliseconds: 16));
+    await gesture.moveBy(const Offset(-100, 0));
+    await tester.pump(const Duration(milliseconds: 16));
+    // 跨过半程后再拖, 进度必须继续跟手 (旧实现回调被切成 null 冻在 ~0.5)
+    await gesture.moveBy(const Offset(-100, 0));
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(
+      _pagePushDx(tester),
+      lessThan(120),
+      reason: '跨过 0.5 后拖拽必须继续跟手 (288-240=48 附近)',
+    );
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(key.currentState!.isOpen, isFalse, reason: '松手位置不过半应合上');
+    expect(_pagePushDx(tester), 0.0);
+  });
+
+  testWidgets('开态在抽屉本体上左拖 → 跟手关闭', (tester) async {
+    _usePhoneViewport(tester);
+    final key = GlobalKey<RevealDrawerState>();
+    await tester.pumpWidget(
+      _host(key, const Scaffold(body: Center(child: Text('PAGE')))),
+    );
+    key.currentState!.open();
+    await tester.pumpAndSettle();
+
+    final gesture = await tester.startGesture(const Offset(60, 400)); // 抽屉区内
+    await gesture.moveBy(const Offset(-40, 0));
+    await tester.pump(const Duration(milliseconds: 16));
+    await gesture.moveBy(const Offset(-100, 0));
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(
+      _pagePushDx(tester),
+      lessThan(200),
+      reason: '抽屉本体拖拽应跟手 (288-140=148 附近)',
+    );
+    await gesture.moveBy(const Offset(-100, 0));
+    await tester.pump(const Duration(milliseconds: 16));
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(key.currentState!.isOpen, isFalse, reason: '抽屉本体左拖应能关抽屉');
+    expect(_pagePushDx(tester), 0.0);
+  });
+
+  testWidgets('关闭态页面左拖 → 不误触任何抽屉动作', (tester) async {
+    _usePhoneViewport(tester);
+    final key = GlobalKey<RevealDrawerState>();
+    await tester.pumpWidget(
+      _host(key, const Scaffold(body: Center(child: Text('PAGE')))),
+    );
+    await _drag(tester, const Offset(200, 400), const Offset(-120, 0));
+    expect(key.currentState!.isOpen, isFalse);
+    expect(_pagePushDx(tester), 0.0);
+  });
 }

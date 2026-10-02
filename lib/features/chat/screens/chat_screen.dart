@@ -107,6 +107,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Widget build(BuildContext context) {
     final workspace = ref.watch(selectedWorkspaceProvider);
     final title = workspace?.name ?? '对话';
+    // 抽屉背景色: HistoryDrawer 与 RevealDrawer.backdropColor 共用同一色,
+    // 页面推开后四周露出的底才与抽屉浑然一体 (不出现黑边)
+    final drawerBg = Theme.of(context).brightness == Brightness.dark
+        ? AppColors.darkSurfaceElevated
+        : AppColors.lightSurface;
     // 会话列表实时同步 (sessions-index 订阅, 根页面常驻)
     ref.watch(sessionsIndexSyncProvider);
     // 启动自动检查更新 (一次)
@@ -153,7 +158,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         // 消息里表格/代码块横向滚动不受影响 (让路逻辑见 RevealDrawer 注释)。
         body: RevealDrawer(
           key: _revealKey,
+          backdropColor: drawerBg,
           drawer: HistoryDrawer(
+            backgroundColor: drawerBg,
             workspacePath: widget.workspaceKey,
             currentTaskId: widget.taskId,
             onSelected: (selectedTaskId) {

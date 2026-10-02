@@ -23,13 +23,22 @@ import '../theme/app_design_tokens.dart';
 ///   [close]); 抽屉内条目通过注入的 onClose 回调关抽屉 (原 Navigator.pop
 ///   语义迁移, 因抽屉不再是路由 overlay)。
 class RevealDrawer extends StatefulWidget {
-  const RevealDrawer({super.key, required this.drawer, required this.child});
+  const RevealDrawer({
+    super.key,
+    required this.drawer,
+    required this.child,
+    this.backdropColor = AppColors.darkBg,
+  });
 
   /// 抽屉内容 (不含宽度/背景壳, 由本组件负责)
   final Widget drawer;
 
   /// 被推开的主页面
   final Widget child;
+
+  /// 页面推开后四周露出的底色 (默认深黑)。
+  /// 要与抽屉浑然一体时, 调用方传入抽屉自身的背景色 (chat 页即如此)。
+  final Color backdropColor;
 
   @override
   State<RevealDrawer> createState() => RevealDrawerState();
@@ -46,10 +55,15 @@ class RevealDrawerState extends State<RevealDrawer>
   /// 打开时主页面缩小量 6% (demo `scale(0.94)`), transform-origin 左中
   static const double _kPageScaleDelta = 0.06;
 
-  /// 打开时主页面左缘投影 (demo `box-shadow: -24px 0 48px` 黑色投影)
-  static const double _kShadowAlpha = 0.18;
-  static const double _kShadowBlur = 48;
-  static const Offset _kShadowOffset = Offset(-24, 0);
+  /// 打开时主页面左缘投影 (demo 原值 alpha 0.18/blur 48/offset -24,
+  /// 真机暗色主题下偏重, 按实测调轻一档)
+  static const double _kShadowAlpha = 0.10;
+  static const double _kShadowBlur = 24;
+  static const Offset _kShadowOffset = Offset(-12, 0);
+
+  /// 打开时页面上的"提亮纱"不透明度上限 — 页面底色比抽屉壳深一档,
+  /// 用户反馈打开后右侧发黑; 叠抽屉同色纱把页面拉向抽屉色调。
+  static const double _kPageVeilAlpha = 0.5;
 
   /// settle 位置阈值: 松手时进度过半则开, 否则合
   static const double _kSettleT = 0.5;
@@ -88,8 +102,7 @@ class RevealDrawerState extends State<RevealDrawer>
   /// 手势开始时新建 (不复用上次的采样历史, 避免速度被上次手势污染)
   VelocityTracker? _tracker;
 
-  // ── 打开态页面左拖跟手状态 ──
-  double _pageDragStartT = 0;
+  // ── 打开态页面拖拽跟手状态 ──
 
   /// 抽屉是否可见 (进度 t > 0, 含开关动画途中)。
   ///
@@ -101,12 +114,12 @@ class RevealDrawerState extends State<RevealDrawer>
   /// postFrame unfocus 承担, 抽屉不再是路由 overlay 后移到这里)
   void open() {
     FocusManager.instance.primaryFocus?.unfocus();
-    _controller.animateTo(1.0, duration: AppDur.slow, curve: AppEase.out);
+    _controller.animateTo(1.0, duration: AppDur.base, curve: AppEase.linear);
   }
 
-  /// 关闭抽屉
+  /// 关闭抽屉 (收起比展开再快一档)
   void close() {
-    _controller.animateTo(0.0, duration: AppDur.slow, curve: AppEase.in_);
+    _controller.animateTo(0.0, duration: AppDur.fast, curve: AppEase.linear);
   }
 
   /// 开 ↔ 关
@@ -197,22 +210,37 @@ class RevealDrawerState extends State<RevealDrawer>
     return false;
   }
 
-  // ── 打开态: 页面左拖跟手关 + 点页面关 ──
+  // ── 打开态: 页面/抽屉横向拖跟手关 + 点页面关 ──
+  //
+  // 拖拽回调必须常驻、用会话旗标门控, 不能按 settled 动态切换回调:
+  // 从 t=1 往左拖会在途中跨过 0.5, 若此刻回调被切成 null, 进行中的
+  // 拖拽会话瞬间失联 (update/end 都不再来), 抽屉冻在半开 — 真机实测过。
+
+  /// 一次拖拽会话 (start→end) 内保持 true, 不随 settled 抖动
+  bool _dragSessionActive = false;
 
   void _onPageDragStart(DragStartDetails d) {
-    _pageDragStartT = _controller.value;
+    if (_controller.value < _kSettleT) return; // 关闭态的开抽屉走 raw Listener 路径
+    _dragSessionActive = true;
   }
 
   void _onPageDragUpdate(DragUpdateDetails d) {
+    if (!_dragSessionActive) return;
     final w = _drawerWidth;
     if (w == null || w <= 0) return;
-    _controller.value = (_pageDragStartT - d.primaryDelta! / w).clamp(
+    // primaryDelta 是"本帧位移"不是"距起点累计位移", 必须增量累加:
+    // 写成 _pageDragStartT + 本帧delta 会让 value 每帧被重置,
+    // 真机上帧位移只有几 px, 永远钳回 1.0 → 抽屉完全不动 (真机实测过)。
+    // 左拖 delta 为负 → t 减小; 右拖为正 → t 回升。
+    _controller.value = (_controller.value + d.primaryDelta! / w).clamp(
       0.0,
       1.0,
     );
   }
 
   void _onPageDragEnd(DragEndDetails d) {
+    if (!_dragSessionActive) return;
+    _dragSessionActive = false;
     final v = d.velocity.pixelsPerSecond.dx;
     if (v < -_kFlingVelocity) {
       close(); // 快速左甩关闭
@@ -238,9 +266,8 @@ class RevealDrawerState extends State<RevealDrawer>
             animation: _controller,
             builder: (context, _) {
               final t = _controller.value;
-              // 开态 (t 过半): 屏蔽页面内容交互 + 挂页面级关闭手势。
-              // GestureDetector 常驻只切换回调 (不增删子树), 跨过 0.5
-              // 阈值时页面 Element 稳定, 主页面状态不重建。
+              // 开态判定只用于: tap 关闭挂载、内容交互屏蔽。
+              // 横向拖拽回调常驻 (会话旗标在 handler 内门控, 见下)。
               final settled = t >= _kSettleT;
               // 打开时页面左上/左下圆角渐现 (demo: 18px 0 0 18px, 走 AppRadius.xl)
               final radius = Radius.circular(AppRadius.xl * t);
@@ -250,9 +277,9 @@ class RevealDrawerState extends State<RevealDrawer>
               );
               return Stack(
                 children: [
-                  // 底层: 深色底 — 页面被推开后四周露出的就是它
-                  const Positioned.fill(
-                    child: ColoredBox(color: AppColors.darkBg),
+                  // 底层: 页面被推开后四周露出的底色
+                  Positioned.fill(
+                    child: ColoredBox(color: widget.backdropColor),
                   ),
                   // 抽屉: 垫底层从左滑入 (关闭时整体平移出屏, Stack 裁剪)
                   Positioned(
@@ -264,7 +291,16 @@ class RevealDrawerState extends State<RevealDrawer>
                       offset: Offset(-drawerWidth * (1 - t), 0),
                       child: ExcludeSemantics(
                         excluding: t == 0,
-                        child: widget.drawer,
+                        // 抽屉本体也能跟手拖拽关 (原生 Drawer 的既有习惯):
+                        // 只挂横向拖拽、不屏蔽内容 — 列表纵向滚动/条目点击
+                        // 由手势竞技场按方向仲裁, 互不干扰。
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onHorizontalDragStart: _onPageDragStart,
+                          onHorizontalDragUpdate: _onPageDragUpdate,
+                          onHorizontalDragEnd: _onPageDragEnd,
+                          child: widget.drawer,
+                        ),
                       ),
                     ),
                   ),
@@ -302,21 +338,33 @@ class RevealDrawerState extends State<RevealDrawer>
                           child: GestureDetector(
                             behavior: HitTestBehavior.opaque,
                             onTap: settled ? close : null,
-                            onHorizontalDragStart: settled
-                                ? _onPageDragStart
-                                : null,
-                            onHorizontalDragUpdate: settled
-                                ? _onPageDragUpdate
-                                : null,
-                            onHorizontalDragEnd: settled
-                                ? _onPageDragEnd
-                                : null,
-                            child: AbsorbPointer(
-                              absorbing: settled,
-                              child: ClipRRect(
-                                borderRadius: leftRadius,
-                                child: widget.child,
-                              ),
+                            // 回调常驻 — 不能按 settled 切换 (会冻住跨 0.5 的拖拽)
+                            onHorizontalDragStart: _onPageDragStart,
+                            onHorizontalDragUpdate: _onPageDragUpdate,
+                            onHorizontalDragEnd: _onPageDragEnd,
+                            child: Stack(
+                              children: [
+                                AbsorbPointer(
+                                  absorbing: settled,
+                                  child: ClipRRect(
+                                    borderRadius: leftRadius,
+                                    child: widget.child,
+                                  ),
+                                ),
+                                // 提亮纱: 页面自身底色 (暗色 #08090A) 比抽屉壳
+                                // (#15161A) 深一档, 打开时被读成"右侧发黑"。
+                                // 叠一层抽屉同色半透明纱随 t 渐显, 页面即与抽屉
+                                // 同调; 关抽屉自动褪回原貌, 不动全局主题。
+                                Positioned.fill(
+                                  child: IgnorePointer(
+                                    child: ColoredBox(
+                                      color: widget.backdropColor.withValues(
+                                        alpha: _kPageVeilAlpha * t,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),

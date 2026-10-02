@@ -31,6 +31,10 @@ class HistoryDrawer extends ConsumerStatefulWidget {
   /// 原先的 Navigator.pop(context) 关抽屉语义全部走此回调)
   final VoidCallback onClose;
 
+  /// 抽屉背景色 (不传则按主题明暗取默认)。chat 页会把同一色传给
+  /// RevealDrawer.backdropColor, 保证页面推开后露出的底与抽屉同色。
+  final Color? backgroundColor;
+
   const HistoryDrawer({
     required this.workspacePath,
     required this.currentTaskId,
@@ -39,6 +43,7 @@ class HistoryDrawer extends ConsumerStatefulWidget {
     required this.onSwitchWorkspace,
     required this.onOpenSearch,
     required this.onClose,
+    this.backgroundColor,
   });
 
   @override
@@ -392,9 +397,10 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
     // 推开式抽屉: 不再包 Material Drawer (宽度/滑入由 RevealDrawer 负责),
     // 只保留底色壳; 颜色与原 Drawer.backgroundColor 完全一致
     return Material(
-      color: theme.brightness == Brightness.dark
-          ? AppColors.darkSurfaceElevated
-          : AppColors.lightSurface,
+      color: widget.backgroundColor ??
+          (theme.brightness == Brightness.dark
+              ? AppColors.darkSurfaceElevated
+              : AppColors.lightSurface),
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,

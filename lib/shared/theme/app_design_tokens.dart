@@ -188,4 +188,5 @@ class AppEase {
   static const Curve out = Curves.easeOutCubic; // 元素进场 / 默认
   static const Curve inOut = Curves.easeInOutCubic; // 状态切换
   static const Curve in_ = Curves.easeInCubic; // 元素退场
+  static const Curve linear = Curves.linear; // 匀速 (用户指定的抽屉手感)
 }
