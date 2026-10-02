@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/relay/relay_protocol.dart';
+import '../../../core/feedback/notification_sound.dart';
 import '../../../core/services/display_service.dart';
 import '../../../core/services/pip_service.dart';
 import '../../../core/services/update_service.dart';
@@ -23,11 +24,33 @@ import 'remote_settings_screen.dart';
 /// - 分组标题: 斜体灰字, 左缘与行内图标对齐
 /// - 行: 描边图标 24 + 标题 17 + 右灰值/细箭头 20, 行高 ~56
 /// - 底部独立操作卡 (断开连接): 黑字 + logout 图标, 无箭头 (同截图退出登录)
-class SettingsScreen extends ConsumerWidget {
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // 提示音开关回填: 进入设置页时读一次持久化偏好 (默认开)。
+    // 实际播放以触发时的偏好为准, provider 仅驱动开关 UI 显示。
+    SharedPreferences.getInstance()
+        .then(
+          (prefs) =>
+              prefs.getBool(kNotificationSoundPrefKey) != false, // null 视为开
+        )
+        .then((on) {
+          if (!mounted) return;
+          ref.read(soundOnProvider.notifier).state = on;
+        })
+        .catchError((_) {}); // 偏好读取失败保持默认开
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final session = ref.watch(sessionProvider);
     final connectionAsync = ref.watch(relayConnectionStateProvider);
@@ -264,6 +287,16 @@ class SettingsScreen extends ConsumerWidget {
                     trailing: Switch(
                       value: ref.watch(keepScreenOnProvider),
                       onChanged: (v) => _applyKeepScreenOn(ref, v),
+                    ),
+                  ),
+                  // 任务事件提示音 (对齐桌面端): 完成/AI 提问/权限请求各响一声
+                  _SettingsRow(
+                    icon: Icons.music_note_outlined,
+                    title: '提示音',
+                    subtitle: '任务完成/AI 提问/权限请求时响铃',
+                    trailing: Switch(
+                      value: ref.watch(soundOnProvider),
+                      onChanged: (v) => _applySoundOn(ref, v),
                     ),
                   ),
                   _SettingsRow(
@@ -606,6 +639,15 @@ class SettingsScreen extends ConsumerWidget {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(kKeepScreenOnPrefKey, enabled);
     await DisplayService.setKeepScreenOn(enabled);
+  }
+
+  /// 应用提示音: 更新 provider 状态 + 持久化
+  /// (播放侧 NotificationSound 触发时直读同一 key, 关闭即时生效;
+  /// 重启后由 initState 回填)。
+  Future<void> _applySoundOn(WidgetRef ref, bool enabled) async {
+    ref.read(soundOnProvider.notifier).state = enabled;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(kNotificationSoundPrefKey, enabled);
   }
 
   /// 应用后台自动打开小窗: 更新 provider 状态 + 持久化

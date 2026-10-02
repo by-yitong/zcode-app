@@ -82,6 +82,12 @@ final keepScreenOnProvider = StateProvider<bool>((ref) => false);
 /// SharedPreferences 中存储的屏幕常亮 bool key
 const kKeepScreenOnPrefKey = 'keepScreenOn';
 
+/// 任务事件提示音开关 (任务完成/AI 提问/权限请求时播系统提示音)。默认开。
+/// 初始值在设置页进入时按 SharedPreferences 回填;
+/// 实际播放由 NotificationSound 在触发时直接读偏好, 与本 provider 共享
+/// 同一 key (kNotificationSoundPrefKey), 关闭即时生效。
+final soundOnProvider = StateProvider<bool>((ref) => true);
+
 /// SharedPreferences 字符串 → ThemeMode。null / 未知值回退到深色。
 ThemeMode themeModeFromString(String? value) {
   switch (value) {

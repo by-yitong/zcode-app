@@ -1,10 +1,11 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/feedback/notification_sound.dart';
 import '../core/logging/app_logger.dart';
 import '../core/notifications/notification_service.dart';
 import '../core/services/device_info_service.dart';
@@ -881,6 +882,26 @@ class ChatNotifier extends StateNotifier<ChatState> {
   /// 已通知过的权限请求 id (permissionId 会在多次 state patch 中重复出现)
   final Set<String> _notifiedPermIds = {};
 
+  // ── 任务事件提示音 (完成 / AI 提问 / 权限请求, 对齐桌面端) ──
+  /// 提示音触发函数: 默认调 [notificationSound].play(); 测试可注入假记录器。
+  Future<void> Function()? _onNotificationSound;
+
+  /// 测试缝: 注入假提示音触发函数 (传 null 恢复默认播放)。
+  @visibleForTesting
+  void setNotificationSoundForTest(Future<void> Function()? fn) =>
+      _onNotificationSound = fn;
+
+  /// 测试缝: 直接投递一帧 V4 事件 (绕过 relay 订阅流), 供单测驱动
+  /// control patch / snapshot 状态机 (提示音触发点测试等)。
+  @visibleForTesting
+  void debugHandleFrameForTest(V4Frame frame) => _onV4Frame(frame);
+
+  /// 播放任务事件提示音 (fire-and-forget, 异常静默 — 提示音永不崩 App)。
+  void _playSound() {
+    final f = _onNotificationSound ?? () => notificationSound.play();
+    unawaited(f().catchError((_) {}));
+  }
+
   /// V4 发送命令并更新 CAS revision
   Future<Map<String, dynamic>> _sendV4Command(
     String commandType, {
@@ -1599,9 +1620,18 @@ class ChatNotifier extends StateNotifier<ChatState> {
           : state.tokenUsage,
     );
 
+    // ★ 权限请求提示音: 仅「之前为空、现在非空」(首条到达) 时响;
+    //   保持非空的重复快照/刷新不重复响 (比较旧 state 长度)。
+    if (prevState.pendingPermissions.isEmpty &&
+        state.pendingPermissions.isNotEmpty) {
+      _playSound();
+    }
+
     // 处理 AskUserQuestion (全部题一次给出, 弹窗逐题作答后一次性提交)
     if (question != null) {
       state = state.copyWith(pendingQuestion: question, isResponding: false);
+      // ★ AI 提问到达 → 提示音 (对齐桌面端 AskUserQuestion 提示)
+      _playSound();
     } else if (state.pendingQuestion != null) {
       // 快照里没有挂起问题 → 清空 (已被 resolve/decline)
       state = state.copyWith(pendingQuestion: _clearPendingQuestion);
@@ -1891,6 +1921,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
           _respondingFallTimer = null;
           if (!state.isResponding || _disposedNotifier) return;
           state = state.copyWith(isResponding: false);
+          // ★ 任务完成提示音: 仅「运行 → 完成」的防抖确认路径响
+          //   (stop/错误路径直接落 false 不经过这里; 用户先 stop 则上面
+          //   isResponding 守卫已 early-return)。对齐桌面端完成提示音。
+          _playSound();
           // ★ 运行 → 完成: 补读尾部行, 取回 turnHeader 的 endedAt/activeMs
           //   (否则完成轮次算不出 workedMs, 状态行只能显示"已处理")
           if (_taskId != null) unawaited(_refreshTurnMetadata());
@@ -1987,6 +2021,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
         pendingQuestion:
             askQuestionFromInteractions(interactions) ?? _clearPendingQuestion,
       );
+      // ★ 权限请求提示音: patch 路径同样仅「空 → 非空」响一声
+      //   (权限在会话内实时到达时多走这条增量路径)。
+      if (prevState.pendingPermissions.isEmpty &&
+          state.pendingPermissions.isNotEmpty) {
+        _playSound();
+      }
     }
     if (patch.containsKey('plan')) {
       final planRaw = patch['plan'] as Map<String, dynamic>?;
