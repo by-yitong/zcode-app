@@ -121,10 +121,9 @@ void main() {
     expect(btnOf().onPressed, isNotNull);
   });
 
-  // 缺陷复现 (勿删): task-7-brief:16 契约「summary.isDetached=true 时
-  // GitScreen 不提供 push 入口」, 但 commit_sheet.dart:185-196 的
-  // 「提交后推送」Checkbox 无 isDetached 门控, detached 下仍可达。
-  // 修复后去掉 skip, 本用例应转绿。
+  // 契约 (task-7-brief:16): summary.isDetached=true → 提交弹窗不提供
+  // 「提交后推送」入口 (detached 下服务端 push 必拒); summary 为 null
+  // 时保持显示, 由服务端兜底 (fix round 2)。
   testWidgets('detached HEAD: 提交弹窗不应提供「提交后推送」入口', (tester) async {
     final calls = <String, Map<String, dynamic>>{};
     final api = GitApi((channel, method, args) async {
@@ -174,5 +173,5 @@ void main() {
     await tester.pumpAndSettle();
     // 契约: detached 时 push 入口不可达 → 「提交后推送」不得出现。
     expect(find.text('提交后推送'), findsNothing);
-  }, skip: true); // skip 原因见上方注释: detached 未隐藏 push 入口, 待派修
+  });
 }

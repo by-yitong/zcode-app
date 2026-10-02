@@ -182,19 +182,23 @@ class _CommitSheetBodyState extends ConsumerState<_CommitSheetBody> {
                 ),
               ),
             ),
-            Row(
-              children: [
-                Checkbox(
-                  value: _pushAfter,
-                  onChanged: (v) =>
-                      setState(() => _pushAfter = v ?? false),
-                ),
-                GestureDetector(
-                  onTap: () => setState(() => _pushAfter = !_pushAfter),
-                  child: const Text('提交后推送'),
-                ),
-              ],
-            ),
+            // detached HEAD 时服务端 push 必拒 (GitSummary.isDetached),
+            // 隐藏推送入口 (非禁用, detached 下无意义);
+            // summary 未就绪 (null) 时保持显示, 提交时由服务端兜底。
+            if (state.summary?.isDetached != true)
+              Row(
+                children: [
+                  Checkbox(
+                    value: _pushAfter,
+                    onChanged: (v) =>
+                        setState(() => _pushAfter = v ?? false),
+                  ),
+                  GestureDetector(
+                    onTap: () => setState(() => _pushAfter = !_pushAfter),
+                    child: const Text('提交后推送'),
+                  ),
+                ],
+              ),
             const SizedBox(height: AppSpacing.sm),
             FilledButton(
               onPressed: canCommit ? _submit : null,
