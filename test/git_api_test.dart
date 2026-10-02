@@ -47,6 +47,27 @@ void main() {
     expect(changes.single.added, 3);
   });
 
+  test('getChanges: body 为顶层 List (实测形状) 也能解析', () async {
+    responder = (c, m, a) => {
+      'raw': [
+        {
+          'path': 'b.dart',
+          'repoRelativePath': 'b.dart',
+          'workspaceRelativePath': 'b.dart',
+          'kind': 'modified',
+          'section': 'unstaged',
+          'added': 1,
+          'removed': 0,
+          'isStaged': false,
+          'isUntracked': false,
+          'isConflicted': false,
+        },
+      ],
+    };
+    final changes = await api.getChanges('/ws', 'unstaged');
+    expect(changes.single.path, 'b.dart');
+  });
+
   test('getRepositorySummary 解析 ahead/behind/branchName', () async {
     responder = (c, m, a) {
       calls.add((c, m, a));
@@ -91,7 +112,10 @@ void main() {
           {
             'hash': 'h1',
             'parents': ['p0'],
-            'refs': ['origin/main', 'main'],
+            'refs': [
+              {'name': 'HEAD', 'kind': 'head'},
+              {'name': 'main', 'kind': 'branch'},
+            ],
             'subject': 'feat: x',
             'authorName': 'yt',
             'authoredAtMs': 1700000000000,
@@ -103,6 +127,7 @@ void main() {
     final page = await api.getCommitGraph('/ws', maxCount: 50, skip: 0);
     expect(calls.single.$3, [{'workspacePath': '/ws', 'maxCount': 50, 'skip': 0}]);
     expect(page.commits.single.subject, 'feat: x');
+    expect(page.commits.single.refs, ['HEAD', 'main']);
     expect(page.hasMore, isTrue);
   });
 

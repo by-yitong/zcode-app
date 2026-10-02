@@ -128,7 +128,9 @@ class GitCommitEntry {
       for (final p in (j['parents'] as List<dynamic>? ?? const [])) p as String,
     ],
     refs: [
-      for (final r in (j['refs'] as List<dynamic>? ?? const [])) r as String,
+      // 实测为对象数组 {name, kind} (git log %D 解析), 兼容裸字符串
+      for (final r in (j['refs'] as List<dynamic>? ?? const []))
+        r is Map ? (r['name'] as String? ?? '') : r as String,
     ],
     subject: j['subject'] as String? ?? '',
     authorName: j['authorName'] as String?,
@@ -202,10 +204,14 @@ class GitCommitResult {
       );
 }
 
-List<GitChange> _parseChanges(Map<String, dynamic> body) => [
-  for (final c in (body['changes'] as List<dynamic>? ?? const []))
-    GitChange.fromJson(Map<String, dynamic>.from(c as Map)),
-];
+/// getChanges 的 body 有两种形状: 顶层 List (rpcCallMap 包成 {'raw': [...]})
+/// 或 {changes: [...]} 包裹 — 都接, 桌面端 3.14.4 实测为前者。
+List<GitChange> _parseChanges(Map<String, dynamic> body) {
+  final list = (body['changes'] ?? body['raw']) as List<dynamic>? ?? const [];
+  return [
+    for (final c in list) GitChange.fromJson(Map<String, dynamic>.from(c as Map)),
+  ];
+}
 
 /// git 通道 typed 封装。所有方法参数即 wire 字段, 不多传 (服务端 zod strict)。
 class GitApi {
