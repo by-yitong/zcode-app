@@ -5,18 +5,24 @@ import 'package:flutter/material.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 
 /// 单行着色规则 (按行首前缀):
+/// - `^diff|^index|^+++|^---` (文件头/元信息) → 灰 ([ColorScheme.onSurfaceVariant]);
 /// - `^+` → 绿底 `Color(0x1F22C55E)` + [AppColors.success] 字;
 /// - `^-` → 红底 `Color(0x1FEF4444)` + [AppColors.danger] 字;
 /// - `^@@` → [AppColors.accent] 字;
-/// - `^diff|^index` → 元信息灰 ([ColorScheme.onSurfaceVariant]);
 /// - 其余 (上下文行) → 默认前景色。
+///
+/// 文件头判定必须在 `+`/`-` 之前: spec §3.1 文件头灰字,
+/// `+++`/`---` 不能命中 `^+`/`^-` 着增删色。
 (Color?, Color?) _lineColors(String line, Color metaColor) {
+  if (line.startsWith('diff') ||
+      line.startsWith('index') ||
+      line.startsWith('+++') ||
+      line.startsWith('---')) {
+    return (null, metaColor);
+  }
   if (line.startsWith('+')) return (const Color(0x1F22C55E), AppColors.success);
   if (line.startsWith('-')) return (const Color(0x1FEF4444), AppColors.danger);
   if (line.startsWith('@@')) return (null, AppColors.accent);
-  if (line.startsWith('diff') || line.startsWith('index')) {
-    return (null, metaColor);
-  }
   return (null, null);
 }
 

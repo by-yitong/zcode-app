@@ -64,9 +64,14 @@ void main() {
     expect(_lineText(tester, 4).style?.color, AppColors.accent);
   });
 
-  testWidgets('diff / index 元信息行: 灰字', (tester) async {
+  testWidgets('diff / index / 文件头(+++/---) 元信息行: 灰字', (tester) async {
     await pumpDiff(tester);
     expect(_lineText(tester, 0).style?.color, _metaGray);
     expect(_lineText(tester, 1).style?.color, _metaGray);
+    // 文件头行不命中 +/- 增删色: 灰字且无绿/红底 (spec §3.1 文件头灰字)。
+    expect(_lineText(tester, 2).style?.color, _metaGray); // --- a/a.dart
+    expect(_lineContainer(tester, 2).color, isNull);
+    expect(_lineText(tester, 3).style?.color, _metaGray); // +++ b/a.dart
+    expect(_lineContainer(tester, 3).color, isNull);
   });
 }
