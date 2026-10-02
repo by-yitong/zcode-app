@@ -342,29 +342,32 @@ class RevealDrawerState extends State<RevealDrawer>
                             onHorizontalDragStart: _onPageDragStart,
                             onHorizontalDragUpdate: _onPageDragUpdate,
                             onHorizontalDragEnd: _onPageDragEnd,
-                            child: Stack(
-                              children: [
-                                AbsorbPointer(
-                                  absorbing: settled,
-                                  child: ClipRRect(
-                                    borderRadius: leftRadius,
+                            child: ClipRRect(
+                              borderRadius: leftRadius,
+                              // 提亮纱必须在 ClipRRect 之内: 叠在外面会把
+                              // 圆角缺口一起蒙色, 页面与底色调子拉平后
+                              // 圆角视觉消失 (真机实测)。
+                              child: Stack(
+                                children: [
+                                  AbsorbPointer(
+                                    absorbing: settled,
                                     child: widget.child,
                                   ),
-                                ),
-                                // 提亮纱: 页面自身底色 (暗色 #08090A) 比抽屉壳
-                                // (#15161A) 深一档, 打开时被读成"右侧发黑"。
-                                // 叠一层抽屉同色半透明纱随 t 渐显, 页面即与抽屉
-                                // 同调; 关抽屉自动褪回原貌, 不动全局主题。
-                                Positioned.fill(
-                                  child: IgnorePointer(
-                                    child: ColoredBox(
-                                      color: widget.backdropColor.withValues(
-                                        alpha: _kPageVeilAlpha * t,
+                                  // 提亮纱: 页面自身底色 (暗色 #08090A) 比抽
+                                  // 屉壳 (#15161A) 深一档, 打开时被读成"右侧
+                                  // 发黑"。叠抽屉同色半透明纱随 t 渐显, 页面
+                                  // 与抽屉同调; 关抽屉自动褪回原貌。
+                                  Positioned.fill(
+                                    child: IgnorePointer(
+                                      child: ColoredBox(
+                                        color: widget.backdropColor.withValues(
+                                          alpha: _kPageVeilAlpha * t,
+                                        ),
                                       ),
                                     ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
                         ),
