@@ -59,6 +59,10 @@ class ChatScreen extends ConsumerStatefulWidget {
   final String workspaceKey;
   final String? taskId;
 
+  /// 切换项目 (context.replace 重建本页) 后, 新页面首帧自动恢复抽屉 —
+  /// 文件级旗标跨路由传递, 用后即清。产品要求: 切项目抽屉不关, 方便选会话。
+  static bool keepDrawerOpenOnNextInit = false;
+
   const ChatScreen({super.key, required this.workspaceKey, this.taskId});
 
   @override
@@ -101,6 +105,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   /// 打开搜索页 (抽屉已自行关闭)
   void _openSearchFromDrawer() {
     _chatScaffoldKey.currentState?.openSearch();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // 切项目 (replace 重建本页) 后首帧直接跳到抽屉全开 — 无动画,
+    // 避免"先看到关着再弹开"的闪动; 旗标用后即清
+    if (ChatScreen.keepDrawerOpenOnNextInit) {
+      ChatScreen.keepDrawerOpenOnNextInit = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _revealKey.currentState?.openImmediately();
+      });
+    }
   }
 
   @override
@@ -178,7 +195,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               );
             },
             onSwitchWorkspace: (ws) {
-              // 切换项目: 更新选中工作区 + 跳转新工作区聊天页 (新会话)
+              // 切换项目: 更新选中工作区 + 跳转新工作区聊天页 (新会话)。
+              // 抽屉保持打开 (见 keepDrawerOpenOnNextInit), 方便继续选会话
+              if (ws.workspaceKey != widget.workspaceKey) {
+                ChatScreen.keepDrawerOpenOnNextInit = true;
+              }
               ref.read(selectedWorkspaceProvider.notifier).state = ws;
               context.replace(
                 '${AppRoutes.chat}?workspace=${Uri.encodeComponent(ws.workspaceKey)}',

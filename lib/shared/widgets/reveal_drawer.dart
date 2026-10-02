@@ -117,6 +117,13 @@ class RevealDrawerState extends State<RevealDrawer>
     _controller.animateTo(1.0, duration: AppDur.base, curve: AppEase.linear);
   }
 
+  /// 直接跳到全开 (无动画) — 切换项目重建页面后恢复抽屉用,
+  /// 走 open() 的 220ms 动画会闪一下"先关着再弹开"
+  void openImmediately() {
+    FocusManager.instance.primaryFocus?.unfocus();
+    _controller.value = 1.0;
+  }
+
   /// 关闭抽屉 (收起比展开再快一档)
   void close() {
     _controller.animateTo(0.0, duration: AppDur.fast, curve: AppEase.linear);
@@ -166,20 +173,39 @@ class RevealDrawerState extends State<RevealDrawer>
     _controller.value = (dx / w).clamp(0.0, 1.0);
   }
 
+  /// 松手 settle: 目标由速度/位置决定; 时长按"剩余路程 ÷ 释放速度"推算
+  /// (线性曲线 + 速度匹配时长 = 动画从手指当前速度无缝续接, 快甩瞬间
+  /// 到位, 慢放平缓回弹 — 固定时长会"手停了动画还在爬", 实测不丝滑)。
+  void _settle({required double velocityX}) {
+    final w = _drawerWidth;
+    if (w == null || w <= 0) return;
+    final double target;
+    if (velocityX > _kFlingVelocity) {
+      target = 1.0; // 快甩 → 直接开
+    } else if (velocityX < -_kFlingVelocity) {
+      target = 0.0; // 快甩 → 直接合
+    } else {
+      target = _controller.value > _kSettleT ? 1.0 : 0.0; // 过半定去留
+    }
+    final remainingPx = (target - _controller.value).abs() * w;
+    final v = velocityX.abs().clamp(400.0, double.infinity); // 慢放时长保底
+    final ms = (remainingPx / v * 1000).round().clamp(60, 220);
+    _controller.animateTo(
+      target,
+      duration: Duration(milliseconds: ms),
+      curve: AppEase.linear,
+    );
+  }
+
   void _onPointerUp(PointerUpEvent e) {
     if (e.pointer != _pointer) return;
     _pointer = null;
     _start = null;
     if (!_latched) return;
     _latched = false;
-    // settle: 位置阈值 (过半开) 为主, 速度辅助 (快甩直接开)
-    final flung =
-        (_tracker?.getVelocity().pixelsPerSecond.dx ?? 0) > _kFlingVelocity;
-    if (flung || _controller.value > _kSettleT) {
-      open();
-    } else {
-      close();
-    }
+    _settle(
+      velocityX: _tracker?.getVelocity().pixelsPerSecond.dx ?? 0,
+    );
   }
 
   void _onPointerCancel(PointerCancelEvent e) {
@@ -241,14 +267,7 @@ class RevealDrawerState extends State<RevealDrawer>
   void _onPageDragEnd(DragEndDetails d) {
     if (!_dragSessionActive) return;
     _dragSessionActive = false;
-    final v = d.velocity.pixelsPerSecond.dx;
-    if (v < -_kFlingVelocity) {
-      close(); // 快速左甩关闭
-    } else if (v > _kFlingVelocity) {
-      open(); // 快速右甩收回
-    } else {
-      _controller.value > _kSettleT ? open() : close();
-    }
+    _settle(velocityX: d.velocity.pixelsPerSecond.dx);
   }
 
   @override

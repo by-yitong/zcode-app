@@ -198,6 +198,20 @@ void main() {
     expect(_pagePushDx(tester), 0.0, reason: '关闭后页面应回到原位');
   });
 
+  testWidgets('openImmediately 直跳全开 (无动画, 切项目恢复抽屉用)', (tester) async {
+    _usePhoneViewport(tester);
+    final key = GlobalKey<RevealDrawerState>();
+    await tester.pumpWidget(
+      _host(key, const Scaffold(body: Center(child: Text('PAGE')))),
+    );
+    expect(key.currentState!.isOpen, isFalse);
+
+    key.currentState!.openImmediately();
+    await tester.pump(); // 单帧即到位, 无过渡动画
+    expect(key.currentState!.isOpen, isTrue);
+    expect(_pagePushDx(tester), closeTo(288, 1));
+  });
+
   testWidgets('open()/close()/toggle()/isOpen', (tester) async {
     _usePhoneViewport(tester);
     final key = GlobalKey<RevealDrawerState>();

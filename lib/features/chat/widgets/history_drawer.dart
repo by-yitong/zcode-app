@@ -718,7 +718,8 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                       : null,
                   onTap: () {
                     Navigator.pop(ctx); // 关切换弹窗
-                    widget.onClose(); // 关抽屉
+                    // 切项目不关抽屉: 列表随新工作区自动刷新,
+                    // 用户留在抽屉里继续选会话 (产品要求)
                     if (w.workspaceKey != widget.workspacePath) {
                       widget.onSwitchWorkspace(w);
                     }
