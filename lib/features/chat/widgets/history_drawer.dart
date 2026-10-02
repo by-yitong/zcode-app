@@ -27,6 +27,10 @@ class HistoryDrawer extends ConsumerStatefulWidget {
   /// 打开搜索页 (跳转全屏搜索, 合并原顶栏搜索)
   final VoidCallback onOpenSearch;
 
+  /// 关闭抽屉 (抽屉改为 RevealDrawer 推开式后不再是路由 overlay,
+  /// 原先的 Navigator.pop(context) 关抽屉语义全部走此回调)
+  final VoidCallback onClose;
+
   const HistoryDrawer({
     required this.workspacePath,
     required this.currentTaskId,
@@ -34,6 +38,7 @@ class HistoryDrawer extends ConsumerStatefulWidget {
     required this.onNewChat,
     required this.onSwitchWorkspace,
     required this.onOpenSearch,
+    required this.onClose,
   });
 
   @override
@@ -42,17 +47,6 @@ class HistoryDrawer extends ConsumerStatefulWidget {
 
 class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
   bool _showArchived = false;
-
-  @override
-  void initState() {
-    super.initState();
-    // 抽屉打开 (菜单按钮/边缘右滑手势) → 输入框统一失焦:
-    // Scaffold 抽屉是 overlay 不抢焦点, 边缘手势打开时聊天输入框
-    // 保持聚焦 (键盘被抽屉盖住), 关闭抽屉时键盘"露出"像被弹起。
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      FocusManager.instance.primaryFocus?.unfocus();
-    });
-  }
 
   /// 默认工作区 = 网页端的"不在项目中工作" (路径以 .zcode/workspace/default 结尾)
   static bool _isDefaultWorkspace(Workspace w) =>
@@ -253,7 +247,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
       opacity: isArchived ? 0.5 : 1.0,
       child: InkWell(
         onTap: () {
-          Navigator.pop(context);
+          widget.onClose(); // 关抽屉
           widget.onSelected(task.id);
         },
         onLongPress: () => _showTaskActions(context, task),
@@ -395,8 +389,10 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
       ),
     );
 
-    return Drawer(
-      backgroundColor: theme.brightness == Brightness.dark
+    // 推开式抽屉: 不再包 Material Drawer (宽度/滑入由 RevealDrawer 负责),
+    // 只保留底色壳; 颜色与原 Drawer.backgroundColor 完全一致
+    return Material(
+      color: theme.brightness == Brightness.dark
           ? AppColors.darkSurfaceElevated
           : AppColors.lightSurface,
       child: SafeArea(
@@ -427,7 +423,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                     tooltip: '搜索',
                     color: theme.colorScheme.onSurfaceVariant,
                     onPressed: () {
-                      Navigator.pop(context); // 关抽屉
+                      widget.onClose(); // 关抽屉
                       widget.onOpenSearch();
                     },
                   ),
@@ -437,7 +433,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                     tooltip: '设置',
                     color: theme.colorScheme.onSurfaceVariant,
                     onPressed: () {
-                      Navigator.pop(context); // 关抽屉
+                      widget.onClose(); // 关抽屉
                       context.push('/settings');
                     },
                   ),
@@ -451,7 +447,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
               label: '新建任务',
               accent: true,
               onTap: () {
-                Navigator.pop(context); // 关抽屉
+                widget.onClose(); // 关抽屉
                 widget.onNewChat();
               },
             ),
@@ -460,7 +456,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
               icon: Icons.search_rounded,
               label: '搜索',
               onTap: () {
-                Navigator.pop(context);
+                widget.onClose(); // 关抽屉
                 widget.onOpenSearch();
               },
             ),
@@ -469,7 +465,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
               icon: Icons.storefront_outlined,
               label: '插件市场',
               onTap: () {
-                Navigator.pop(context);
+                widget.onClose(); // 关抽屉
                 Navigator.of(context).push(
                   MaterialPageRoute(
                     builder: (_) => const PluginsBrowserPage(),
@@ -716,7 +712,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                       : null,
                   onTap: () {
                     Navigator.pop(ctx); // 关切换弹窗
-                    Navigator.pop(context); // 关抽屉
+                    widget.onClose(); // 关抽屉
                     if (w.workspaceKey != widget.workspacePath) {
                       widget.onSwitchWorkspace(w);
                     }

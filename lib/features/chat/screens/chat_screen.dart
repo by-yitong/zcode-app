@@ -40,12 +40,14 @@ import '../widgets/plan_list.dart';
 import '../widgets/tool_activity.dart';
 import '../widgets/work_history.dart';
 import '../widgets/composer.dart';
-import '../widgets/drawer_swipe.dart';
 import '../widgets/question_sheet.dart';
 import '../widgets/execution_trace.dart';
 import '../widgets/running_works.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/history_drawer.dart';
+import '../../../shared/widgets/reveal_drawer.dart';
+import '../../git/screens/git_screen.dart';
+import '../../../providers/git_provider.dart' show GitRef;
 
 /// AI 对话页 — 核心交互界面 (实测对接 2026-06-15)
 ///
@@ -65,7 +67,9 @@ class ChatScreen extends ConsumerStatefulWidget {
 
 class _ChatScreenState extends ConsumerState<ChatScreen> {
   // ⚠️ GlobalKey 必须在 state 里持有 (跨帧稳定), 不能在 build 里 new。
-  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey();
+  // 推开式抽屉控制柄 (open/close/isOpen, 见 RevealDrawer)
+  final GlobalKey<RevealDrawerState> _revealKey =
+      GlobalKey<RevealDrawerState>();
   // 供抽屉搜索按钮回调进入 _ChatScaffoldState (斜杠命令/模型弹窗在那边)
   final GlobalKey<_ChatScaffoldState> _chatScaffoldKey =
       GlobalKey<_ChatScaffoldState>();
@@ -121,6 +125,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
+        // 抽屉开着 → 返回键先关抽屉 (不触发双击退出)
+        if (_revealKey.currentState?.isOpen == true) {
+          _revealKey.currentState?.close();
+          return;
+        }
         final now = DateTime.now();
         if (_lastBackAt != null &&
             now.difference(_lastBackAt!) < const Duration(seconds: 2)) {
@@ -139,39 +148,38 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           );
       },
       child: Scaffold(
-        key: _scaffoldKey,
-        // 抽屉拉取: 左缘 100dp 原生跟手拖拽; 全屏右滑由 body 外层的
-        // DrawerSwipeGate 观察式补足 (不入竞技场, 表格/代码块横向滚动
-        // 不受影响, 见其注释)。不能改回全屏宽 — 会抢内容的横向手势。
-        drawerEdgeDragWidth: 100,
-        drawer: HistoryDrawer(
-          workspacePath: widget.workspaceKey,
-          currentTaskId: widget.taskId,
-          onSelected: (selectedTaskId) {
-            // 选了历史会话: 用新 taskId 跳转
-            // replace: 原地替换当前 chat 路由, 不叠加新 chat, 保持工作区列表在栈底
-            context.replace(
-              '${AppRoutes.chat}?workspace=${Uri.encodeComponent(widget.workspaceKey)}'
-              '&task=${Uri.encodeComponent(selectedTaskId)}',
-            );
-          },
-          onNewChat: () {
-            // 新对话: 跳回不带 task 的聊天页 (replace: 原地替换, 保持返回栈)
-            context.replace(
-              '${AppRoutes.chat}?workspace=${Uri.encodeComponent(widget.workspaceKey)}',
-            );
-          },
-          onSwitchWorkspace: (ws) {
-            // 切换项目: 更新选中工作区 + 跳转新工作区聊天页 (新会话)
-            ref.read(selectedWorkspaceProvider.notifier).state = ws;
-            context.replace(
-              '${AppRoutes.chat}?workspace=${Uri.encodeComponent(ws.workspaceKey)}',
-            );
-          },
-          onOpenSearch: _openSearchFromDrawer,
-        ),
-        body: DrawerSwipeGate(
-          onOpen: () => _scaffoldKey.currentState?.openDrawer(),
+        // 抽屉改为推开式 reveal (RevealDrawer): 抽屉垫底层从左滑入,
+        // 页面被推开缩小; 全屏右滑跟手开 / 点页面关 / 页面左拖跟手关,
+        // 消息里表格/代码块横向滚动不受影响 (让路逻辑见 RevealDrawer 注释)。
+        body: RevealDrawer(
+          key: _revealKey,
+          drawer: HistoryDrawer(
+            workspacePath: widget.workspaceKey,
+            currentTaskId: widget.taskId,
+            onSelected: (selectedTaskId) {
+              // 选了历史会话: 用新 taskId 跳转
+              // replace: 原地替换当前 chat 路由, 不叠加新 chat, 保持工作区列表在栈底
+              context.replace(
+                '${AppRoutes.chat}?workspace=${Uri.encodeComponent(widget.workspaceKey)}'
+                '&task=${Uri.encodeComponent(selectedTaskId)}',
+              );
+            },
+            onNewChat: () {
+              // 新对话: 跳回不带 task 的聊天页 (replace: 原地替换, 保持返回栈)
+              context.replace(
+                '${AppRoutes.chat}?workspace=${Uri.encodeComponent(widget.workspaceKey)}',
+              );
+            },
+            onSwitchWorkspace: (ws) {
+              // 切换项目: 更新选中工作区 + 跳转新工作区聊天页 (新会话)
+              ref.read(selectedWorkspaceProvider.notifier).state = ws;
+              context.replace(
+                '${AppRoutes.chat}?workspace=${Uri.encodeComponent(ws.workspaceKey)}',
+              );
+            },
+            onOpenSearch: _openSearchFromDrawer,
+            onClose: () => _revealKey.currentState?.close(),
+          ),
           child: _ChatScaffold(
             key: _chatScaffoldKey,
             title: title,
@@ -180,7 +188,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             state: chatState,
             onMenuTap: () {
               FocusManager.instance.primaryFocus?.unfocus();
-              _scaffoldKey.currentState?.openDrawer();
+              _revealKey.currentState?.open();
             },
           ),
         ),
@@ -753,25 +761,19 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
       appBar: ChatFloatingHeader(
         title: widget.title,
         // 上下文环移入中间胶囊 (新对话还没有内容时不显示)
-        // 点击 → 与 UsagePill 同一张用量详情表 (上下文+GLM+MCP, 含压缩按钮)
         contextIndicator: state.messages.isNotEmpty
             ? ContextLengthIndicator(
                 usage: state.tokenUsage,
                 onCompact: () =>
                     ref.read(chatProvider(widget.chatRef).notifier).compact(),
-                quotaAsync: ref.watch(glmQuotaProvider),
-                onRefreshQuota: () =>
-                    ref.read(glmQuotaProvider.notifier).refresh(),
               )
             : null,
         // 状态行: 常驻用量统计 (AI 工作中状态在消息流里已有体现)
-        // 点击 → 用量详情底部表 (与上下文环同一张, 含压缩按钮)
+        // 点击 → 用量详情底部表
         usagePill: UsagePill(
           tokenUsage: state.tokenUsage,
           glmQuotaAsync: ref.watch(glmQuotaProvider),
           onRefreshQuota: () => ref.read(glmQuotaProvider.notifier).refresh(),
-          onCompact: () =>
-              ref.read(chatProvider(widget.chatRef).notifier).compact(),
         ),
         onMenuTap: widget.onMenuTap,
         onNewChat: () {
@@ -782,6 +784,20 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
         },
         // 悬浮窗进度监视器 (画中画; flutter_overlay_window 仅 Android)
         onOpenPip: Platform.isAndroid ? _openPipOverlay : null,
+        // Git 工具全屏页 (查看更改/分支/历史/提交/推送)
+        onOpenGit: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute<void>(
+              builder: (_) => GitScreen(
+                gitRef: GitRef(
+                  workspacePath: widget.workspacePath,
+                  workspaceIdentity: widget.chatRef.workspaceIdentity,
+                ),
+              ),
+            ),
+          );
+        },
         onOpenSettings: () => context.push(AppRoutes.settings),
       ),
       // 内容可穿过顶部: 无占位块, 消息列表从 y=0 起滚, 从三枚胶囊的空隙
