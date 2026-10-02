@@ -111,6 +111,82 @@ void main() {
     expect(c.state.busyOps, isEmpty);
   });
 
+  test('commit 成功后 push 失败 → error 写入且变更列表已清空', () async {
+    var committed = false;
+    var pushed = false;
+    Map<String, dynamic> change(String path) => {
+          'path': path,
+          'repoRelativePath': path,
+          'workspaceRelativePath': path,
+          'kind': 'modified',
+          'section': 'unstaged',
+          'added': 1,
+          'removed': 0,
+          'isStaged': false,
+          'isUntracked': false,
+          'isConflicted': false,
+        };
+    final c = make((m) {
+      if (m == 'commit') {
+        committed = true;
+        return {'commitHash': 'abc', 'summary': okSummary()};
+      }
+      if (m == 'push') {
+        pushed = true;
+        throw Exception('push rejected (no upstream)');
+      }
+      if (m == 'getChanges') {
+        // commit 后 refresh → 变更已清空 (提交成功语义)。
+        return {'changes': committed ? [] : [change('a.dart')]};
+      }
+      return okSummary();
+    });
+    await pumpEventQueue();
+    expect(c.state.unstaged, hasLength(1));
+    await c.commitAndMaybePush(
+      message: 'msg',
+      stagedOnly: false,
+      pushAfter: true,
+    );
+    expect(committed, isTrue);
+    expect(pushed, isTrue);
+    expect(c.state.error, contains('push rejected (no upstream)'));
+    expect(c.state.unstaged, isEmpty); // 变更列表已清空, 不因 push 失败回滚
+    expect(c.state.staged, isEmpty);
+    expect(c.state.busyOps, isEmpty); // 'commit' busy 键已清
+  });
+
+  test('commit 本身失败 → error 写入, push 不发, 变更保留', () async {
+    final methods = <String>[];
+    final c = make((m) {
+      methods.add(m);
+      if (m == 'commit') throw Exception('nothing to commit');
+      if (m == 'getChanges') {
+        return {
+          'changes': [
+            {
+              'path': 'a.dart', 'repoRelativePath': 'a.dart',
+              'workspaceRelativePath': 'a.dart', 'kind': 'modified',
+              'section': 'unstaged', 'added': 1, 'removed': 0,
+              'isStaged': false, 'isUntracked': false, 'isConflicted': false,
+            },
+          ],
+        };
+      }
+      return okSummary();
+    });
+    await pumpEventQueue();
+    await c.commitAndMaybePush(
+      message: 'msg',
+      stagedOnly: false,
+      pushAfter: true,
+    );
+    expect(methods, isNot(contains('push'))); // 提交失败不推送
+    expect(c.state.error, contains('nothing to commit'));
+    expect(c.state.unstaged, hasLength(1)); // 未清空 (提交未成功)
+    expect(c.state.busyOps, isEmpty);
+  });
+
   test('switchTo: issues 非空 → error=issue message, summary 不变', () async {
     final c = make((m) {
       if (m == 'switchBranch') {

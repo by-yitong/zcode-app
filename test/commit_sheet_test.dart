@@ -120,4 +120,59 @@ void main() {
     await tester.pumpAndSettle();
     expect(btnOf().onPressed, isNotNull);
   });
+
+  // 缺陷复现 (勿删): task-7-brief:16 契约「summary.isDetached=true 时
+  // GitScreen 不提供 push 入口」, 但 commit_sheet.dart:185-196 的
+  // 「提交后推送」Checkbox 无 isDetached 门控, detached 下仍可达。
+  // 修复后去掉 skip, 本用例应转绿。
+  testWidgets('detached HEAD: 提交弹窗不应提供「提交后推送」入口', (tester) async {
+    final calls = <String, Map<String, dynamic>>{};
+    final api = GitApi((channel, method, args) async {
+      calls[method] = Map<String, dynamic>.from(args as Map);
+      if (method == 'getRepositorySummary') {
+        // detached: headRefType 非 'branch' (与 branchName 不同时为 null)。
+        return <String, dynamic>{
+          'branchName': null,
+          'trackingBranchName': null,
+          'headRefType': 'commit',
+          'ahead': 0,
+          'behind': 0,
+        };
+      }
+      if (method == 'getChanges') {
+        return {'changes': [_changeJson('a.dart')]};
+      }
+      return <String, dynamic>{};
+    });
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          gitProvider(const GitRef(workspacePath: '/ws')).overrideWith(
+            (ref) => GitController(const GitRef(workspacePath: '/ws'), api),
+          ),
+        ],
+        child: MaterialApp(
+          home: Consumer(
+            builder: (context, ref, _) => Scaffold(
+              body: Center(
+                child: FilledButton(
+                  onPressed: () => showCommitSheet(
+                    context,
+                    ref,
+                    const GitRef(workspacePath: '/ws'),
+                  ),
+                  child: const Text('OPEN'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OPEN'));
+    await tester.pumpAndSettle();
+    // 契约: detached 时 push 入口不可达 → 「提交后推送」不得出现。
+    expect(find.text('提交后推送'), findsNothing);
+  }, skip: true); // skip 原因见上方注释: detached 未隐藏 push 入口, 待派修
 }

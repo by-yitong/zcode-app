@@ -108,6 +108,50 @@ void main() {
     expect(find.text('新建分支'), findsOneWidget);
   });
 
+  testWidgets('detached HEAD: 分支 Tab 琥珀提示条 + 无「当前」行 + 头部 HEAD (detached)', (
+    tester,
+  ) async {
+    await pumpGitScreen(
+      tester,
+      fakeApi((m, a) {
+        // detached 模拟: headRefType 非 'branch' 即 isDetached (git_api.dart:31)。
+        // 注意 branchName 与 headRefType 不可同时为 null — 会被 GitController
+        // 判为非仓库 empty 态 (git_provider.dart:143), 故 headRefType 用 'commit'。
+        if (m == 'getRepositorySummary') {
+          return summaryJson(branch: '', refType: 'commit');
+        }
+        if (m == 'getLocalBranches') {
+          // 服务端即使标记 isCurrent=true, 客户端以 summary 推导 → 不得高亮。
+          return {
+            'branches': [branchJson('main', current: true)],
+          };
+        }
+        if (m == 'getChanges') return {'changes': []};
+        return {'commits': [], 'hasMore': false};
+      }),
+    );
+    await tester.tap(find.text('分支'));
+    await tester.pumpAndSettle();
+
+    // 琥珀提示条: 文案 + task-5 brief 指定色 Color(0xFFF59E0B)。
+    expect(find.textContaining('HEAD 处于分离状态'), findsOneWidget);
+    final containers = tester.widgetList<Container>(
+      find.ancestor(
+        of: find.textContaining('HEAD 处于分离状态'),
+        matching: find.byType(Container),
+      ),
+    );
+    expect(
+      containers.map((c) => c.color),
+      contains(const Color(0xFFF59E0B)),
+    );
+    // 无当前行: 不出现「当前」标签与勾标 (服务端 isCurrent 被忽略)。
+    expect(find.text('当前'), findsNothing);
+    expect(find.byIcon(Icons.check_rounded), findsNothing);
+    // 头部卡片 detached 兜底文案 (git_screen.dart:195)。
+    expect(find.text('HEAD (detached)'), findsOneWidget);
+  });
+
   testWidgets('点非当前分支 → 确认弹窗 → switchBranch → summary 更新', (tester) async {
     final calls = <String>[];
     final captured = <String, Map<String, dynamic>>{};
