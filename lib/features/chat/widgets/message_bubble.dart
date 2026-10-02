@@ -16,6 +16,7 @@ import '../screens/file_preview_screen.dart';
 import 'agent_card.dart';
 import 'chat_helpers.dart';
 import 'execution_trace.dart';
+import 'frozen_markdown.dart';
 import 'plan_card.dart';
 import 'thought_block.dart';
 import 'tool_activity.dart';
@@ -88,15 +89,20 @@ class MessageBubble extends StatefulWidget {
 
 class MessageBubbleState extends State<MessageBubble> {
   /// 从 markdown content 中提取 data URI 图片, 返回 (图片列表, 去除图片后的文本)
+  // 匹配 ![alt](data:image/...;base64,...) — 旧消息内嵌图片路径
+  static final RegExp _imgRegex = RegExp(
+    r'!\[[^\]]*\]\((data:image/[^)]+)\)',
+  );
+
   (List<String> images, String text) _extractImages(String content) {
+    // 快路径: 流式文本几乎不含 data URI, 免掉两遍全文正则扫描。
+    if (!content.contains('data:image')) return (const <String>[], content);
     final images = <String>[];
-    // 匹配 ![alt](data:image/...;base64,...)
-    final imgRegex = RegExp(r'!\[[^\]]*\]\((data:image/[^)]+)\)');
     String text = content;
-    for (final match in imgRegex.allMatches(content)) {
+    for (final match in _imgRegex.allMatches(content)) {
       images.add(match.group(1)!);
     }
-    text = text.replaceAll(imgRegex, '').trim();
+    text = text.replaceAll(_imgRegex, '').trim();
     return (images, text);
   }
 
@@ -362,11 +368,13 @@ class MessageBubbleState extends State<MessageBubble> {
     }
     if (cleanText.trim().isNotEmpty) {
       allChildren.add(
-        AiMarkdown(
+        // 流式期间冻结已稳定段落 (widget 实例复用), 每 tick 只重建尾段 —
+        // 否则单 tick 成本随全文长度线性涨, 长回复流式时列表掉帧。
+        FrozenTailMarkdown(
           data: cleanText,
+          isLive: widget.message.isStreaming,
           ink: aiInk,
           codeBg: aiCodeBg,
-          isStreaming: widget.isResponding,
           onLinkTap: _onMarkdownLink,
         ),
       );
