@@ -33,6 +33,9 @@ class ChatFloatingHeader extends StatelessWidget
   /// 更多菜单 → 悬浮窗监视 (null = 非 Android, 菜单项隐藏)
   final VoidCallback? onOpenPip;
 
+  /// Git 工具全屏页 (null = 不显示入口胶囊)
+  final VoidCallback? onOpenGit;
+
   /// 更多菜单 → 设置页
   final VoidCallback onOpenSettings;
 
@@ -44,6 +47,7 @@ class ChatFloatingHeader extends StatelessWidget
     required this.onMenuTap,
     required this.onNewChat,
     this.onOpenPip,
+    this.onOpenGit,
     required this.onOpenSettings,
   });
 
@@ -143,6 +147,28 @@ class ChatFloatingHeader extends StatelessWidget
                     ),
                   ),
                 ),
+                // Git 工具入口胶囊 (null 不占位); 44×44 正圆
+                if (onOpenGit != null) ...[
+                  _GlassPill(
+                    bg: bg,
+                    child: IconButton(
+                      icon: Icon(
+                        Icons.account_tree_outlined,
+                        size: 20,
+                        color: inkColor,
+                      ),
+                      tooltip: 'Git 工具',
+                      onPressed: onOpenGit,
+                      style: IconButton.styleFrom(
+                        foregroundColor: inkColor,
+                        minimumSize: const Size(44, 44),
+                        padding: EdgeInsets.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                ],
                 // 右圆钮: 更多菜单; 44×44 正圆
                 _GlassPill(
                   key: const ValueKey('chatHeaderPillRight'),
