@@ -1,5 +1,7 @@
 // lib/providers/git_provider.dart
 
+import 'dart:ui' as ui;
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/relay/git_api.dart';
@@ -294,36 +296,45 @@ class GitController extends StateNotifier<GitState> {
   }
 
   /// AI 生成提交信息 (busy 键 'ai'): 只返回结果, 不写 state;
-  /// 失败原样抛给调用方处理。
+  /// 失败原样抛给调用方处理。locale 传系统语言 (spec §3.4)。
   Future<String> generateMessage() async {
     _setBusy('ai');
     try {
-      return await _api.generateCommitMessage(_ws);
+      return await _api.generateCommitMessage(
+        _ws,
+        locale: ui.PlatformDispatcher.instance.locale.toString(),
+      );
     } finally {
       _clearBusy('ai');
     }
   }
 
   /// 提交并可选 push (busy 键 'commit'): commit → 全量 [refresh] →
-  /// pushAfter 时 push; push 失败只写 error, 不清已刷新的变更 (提交已成功)。
-  Future<void> commitAndMaybePush({
+  /// pushAfter 时 push。返回是否提交成功: commit 抛异常 = false;
+  /// commit 成功后 refresh/push 失败仍 = true (提交已落库, 错误写 state.error)。
+  Future<bool> commitAndMaybePush({
     required String message,
     List<String>? paths,
     required bool stagedOnly,
     required bool pushAfter,
   }) async {
     _setBusy('commit');
+    var committed = false;
     try {
       await _api.commit(_ws, message, paths: paths, stagedOnly: stagedOnly);
+      committed = true;
       await refresh();
-      if (!pushAfter) return;
+      if (!pushAfter) return true;
       try {
         await _api.push(_ws);
       } catch (e) {
         state = state.copyWith(error: e.toString());
       }
+      return true;
     } catch (e) {
       state = state.copyWith(error: e.toString());
+      // commit 已成功但后续 refresh 失败: 仍按提交成功算。
+      return committed;
     } finally {
       _clearBusy('commit');
     }

@@ -1,5 +1,8 @@
 // test/commit_sheet_test.dart
 // Task 4: showCommitSheet (勾选列表 / 按勾选提交 / AI 生成 / 空 message 禁用)
+// 终审修复波: 提交失败弹窗保留 + AI 生成中禁用提交按钮
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -51,13 +54,17 @@ GitApi _fakeApi(Map<String, Map<String, dynamic>> calls) => GitApi((
 
 Future<void> _pumpSheet(
   WidgetTester tester,
-  Map<String, Map<String, dynamic>> calls,
-) async {
+  Map<String, Map<String, dynamic>> calls, {
+  GitApi? api,
+}) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
         gitProvider(const GitRef(workspacePath: '/ws')).overrideWith(
-          (ref) => GitController(const GitRef(workspacePath: '/ws'), _fakeApi(calls)),
+          (ref) => GitController(
+            const GitRef(workspacePath: '/ws'),
+            api ?? _fakeApi(calls),
+          ),
         ),
       ],
       child: MaterialApp(
@@ -173,5 +180,55 @@ void main() {
     await tester.pumpAndSettle();
     // 契约: detached 时 push 入口不可达 → 「提交后推送」不得出现。
     expect(find.text('提交后推送'), findsNothing);
+  });
+
+  // 终审修复 #2: commit RPC 抛错 → commitAndMaybePush 返回 false,
+  // 弹窗保留且已输入的 message / 勾选不丢 (错误走 SnackBar 链路)。
+  testWidgets('提交失败 (RPC 抛错) → 弹窗保留且 message 输入不丢', (tester) async {
+    final api = GitApi((channel, method, args) async {
+      if (method == 'getRepositorySummary') return _okSummary();
+      if (method == 'getChanges') {
+        return {'changes': [_changeJson('a.dart')]};
+      }
+      if (method == 'commit') throw Exception('nothing to commit');
+      return <String, dynamic>{};
+    });
+    await _pumpSheet(tester, {}, api: api);
+    await tester.enterText(find.byType(TextField), 'fix: keep me');
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '提交'));
+    await tester.pumpAndSettle();
+    // 弹窗仍在 (未 pop), 输入内容原样保留。
+    expect(find.byType(CheckboxListTile), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'fix: keep me'), findsOneWidget);
+  });
+
+  // 终审修复 #4: AI 生成进行中 (busyOps 含 'ai') → 提交按钮禁用。
+  testWidgets('AI 生成中 → 提交按钮 onPressed == null, 生成结束恢复', (tester) async {
+    final gate = Completer<void>();
+    final api = GitApi((channel, method, args) async {
+      if (method == 'getRepositorySummary') return _okSummary();
+      if (method == 'getChanges') {
+        return {'changes': [_changeJson('a.dart')]};
+      }
+      if (method == 'generateCommitMessage') {
+        await gate.future; // 挂起, 保持 'ai' busy 态
+        return {'message': 'feat: ai'};
+      }
+      return <String, dynamic>{};
+    });
+    await _pumpSheet(tester, {}, api: api);
+    await tester.enterText(find.byType(TextField), 'wip: msg');
+    await tester.pumpAndSettle();
+    FilledButton btnOf() => tester
+        .widget<FilledButton>(find.widgetWithText(FilledButton, '提交'));
+    expect(btnOf().onPressed, isNotNull);
+    await tester.tap(find.byIcon(Icons.auto_awesome));
+    await tester.pump(); // 只 pump 一帧: spinner 未停, 不能 pumpAndSettle
+    expect(btnOf().onPressed, isNull); // 生成中禁用
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('feat: ai'), findsOneWidget);
+    expect(btnOf().onPressed, isNotNull); // 生成结束恢复可用
   });
 }

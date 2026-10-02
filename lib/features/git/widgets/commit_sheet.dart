@@ -9,8 +9,9 @@ import '../../../shared/theme/app_design_tokens.dart';
 /// 提交底部弹窗 (Task 4): 变更文件勾选 (默认全选) + 仅提交已暂存开关 +
 /// 提交信息 (AI 生成) + 提交后推送 + 「提交」。
 ///
-/// 提交调 [GitController.commitAndMaybePush] 后关弹窗; 失败不抛出, error 由
-/// controller 状态经 GitScreen 的 listener 弹 SnackBar。
+/// 提交调 [GitController.commitAndMaybePush]: 返回 true 关弹窗; false
+/// (commit 失败) 弹窗保留 (message/勾选不丢), error 由 controller 状态
+/// 经 GitScreen 的 listener 弹 SnackBar。
 Future<void> showCommitSheet(
   BuildContext context,
   WidgetRef ref,
@@ -73,13 +74,15 @@ class _CommitSheetBodyState extends ConsumerState<_CommitSheetBody> {
   Future<void> _submit() async {
     final controller = ref.read(gitProvider(widget.gitRef).notifier);
     final navigator = Navigator.of(context);
-    await controller.commitAndMaybePush(
+    final ok = await controller.commitAndMaybePush(
       message: _msg.text.trim(),
       paths: _stagedOnly ? null : _selected.toList(),
       stagedOnly: _stagedOnly,
       pushAfter: _pushAfter,
     );
-    navigator.pop();
+    if (!mounted) return;
+    // 仅提交成功才关弹窗; 失败保留 (输入不丢), 错误走 SnackBar 链路。
+    if (ok) navigator.pop();
   }
 
   @override
@@ -96,7 +99,7 @@ class _CommitSheetBodyState extends ConsumerState<_CommitSheetBody> {
 
     final aiBusy = state.busyOps.contains('ai');
     final commitBusy = state.busyOps.contains('commit');
-    final canCommit = _msg.text.trim().isNotEmpty && !commitBusy;
+    final canCommit = _msg.text.trim().isNotEmpty && !commitBusy && !aiBusy;
 
     return Padding(
       // 键盘避让: viewInsets 本身就是 EdgeInsets, 直接作为 padding。

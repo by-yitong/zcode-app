@@ -36,8 +36,9 @@ class _GitScreenState extends ConsumerState<GitScreen>
     _tab = TabController(length: 3, vsync: this);
   }
 
-  /// 已展示过的 error 原文。GitState.error 不会自动清空 (copyWith null 合并),
-  /// 这里一次性消费: 只弹与上次不同的错误, 避免反复弹 SnackBar。
+  /// 已展示过的 error 原文。只弹与上次不同的错误, 避免反复弹 SnackBar;
+  /// error 被清空 (refresh 成功写 error: null) 时复位 → 重试后同样的
+  /// 错误文案也能再次弹出。
   String? _shownError;
 
   @override
@@ -52,7 +53,11 @@ class _GitScreenState extends ConsumerState<GitScreen>
 
     ref.listen<GitState>(gitProvider(widget.gitRef), (_, next) {
       final err = next.error;
-      if (err != null && err != _shownError) {
+      if (err == null) {
+        _shownError = null; // error 清空即复位, 允许下次同文案错误再弹
+        return;
+      }
+      if (err != _shownError) {
         _shownError = err;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;

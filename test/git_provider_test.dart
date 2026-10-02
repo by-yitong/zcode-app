@@ -187,6 +187,27 @@ void main() {
     expect(c.state.busyOps, isEmpty);
   });
 
+  test('generateMessage: 参数含非空 locale (系统语言, spec §3.4)', () async {
+    final argsSeen = <Map<String, dynamic>>[];
+    final c = GitController(
+      gitRef,
+      GitApi((channel, method, args) async {
+        if (method == 'generateCommitMessage') {
+          argsSeen.add(Map<String, dynamic>.from(args as Map));
+          return {'message': 'feat: ai'};
+        }
+        return okSummary();
+      }),
+    );
+    await pumpEventQueue();
+    final msg = await c.generateMessage();
+    expect(msg, 'feat: ai');
+    expect(argsSeen, hasLength(1));
+    final locale = argsSeen.single['locale'] as String?;
+    expect(locale, isNotNull);
+    expect(locale, isNotEmpty);
+  });
+
   test('switchTo: issues 非空 → error=issue message, summary 不变', () async {
     final c = make((m) {
       if (m == 'switchBranch') {
