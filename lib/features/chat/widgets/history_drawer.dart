@@ -718,6 +718,9 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                       : null,
                   onTap: () {
                     Navigator.pop(ctx); // 关切换弹窗
+                    // 弹窗关闭会触发 Flutter 焦点恢复 (把焦点还给切换前
+                    // 聚焦过的输入框) → 键盘弹出; 切项目场景不需要, 主动清掉
+                    FocusManager.instance.primaryFocus?.unfocus();
                     // 切项目不关抽屉: 列表随新工作区自动刷新,
                     // 用户留在抽屉里继续选会话 (产品要求)
                     if (w.workspaceKey != widget.workspacePath) {

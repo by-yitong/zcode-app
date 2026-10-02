@@ -63,6 +63,10 @@ class ChatScreen extends ConsumerStatefulWidget {
   /// 文件级旗标跨路由传递, 用后即清。产品要求: 切项目抽屉不关, 方便选会话。
   static bool keepDrawerOpenOnNextInit = false;
 
+  /// 新建会话 (replace 重建本页) 后自动聚焦输入框 — 全应用唯一的
+  /// 自动取焦路径; 其余场景一律用户手点, 旗标用后即清。
+  static bool focusComposerOnNextInit = false;
+
   const ChatScreen({super.key, required this.workspaceKey, this.taskId});
 
   @override
@@ -116,6 +120,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       ChatScreen.keepDrawerOpenOnNextInit = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _revealKey.currentState?.openImmediately();
+      });
+    }
+    // 新建会话: 首帧聚焦输入框 (唯一的自动取焦路径)
+    if (ChatScreen.focusComposerOnNextInit) {
+      ChatScreen.focusComposerOnNextInit = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _chatScaffoldKey.currentState?.requestComposerFocus();
       });
     }
   }
@@ -189,7 +200,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               );
             },
             onNewChat: () {
-              // 新对话: 跳回不带 task 的聊天页 (replace: 原地替换, 保持返回栈)
+              // 新对话: 跳回不带 task 的聊天页 (replace: 原地替换, 保持返回栈)。
+              // 新会话自动聚焦输入框 (全应用唯一的自动取焦路径)
+              ChatScreen.focusComposerOnNextInit = true;
               context.replace(
                 '${AppRoutes.chat}?workspace=${Uri.encodeComponent(widget.workspaceKey)}',
               );
@@ -567,8 +580,13 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
   /// 底部 = minScrollExtent (center 锚定下为负值, 随 live 块增长而变)
   void _scrollToBottom() {
     if (!_scrollController.hasClients) return;
-    _scrollController.animateTo(
-      _scrollController.position.minScrollExtent,
+    final pos = _scrollController.position;
+    // 已贴底 (±8px) 就不滚: 发送新提问时此刻新消息尚未排版, 目标边界
+    // 是旧值, 硬滚会越过真实边界 → 拉出一段空白再回弹 (真机实测)。
+    // 新消息的贴底交给贴底跟随 (metrics 变化时 jumpTo 新 min)。
+    if ((pos.pixels - pos.minScrollExtent).abs() < 8) return;
+    pos.animateTo(
+      pos.minScrollExtent,
       duration: const Duration(milliseconds: 250),
       curve: Curves.easeOut,
     );
@@ -1423,8 +1441,9 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                             ref
                                 .read(chatProvider(widget.chatRef).notifier)
                                 .removeQueuedItem(q.id);
+                            // 只回填文本不取焦 — 焦点策略: 除新建会话外
+                            // 一律用户手点输入框
                             _messageController.text = q.text;
-                            _inputFocusNode.requestFocus();
                           },
                           onDelete: () => ref
                               .read(chatProvider(widget.chatRef).notifier)
@@ -1575,13 +1594,18 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
 
   /// /model 命令 + 模型按钮共用: 打开模型选择底部表 (模型列表读全局 modelListProvider)
   /// 打开全屏搜索页 (抽屉搜索按钮入口; 合并 会话搜索 + 斜杠命令)
-  /// 预填输入框 (如"新建技能"引导)
+  /// 预填输入框 (如"新建技能"引导) — 只回填文本不取焦 (焦点策略:
+  /// 除新建会话外一律用户手点)
   void prefillInput(String text) {
     _messageController.text = text;
-    _inputFocusNode.requestFocus();
     _messageController.selection = TextSelection.fromPosition(
       TextPosition(offset: _messageController.text.length),
     );
+  }
+
+  /// 主动聚焦输入框 — 仅新建会话路径调用 (全应用唯一的自动取焦)
+  void requestComposerFocus() {
+    _inputFocusNode.requestFocus();
   }
 
   void openSearch() {
@@ -1827,8 +1851,7 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
       );
     }
     _messageController.notifyListeners();
-    // 保持输入框聚焦 (触发提及弹窗)
-    FocusScope.of(context).requestFocus(_inputFocusNode);
+    // 焦点策略: 不主动取焦 — 提及插入只发生在用户正在输入时, 焦点本就在输入框
   }
 
   /// 检测光标位置的提及触发符 (@ # $ /)
