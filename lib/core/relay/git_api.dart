@@ -213,8 +213,11 @@ class GitApi {
 
   GitApi(this._call);
 
+  /// wire 约定: 参数以「数组」上帧 (服务端展开为位置参数), 与 relay_client
+  /// 既有方法一致。曾发裸对象导致服务端解构不出参数, 全部 git RPC 报
+  /// "Cannot read properties of undefined (reading 'workspacePath')"。
   Future<Map<String, dynamic>> _rpc(String method, dynamic args) =>
-      _call(kGitChannel, method, args);
+      _call(kGitChannel, method, [args]);
 
   Future<GitSummary> getRepositorySummary(String workspacePath) async =>
       GitSummary.fromJson(

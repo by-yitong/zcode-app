@@ -42,7 +42,7 @@ void main() {
     final (channel, method, args) = calls.single;
     expect(channel, 'git');
     expect(method, 'getChanges');
-    expect(args, {'workspacePath': '/ws', 'sourceId': 'unstaged'});
+    expect(args, [{'workspacePath': '/ws', 'sourceId': 'unstaged'}]);
     expect(changes.single.path, 'lib/a.dart');
     expect(changes.single.added, 3);
   });
@@ -74,11 +74,11 @@ void main() {
       };
     };
     final r = await api.commit('/ws', 'msg', paths: ['a.dart']);
-    expect(calls.single.$3, {
+    expect(calls.single.$3, [{
       'workspacePath': '/ws',
       'message': 'msg',
       'paths': ['a.dart'],
-    });
+    }]);
     expect(r.commitHash, 'abc123');
     expect(r.summary!.branchName, 'main');
   });
@@ -101,7 +101,7 @@ void main() {
       };
     };
     final page = await api.getCommitGraph('/ws', maxCount: 50, skip: 0);
-    expect(calls.single.$3, {'workspacePath': '/ws', 'maxCount': 50, 'skip': 0});
+    expect(calls.single.$3, [{'workspacePath': '/ws', 'maxCount': 50, 'skip': 0}]);
     expect(page.commits.single.subject, 'feat: x');
     expect(page.hasMore, isTrue);
   });
@@ -135,7 +135,7 @@ void main() {
       };
     };
     final r = await api.switchBranch('/ws', 'dev');
-    expect(calls.single.$3, {'workspacePath': '/ws', 'targetBranchName': 'dev'});
+    expect(calls.single.$3, [{'workspacePath': '/ws', 'targetBranchName': 'dev'}]);
     expect(r.didChange, isTrue);
     expect(r.issues, isEmpty);
   });
@@ -143,16 +143,16 @@ void main() {
   test('写操作: stage/discard/push/refresh 参数正确', () async {
     await api.stagePaths('/ws', ['a.dart']);
     expect(calls[0].$2, 'stagePaths');
-    expect(calls[0].$3, {'workspacePath': '/ws', 'paths': ['a.dart']});
+    expect(calls[0].$3, [{'workspacePath': '/ws', 'paths': ['a.dart']}]);
 
     await api.discardPaths('/ws', ['a.dart']);
-    expect(calls[1].$3, {'workspacePath': '/ws', 'paths': ['a.dart']});
+    expect(calls[1].$3, [{'workspacePath': '/ws', 'paths': ['a.dart']}]);
 
     await api.push('/ws');
-    expect(calls[2].$3, {'workspacePath': '/ws'});
+    expect(calls[2].$3, [{'workspacePath': '/ws'}]);
 
     await api.refresh('/ws');
-    expect(calls[3].$3, {'workspacePath': '/ws'});
+    expect(calls[3].$3, [{'workspacePath': '/ws'}]);
   });
 
   test('generateCommitMessage: 默认 includeUnstaged=true + locale 透传', () async {
@@ -161,11 +161,11 @@ void main() {
       return {'message': 'feat: 生成的信息'};
     };
     final msg = await api.generateCommitMessage('/ws', locale: 'zh-CN');
-    expect(calls.single.$3, {
+    expect(calls.single.$3, [{
       'workspacePath': '/ws',
       'includeUnstaged': true,
       'locale': 'zh-CN',
-    });
+    }]);
     expect(msg, 'feat: 生成的信息');
   });
 
@@ -175,11 +175,11 @@ void main() {
       return {'patch': '+++ b/a.dart', 'summary': null};
     };
     final d = await api.getDiff('/ws', 'a.dart', 'unstaged');
-    expect(calls.single.$3, {
+    expect(calls.single.$3, [{
       'workspacePath': '/ws',
       'path': 'a.dart',
       'sourceId': 'unstaged',
-    });
+    }]);
     expect(d.patch, '+++ b/a.dart');
   });
 }
