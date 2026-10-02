@@ -1630,8 +1630,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
     // 处理 AskUserQuestion (全部题一次给出, 弹窗逐题作答后一次性提交)
     if (question != null) {
       state = state.copyWith(pendingQuestion: question, isResponding: false);
-      // ★ AI 提问到达 → 提示音 (对齐桌面端 AskUserQuestion 提示)
-      _playSound();
+      // ★ AI 提问到达 → 提示音: 仅「null → 非空」(首条) 响一声;
+      //   提问挂起期间断线重连的重复快照携带同一题 → 保持非空不重响
+      //   (prevState 为方法入口旧 state, 门控对齐 patch 路与 _checkNotify)。
+      if (prevState.pendingQuestion == null) {
+        _playSound();
+      }
     } else if (state.pendingQuestion != null) {
       // 快照里没有挂起问题 → 清空 (已被 resolve/decline)
       state = state.copyWith(pendingQuestion: _clearPendingQuestion);

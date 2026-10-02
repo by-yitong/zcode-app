@@ -188,6 +188,19 @@ void main() {
       expect(soundCalls, 1, reason: 'AI 提问弹窗弹出时响一声');
     });
 
+    test('提问挂起期间重连 → 重复快照携带同一题不重响', () async {
+      // 首次快照带题 (prev 为 null) → 响 1 次
+      final snap = snapWith([_questionInteraction('q_1')]);
+      notifier.debugHandleFrameForTest(snapshotFrame(snap));
+      expect(notifier.state.pendingQuestion, isNotNull);
+      expect(soundCalls, 1, reason: '首条提问响一声');
+
+      // 断线重连 → resubscribe 快照携带同一挂起题 (保持非空) → 不重响
+      notifier.debugHandleFrameForTest(snapshotFrame(snap));
+      expect(notifier.state.pendingQuestion, isNotNull);
+      expect(soundCalls, 1, reason: '重连重复快照不重复响');
+    });
+
     test('pendingPermissions 空→非空响 1 次; 保持非空再刷新不重复响', () async {
       notifier.debugHandleFrameForTest(
         snapshotFrame(snapWith([_permInteraction('perm_1')])),
