@@ -6,7 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/relay/git_api.dart';
 import '../../../providers/git_provider.dart';
 import '../../../shared/theme/app_design_tokens.dart';
+import '../widgets/commit_sheet.dart';
 import '../widgets/git_change_list.dart';
+import 'git_diff_screen.dart' show GitDiffScreen, confirmDiscard;
 
 /// Git 全屏页 — 更改 / 分支 / 历史 三 Tab。
 ///
@@ -80,51 +82,19 @@ class _GitScreenState extends ConsumerState<GitScreen>
             controller: ref.read(gitProvider(widget.gitRef).notifier),
             state: state,
             tabController: _tab,
-            onCommitTap: _showCommitPlaceholder,
-            onDiscardConfirm: _confirmDiscard,
+            onCommitTap: () => showCommitSheet(context, ref, widget.gitRef),
+            onDiscardConfirm: confirmDiscard,
+            onOpenDiff: (change) => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => GitDiffScreen(
+                  gitRef: widget.gitRef,
+                  change: change,
+                ),
+              ),
+            ),
           ),
       },
     );
-  }
-
-  /// 「提交」按钮 — Task 3 分阶段边界: 弹占位提示, Task 4 换 showCommitSheet。
-  void _showCommitPlaceholder() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('提交弹窗在下一任务接入')),
-    );
-  }
-
-  /// 丢弃确认弹窗 (文案必含 '不可恢复') → 确认后调 controller.discard。
-  Future<void> _confirmDiscard(
-    BuildContext context, {
-    required GitChange change,
-    required GitController controller,
-    required bool staged,
-  }) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('丢弃更改'),
-        content: Text(
-          '将丢弃 ${change.workspaceRelativePath} 的'
-          '${staged ? '已暂存' : '未暂存'}更改, 此操作不可恢复。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            style: TextButton.styleFrom(foregroundColor: AppColors.danger),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('丢弃'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      await controller.discard([change.path], staged: staged);
-    }
   }
 }
 
@@ -179,6 +149,7 @@ class _ReadyView extends StatelessWidget {
     required GitController controller,
     required bool staged,
   }) onDiscardConfirm;
+  final void Function(GitChange change) onOpenDiff;
 
   const _ReadyView({
     required this.controller,
@@ -186,6 +157,7 @@ class _ReadyView extends StatelessWidget {
     required this.tabController,
     required this.onCommitTap,
     required this.onDiscardConfirm,
+    required this.onOpenDiff,
   });
 
   @override
@@ -317,6 +289,7 @@ class _ReadyView extends StatelessWidget {
                   controller: controller,
                   staged: false,
                 ),
+                onTap: onOpenDiff,
               ),
               const SizedBox(height: AppSpacing.md),
               GitChangeList(
@@ -331,6 +304,7 @@ class _ReadyView extends StatelessWidget {
                   controller: controller,
                   staged: true,
                 ),
+                onTap: onOpenDiff,
               ),
             ],
           ),

@@ -37,6 +37,14 @@ class GitChangeList extends StatelessWidget {
       busyOps.contains('unstage:${c.path}') ||
       busyOps.contains('discard:${c.path}');
 
+  /// untracked/conflicted 无行级 diff 内容, 按 GitChangeTile 契约不接 onTap
+  /// (传 null, 不进 diff 详情页)。
+  bool _noDiff(GitChange c) =>
+      c.isUntracked ||
+      c.isConflicted ||
+      c.section == 'untracked' ||
+      c.section == 'conflicted';
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -78,7 +86,7 @@ class GitChangeList extends StatelessWidget {
           for (final c in changes)
             GitChangeTile(
               change: c,
-              onTap: onTap == null ? null : () => onTap!(c),
+              onTap: onTap == null || _noDiff(c) ? null : () => onTap!(c),
               onStage: onStage == null || _busy(c) ? null : () => onStage!(c),
               onUnstage:
                   onUnstage == null || _busy(c) ? null : () => onUnstage!(c),
