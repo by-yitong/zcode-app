@@ -288,6 +288,27 @@ Future<T?> capsSheet<T>(BuildContext context, {required Widget child}) {
   );
 }
 
+/// 白色分组卡片 (无边框无阴影; 暗色 darkSurfaceElevated), 圆角 AppRadius.xl。
+/// 写法仿 settings 的 _SettingsCard: 用 Material 承载, 行内 InkWell 的
+/// 水波纹才能透出; clipBehavior antiAlias 裁掉子内容圆角溢出。
+class CapsCard extends StatelessWidget {
+  final Widget child;
+
+  const CapsCard({super.key, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Material(
+      color: dark ? AppColors.darkSurfaceElevated : Colors.white,
+      borderRadius: BorderRadius.circular(AppRadius.xl),
+      clipBehavior: Clip.antiAlias,
+      elevation: 0,
+      child: child,
+    );
+  }
+}
+
 /// 统一开关 (M3: 强调色轨道 + 白色滑块; 旧 activeColor 会整体变纯色看不到滑块)
 class CapsSwitch extends StatelessWidget {
   final bool value;
@@ -360,6 +381,12 @@ class CapsField extends StatelessWidget {
   final bool mono;
   final TextInputType? keyboardType;
 
+  /// 自动聚焦 (对话框首字段常用)
+  final bool autofocus;
+
+  /// 键盘回车回调 (如对话框里回车即提交)
+  final ValueChanged<String>? onSubmitted;
+
   const CapsField({
     super.key,
     required this.controller,
@@ -368,6 +395,8 @@ class CapsField extends StatelessWidget {
     this.maxLines = 1,
     this.mono = false,
     this.keyboardType,
+    this.autofocus = false,
+    this.onSubmitted,
   });
 
   @override
@@ -388,6 +417,8 @@ class CapsField extends StatelessWidget {
         TextField(
           controller: controller,
           maxLines: maxLines,
+          autofocus: autofocus,
+          onSubmitted: onSubmitted,
           style: mono
               ? AppText.mono(
                   context,

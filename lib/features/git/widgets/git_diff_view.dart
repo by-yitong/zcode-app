@@ -73,6 +73,8 @@ class _DiffLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (bg, fg) = _lineColors(line, metaColor);
+    // 元信息行 (diff/index/+++/---) 降噪: 字号降一档 (11), 色不变。
+    final isMeta = fg == metaColor;
     return Container(
       key: Key('diff-line-$index'),
       color: bg,
@@ -82,7 +84,11 @@ class _DiffLine extends StatelessWidget {
       ),
       child: SelectableText(
         line.isEmpty ? ' ' : line,
-        style: AppText.mono(context, size: AppTextSizes.monoSm, color: fg),
+        style: AppText.mono(
+          context,
+          size: isMeta ? AppTextSizes.monoXs : AppTextSizes.monoSm,
+          color: fg,
+        ),
       ),
     );
   }

@@ -89,7 +89,7 @@ void main() {
     );
     expect(find.text('未暂存 (1)'), findsOneWidget);
     expect(find.text('a.dart'), findsOneWidget);
-    expect(find.textContaining('+1 −0'), findsOneWidget);
+    expect(find.textContaining('+1 −0', findRichText: true), findsOneWidget);
     expect(find.text('已暂存 (0)'), findsOneWidget);
     expect(find.text('没有已暂存的更改'), findsOneWidget);
   });

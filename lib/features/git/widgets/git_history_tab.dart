@@ -29,8 +29,8 @@ String relativeTime(int? ms) {
 /// 历史 Tab (Task 5): 提交列表 (refresh 已拉第一页, 无需额外首拉) +
 /// ScrollController 触底 (剩 200px) 调 [GitController.loadMoreCommits]
 /// 分页追加 (防重入与 hasMore 守卫都在 controller)。
-/// 行 = 短 hash (7 位 mono) + subject (ellipsis) + `作者 · 相对时间` 副标题
-/// + refs Chip (当前分支 accent 底)。
+/// 行 = subject (ellipsis, 占满行宽) + 副标题 (`作者 · 相对时间` + 右侧
+/// 短 hash 小字) + refs Chip (当前分支 accentContainer 底)。
 class GitHistoryTab extends ConsumerStatefulWidget {
   final GitRef gitRef;
 
@@ -120,7 +120,7 @@ class _GitHistoryTabState extends ConsumerState<GitHistoryTab> {
   }
 }
 
-/// 单条提交: 短 hash + subject + 作者·相对时间 + refs Chip 列。
+/// 单条提交: subject + 作者·相对时间/短 hash 副标题 + refs Chip 列。
 class _CommitTile extends StatelessWidget {
   final GitCommitEntry entry;
   final String? currentBranch;
@@ -144,69 +144,67 @@ class _CommitTile extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 56,
-            child: Text(
-              hash,
-              style: AppText.mono(
-                context,
-                size: AppTextSizes.monoSm,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
+          Text(
+            entry.subject,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodyMedium
+                ?.copyWith(fontWeight: FontWeight.w500),
           ),
-          const SizedBox(width: AppSpacing.sm),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Row(
               children: [
-                Text(
-                  entry.subject,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyMedium
-                      ?.copyWith(fontWeight: FontWeight.w500),
-                ),
-                if (subtitle.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text(
-                      subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                if (entry.refs.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: AppSpacing.xs),
-                    child: Wrap(
-                      spacing: AppSpacing.xs,
-                      runSpacing: AppSpacing.xs,
-                      children: [
-                        for (final r in entry.refs)
-                          _RefChip(
-                            label: _refLabel(r),
-                            highlighted: _refLabel(r) == currentBranch,
+                Expanded(
+                  child: subtitle.isEmpty
+                      ? const SizedBox.shrink()
+                      : Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
                           ),
-                      ],
-                    ),
+                        ),
+                ),
+                // 短 hash 独立 Text (测试按 find.text('abcdef1') 锁死)。
+                Text(
+                  hash,
+                  style: AppText.mono(
+                    context,
+                    size: AppTextSizes.monoXs,
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
+                ),
               ],
             ),
           ),
+          if (entry.refs.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: AppSpacing.xs),
+              child: Wrap(
+                spacing: AppSpacing.xs,
+                runSpacing: AppSpacing.xs,
+                children: [
+                  for (final r in entry.refs)
+                    _RefChip(
+                      label: _refLabel(r),
+                      highlighted: _refLabel(r) == currentBranch,
+                    ),
+                ],
+              ),
+            ),
         ],
       ),
     );
   }
 }
 
-/// ref 小胶囊; 当前分支 accent 底白字, 其余中性。
+/// ref 小胶囊; 当前分支 accentContainer 底 accent 字 (与页头 ↑↓ 徽标同语言),
+/// 其余中性。
 class _RefChip extends StatelessWidget {
   final String label;
   final bool highlighted;
@@ -223,7 +221,7 @@ class _RefChip extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         color: highlighted
-            ? AppColors.accent
+            ? AppColors.accentContainer
             : theme.colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(AppRadius.pill),
       ),
@@ -232,7 +230,9 @@ class _RefChip extends StatelessWidget {
         style: AppText.mono(
           context,
           size: AppTextSizes.monoXs,
-          color: highlighted ? Colors.white : theme.colorScheme.onSurfaceVariant,
+          color: highlighted
+              ? AppColors.accent
+              : theme.colorScheme.onSurfaceVariant,
         ),
       ),
     );

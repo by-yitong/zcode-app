@@ -82,7 +82,7 @@ class CapsPageHeader extends StatelessWidget implements PreferredSizeWidget {
               left: plain ? 4 : AppSpacing.md,
               child: plain
                   ? IconButton(
-                      icon: const Icon(Icons.chevron_left_rounded, size: 28),
+                      icon: const Icon(Icons.chevron_left, size: 28),
                       tooltip: '返回',
                       onPressed: onBack ?? () => Navigator.maybePop(context),
                       style: IconButton.styleFrom(

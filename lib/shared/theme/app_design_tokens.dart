@@ -102,17 +102,21 @@ class AppColors {
   // Apple dark: rgba(235,235,245, alpha) — 微冷白带 alpha
   static const Color darkInk = Color(0xFFF7F8F8); // 主文字 (近白)
   static const Color darkInkSecondary = Color(0x99EBEBF5); // 次要 (alpha 0.60)
+  static const Color darkInkLabel = Color(0x73EBEBF5); // 分组节标题/箭头 (alpha 0.45)
   static const Color darkInkMuted = Color(0x4DEBEBF5); // 弱 (alpha 0.30)
   static const Color darkInkSubtle = Color(0x2EEBEBF5); // 最弱 (alpha 0.18)
 
   // ── 浅色主题 ──
-  static const Color lightBg = Color(0xFFF8FAFC);
+  /// 页面底 — iOS 分组列表风紫灰 (systemGroupedBackground), 衬白卡
+  static const Color lightBg = Color(0xFFF2F2F7);
   static const Color lightSurface = Color(0xFFFFFFFF);
   static const Color lightSurfaceHigh = Color(0xFFF1F5F9);
   static const Color lightBorder = Color(0xFFE2E8F0);
   static const Color lightInk = Color(0xFF000000);
   // Apple light labels: rgba(60,60,67, alpha)
   static const Color lightInkSecondary = Color(0x993C3C43); // alpha 0.60
+  /// 分组节标题/箭头 (45% — 比 secondary 浅一档, 兼顾浅灰感与可读性)
+  static const Color lightInkLabel = Color(0x733C3C43); // alpha 0.45
   static const Color lightInkMuted = Color(0x4D3C3C43); // alpha 0.30
   static const Color lightInkSubtle = Color(0x2E3C3C43); // alpha 0.18
 }

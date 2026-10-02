@@ -1,12 +1,14 @@
 // lib/features/git/screens/git_diff_screen.dart
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/relay/git_api.dart';
 import '../../../providers/app_providers.dart';
 import '../../../providers/git_provider.dart';
 import '../../../shared/theme/app_design_tokens.dart';
+import '../../agent/widgets/caps_page_chrome.dart';
 import '../widgets/git_diff_view.dart';
 
 /// 丢弃确认弹窗 (GitScreen 行内菜单与 GitDiffScreen 操作条共用):
@@ -95,70 +97,103 @@ class _GitDiffScreenState extends ConsumerState<GitDiffScreen> {
     );
     final fileName = change.workspaceRelativePath.split('/').last;
 
-    return Scaffold(
-      appBar: AppBar(title: Text(fileName)),
-      body: FutureBuilder<GitDiff>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snap.hasError) {
-            return Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('加载失败'),
-                  TextButton(
-                    onPressed: () => setState(() => _future = _load()),
-                    child: const Text('重试'),
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: CapsPageHeader.overlayStyle(context),
+      child: Scaffold(
+        appBar: CapsPageHeader(title: fileName),
+        body: Column(
+          children: [
+            // 页头只显示文件名, 全路径放 body 顶部一行小字。
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.md,
+                AppSpacing.xs,
+                AppSpacing.md,
+                0,
+              ),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  change.workspaceRelativePath,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.mono(
+                    context,
+                    size: AppTextSizes.monoXs,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
-                ],
-              ),
-            );
-          }
-          final patch = snap.data?.patch;
-          if (patch == null || patch.isEmpty) {
-            return const Center(child: Text('无差异'));
-          }
-          return buildDiffView(patch);
-        },
-      ),
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.md,
-            AppSpacing.xs,
-            AppSpacing.md,
-            AppSpacing.sm,
-          ),
-          child: Row(
-            children: [
-              if (change.section != 'staged')
-                FilledButton.tonal(
-                  onPressed: busy ? null : () => controller.stage([change.path]),
-                  child: const Text('暂存'),
-                )
-              else
-                FilledButton.tonal(
-                  onPressed:
-                      busy ? null : () => controller.unstage([change.path]),
-                  child: const Text('取消暂存'),
                 ),
-              const Spacer(),
-              TextButton(
-                style: TextButton.styleFrom(foregroundColor: AppColors.danger),
-                onPressed: busy
-                    ? null
-                    : () => confirmDiscard(
-                          context,
-                          change: change,
-                          controller: controller,
-                          staged: change.section == 'staged',
-                        ),
-                child: const Text('丢弃'),
               ),
-            ],
+            ),
+            Expanded(
+              child: FutureBuilder<GitDiff>(
+                future: _future,
+                builder: (context, snap) {
+                  if (snap.connectionState != ConnectionState.done) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snap.hasError) {
+                    return Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text('加载失败'),
+                          TextButton(
+                            onPressed: () => setState(() => _future = _load()),
+                            child: const Text('重试'),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+                  final patch = snap.data?.patch;
+                  if (patch == null || patch.isEmpty) {
+                    return const Center(child: Text('无差异'));
+                  }
+                  return buildDiffView(patch);
+                },
+              ),
+            ),
+          ],
+        ),
+        bottomNavigationBar: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.md,
+              AppSpacing.xs,
+              AppSpacing.md,
+              AppSpacing.sm,
+            ),
+            child: Row(
+              children: [
+                if (change.section != 'staged')
+                  FilledButton.tonal(
+                    onPressed: busy
+                        ? null
+                        : () => controller.stage([change.path]),
+                    child: const Text('暂存'),
+                  )
+                else
+                  FilledButton.tonal(
+                    onPressed:
+                        busy ? null : () => controller.unstage([change.path]),
+                    child: const Text('取消暂存'),
+                  ),
+                const Spacer(),
+                TextButton(
+                  style: TextButton.styleFrom(foregroundColor: AppColors.danger),
+                  onPressed: busy
+                      ? null
+                      : () => confirmDiscard(
+                            context,
+                            change: change,
+                            controller: controller,
+                            staged: change.section == 'staged',
+                          ),
+                  child: const Text('丢弃'),
+                ),
+              ],
+            ),
           ),
         ),
       ),

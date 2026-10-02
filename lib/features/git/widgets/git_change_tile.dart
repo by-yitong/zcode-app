@@ -5,7 +5,8 @@ import 'package:flutter/material.dart';
 import '../../../core/relay/git_api.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 
-/// 单个变更行: leading kind 色块 + 路径 + 增删统计 + 行内操作菜单。
+/// 单个变更行: 路径 (mono 单行省略) + 右侧彩色 diffstat / 状态小标签 +
+/// 行内操作菜单, 单行紧凑无 leading。
 ///
 /// 回调为 null 表示对应操作不可用 (busy 中 / 不适用), 菜单项随之隐藏或禁用:
 /// - [onTap] — Task 4 的 diff 页接入 (untracked/conflicted 传 null);
@@ -27,50 +28,81 @@ class GitChangeTile extends StatelessWidget {
     required this.onTap,
   });
 
-  /// kind → 色块颜色 (冲突优先于 kind)。
-  Color get _kindColor {
-    if (change.isConflicted || change.section == 'conflicted') {
-      return AppColors.warning;
+  /// 是否 untracked (无 diffstat, 显示灰「未跟踪」标签)。
+  bool get _isUntracked =>
+      change.isUntracked || change.section == 'untracked';
+
+  /// 是否 conflicted (无 diffstat, 显示琥珀「冲突」标签; 优先于 untracked)。
+  bool get _isConflicted =>
+      change.isConflicted || change.section == 'conflicted';
+
+  /// 右侧状态/统计富文本: conflicted → 「冲突」(warning w600); untracked →
+  /// 「未跟踪」(灰); 其余 added+removed>0 → `+n −n` (增绿删红, U+2212 负号)。
+  Widget? _statusOrStat(BuildContext context) {
+    final theme = Theme.of(context);
+    if (_isConflicted) {
+      return Text(
+        '冲突',
+        style: theme.textTheme.labelSmall?.copyWith(
+          fontWeight: FontWeight.w600,
+          color: AppColors.warning,
+        ),
+      );
     }
-    return switch (change.kind) {
-      'added' => AppColors.success,
-      'deleted' => AppColors.danger,
-      _ => AppColors.accent, // modified / renamed 等
-    };
+    if (_isUntracked) {
+      return Text(
+        '未跟踪',
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
+      );
+    }
+    if (change.added + change.removed > 0) {
+      return Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: '+${change.added}',
+              style: const TextStyle(color: AppColors.success),
+            ),
+            TextSpan(
+              text: ' −${change.removed}',
+              style: const TextStyle(color: AppColors.danger),
+            ),
+          ],
+        ),
+        style: AppText.mono(
+          context,
+          size: AppTextSizes.monoXs,
+          weight: FontWeight.w600,
+        ),
+      );
+    }
+    return null;
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final hasMenu = onStage != null || onUnstage != null || onDiscard != null;
+    final status = _statusOrStat(context);
 
     return ListTile(
       onTap: onTap,
       dense: true,
-      leading: Container(
-        width: 4,
-        height: 28,
-        decoration: BoxDecoration(
-          color: _kindColor,
-          borderRadius: BorderRadius.circular(AppRadius.pill),
-        ),
-      ),
+      visualDensity: VisualDensity.compact,
+      contentPadding: EdgeInsets.zero,
       title: Text(
         change.workspaceRelativePath,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: AppText.mono(context, size: AppTextSizes.bodySm),
       ),
-      subtitle: Text(
-        '+${change.added} −${change.removed}',
-        style: AppText.mono(
-          context,
-          size: AppTextSizes.monoXs,
-          color: theme.colorScheme.onSurfaceVariant,
-        ),
-      ),
-      trailing: hasMenu
-          ? PopupMenuButton<String>(
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (status != null) status,
+          if (hasMenu)
+            PopupMenuButton<String>(
               icon: const Icon(Icons.more_vert, size: 20),
               onSelected: (v) {
                 switch (v) {
@@ -99,8 +131,9 @@ class GitChangeTile extends StatelessWidget {
                     child: Text('丢弃'),
                   ),
               ],
-            )
-          : null,
+            ),
+        ],
+      ),
     );
   }
 }

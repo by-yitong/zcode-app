@@ -20,10 +20,10 @@ import 'connections_screen.dart';
 import 'remote_settings_screen.dart';
 
 /// 设置页 — DNA 提取自参考截图 (hallmark study):
-/// - 页面底: 浅紫灰分组底 #F2F2F7 (仅浅色), 白卡无边框/无阴影, 圆角 20
-/// - 分组标题: 斜体灰字, 左缘与行内图标对齐
-/// - 行: 描边图标 24 + 标题 17 + 右灰值/细箭头 20, 行高 ~56
-/// - 底部独立操作卡 (断开连接): 黑字 + logout 图标, 无箭头 (同截图退出登录)
+/// - 页面底: 全局浅色底即紫灰分组底 #F2F2F7 (AppColors.lightBg), 白卡无边框无阴影
+/// - 分组标题: 45% 灰 12px 小字, 左缘与行内图标对齐
+/// - 行: 描边图标 20 + 标题 14 + 右灰值 13/细箭头 18, 行高 ~44 (紧凑)
+/// - 底部独立操作卡 (断开连接): 黑字 + logout 图标, 无箭头, 乐观执行 + 撤销
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
@@ -62,10 +62,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: CapsPageHeader.overlayStyle(context),
       child: Scaffold(
-        // 浅色换参考截图的紫灰分组底; 深色沿用全局主题
-        backgroundColor: theme.brightness == Brightness.light
-            ? const Color(0xFFF2F2F7)
-            : null,
         appBar: const CapsPageHeader(title: '设置', plain: true),
         body: ListView(
           padding: const EdgeInsets.fromLTRB(
@@ -92,16 +88,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             width: 44,
                             height: 44,
                             decoration: const BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  AppColors.accentHover,
-                                  AppColors.accent,
-                                ],
-                              ),
+                              color: AppColors.accent,
                               shape: BoxShape.circle,
                             ),
                             child: const Icon(
-                              Icons.person_rounded,
+                              Icons.person_outline,
                               color: Colors.white,
                               size: 22,
                             ),
@@ -152,7 +143,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(
-                              Icons.cloud_done_rounded,
+                              Icons.cloud_done_outlined,
                               size: 14,
                               color: connectionAsync.maybeWhen(
                                 data: (s) => s == RelayConnectionState.ready
@@ -230,7 +221,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                   ),
                   _SettingsRow(
-                    icon: Icons.terminal_rounded,
+                    icon: Icons.terminal_outlined,
                     title: '命令',
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => const CommandsPage()),
@@ -265,7 +256,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     onTap: () => _showThemePicker(context, ref),
                   ),
                   _SettingsRow(
-                    icon: Icons.picture_in_picture_alt_rounded,
+                    icon: Icons.picture_in_picture_alt_outlined,
                     title: '悬浮窗行数',
                     value: '${ref.watch(pipLinesProvider)} 行',
                     onTap: () => _showPipLinesPicker(context, ref),
@@ -300,7 +291,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                   ),
                   _SettingsRow(
-                    icon: Icons.settings_remote_rounded,
+                    icon: Icons.settings_remote_outlined,
                     title: '远程设置',
                     onTap: () {
                       final ws =
@@ -335,18 +326,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   FutureBuilder<String>(
                     future: UpdateService.localVersion(),
                     builder: (_, snap) => _SettingsRow(
-                      icon: Icons.info_outline_rounded,
+                      icon: Icons.info_outline,
                       title: '版本',
                       value: 'v${snap.data ?? '…'}',
                     ),
                   ),
                   _SettingsRow(
-                    icon: Icons.system_update_alt_rounded,
+                    icon: Icons.system_update_alt,
                     title: '检查更新',
                     onTap: () => _checkUpdate(context),
                   ),
                   _SettingsRow(
-                    icon: Icons.code_rounded,
+                    icon: Icons.code_outlined,
                     title: 'GitHub',
                     onTap: () =>
                         _openUrl('https://github.com/by-yitong/zcode-app'),
@@ -361,7 +352,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             ),
 
-            const SizedBox(height: AppSpacing.xl),
+            const SizedBox(height: AppSpacing.lg),
             // 断开连接 — 底部独立操作卡 (对齐截图退出登录: 黑字 logout, 无箭头)
             _SettingsCard(
               child: _SettingsRow(
@@ -377,49 +368,48 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  /// 分组标题 (参考截图: 浅灰斜体小字, 左缘与行内图标对齐, 无大写/无箭头)
+  /// 分组标题 (参考截图: 45% 浅灰小字, 左缘与行内图标对齐, 无大写/无箭头)
   Widget _sectionLabel(BuildContext context, String label) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.lg,
-        AppSpacing.xl,
+        AppSpacing.lg,
         AppSpacing.lg,
         AppSpacing.sm,
       ),
       child: Text(
         label,
         style: TextStyle(
-          fontSize: 13,
-          fontStyle: FontStyle.italic,
-          color: dark ? AppColors.darkInkMuted : AppColors.lightInkMuted,
+          fontSize: AppTextSizes.label,
+          color: dark ? AppColors.darkInkLabel : AppColors.lightInkLabel,
         ),
       ),
     );
   }
 
+  /// 断开连接 — 乐观执行 + 5s 撤销 (hallmark: 可逆操作不弹确认框)。
+  /// 撤销用断开前的会话对象 loginWithSession 原样恢复。
   Future<void> _logout(BuildContext context, WidgetRef ref) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('断开连接'),
-        content: const Text('确定断开与 ZCode 的连接?已保存的设备不受影响, 可随时重连。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('确定'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      await ref.read(sessionProvider.notifier).logout();
-    }
+    final session = ref.read(sessionProvider).valueOrNull;
+    await ref.read(sessionProvider.notifier).logout();
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: const Text('已断开与 ZCode 的连接'),
+          duration: const Duration(seconds: 5),
+          action: session == null
+              ? null
+              : SnackBarAction(
+                  label: '撤销',
+                  onPressed: () => ref
+                      .read(sessionProvider.notifier)
+                      .loginWithSession(session),
+                ),
+        ),
+      );
   }
 
   /// 打开外部链接 (浏览器 / GitHub app)
@@ -598,7 +588,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     final current = ref.watch(pipLinesProvider);
                     final selected = n == current;
                     return ListTile(
-                      leading: const Icon(Icons.picture_in_picture_alt_rounded),
+                      leading: const Icon(Icons.picture_in_picture_alt_outlined),
                       title: Text('$n 行'),
                       trailing: selected
                           ? Icon(
@@ -678,7 +668,7 @@ class _SettingsCard extends StatelessWidget {
 }
 
 /// 设置行 — 描边图标 + 标题 (+ 可选副标题) + 右侧灰值/自定义尾部/箭头,
-/// 单行无分隔线。行高 ~56 (图标 24 + 上下 16), 与参考截图的舒展节奏一致。
+/// 单行无分隔线。紧凑节奏: 行高 ~44 (图标 20 + 上下 12)。
 class _SettingsRow extends StatelessWidget {
   final IconData icon;
   final String title;
@@ -705,23 +695,27 @@ class _SettingsRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final chevronColor = dark
+        ? AppColors.darkInkLabel
+        : AppColors.lightInkLabel;
     return InkWell(
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.lg,
-          vertical: 16,
+          vertical: 12,
         ),
         child: Row(
           children: [
-            Icon(icon, size: 24, color: cs.onSurface),
+            Icon(icon, size: 20, color: cs.onSurface),
             const SizedBox(width: AppSpacing.md),
             Expanded(
               child: subtitle == null
                   ? Text(
                       title,
                       style: TextStyle(
-                        fontSize: 16,
+                        fontSize: AppTextSizes.bodyMd,
                         fontWeight: FontWeight.w500,
                         color: cs.onSurface,
                       ),
@@ -732,7 +726,7 @@ class _SettingsRow extends StatelessWidget {
                         Text(
                           title,
                           style: TextStyle(
-                            fontSize: 16,
+                            fontSize: AppTextSizes.bodyMd,
                             fontWeight: FontWeight.w500,
                             color: cs.onSurface,
                           ),
@@ -741,7 +735,7 @@ class _SettingsRow extends StatelessWidget {
                         Text(
                           subtitle!,
                           style: TextStyle(
-                            fontSize: 12,
+                            fontSize: AppTextSizes.label,
                             color: cs.onSurfaceVariant,
                           ),
                         ),
@@ -752,7 +746,10 @@ class _SettingsRow extends StatelessWidget {
               const SizedBox(width: AppSpacing.sm),
               Text(
                 value!,
-                style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant),
+                style: TextStyle(
+                  fontSize: AppTextSizes.bodySm,
+                  color: cs.onSurfaceVariant,
+                ),
               ),
             ],
             if (trailing != null) ...[
@@ -760,11 +757,7 @@ class _SettingsRow extends StatelessWidget {
               trailing!,
             ] else if (onTap != null && (showChevron ?? true)) ...[
               const SizedBox(width: AppSpacing.sm),
-              Icon(
-                Icons.chevron_right,
-                size: 20,
-                color: cs.onSurfaceVariant,
-              ),
+              Icon(Icons.chevron_right, size: 18, color: chevronColor),
             ],
           ],
         ),

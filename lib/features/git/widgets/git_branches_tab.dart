@@ -6,11 +6,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/relay/git_api.dart';
 import '../../../providers/git_provider.dart';
 import '../../../shared/theme/app_design_tokens.dart';
+import '../../agent/widgets/caps_widgets.dart';
 
 /// 分支 Tab (Task 5): 首次可见懒加载 [GitController.loadBranches];
 /// 行 = 名称 + upstreamName 副标题 + 当前行勾标/高亮 (accent);
-/// 点非当前分支弹确认后 [GitController.switchTo]; 顶部「新建分支」
-/// 弹输入对话框 (名称必填 + 可选起点折叠展开) 走
+/// 点非当前分支弹确认后 [GitController.switchTo]; 列表尾「新建分支」
+/// add 行弹输入对话框 (名称必填 + 可选起点折叠展开) 走
 /// [GitController.createAndSwitch]; detached 时顶部琥珀色提示条。
 ///
 /// 当前行以 summary.branchName 推导 (refresh 刻意保留旧 branches 列表,
@@ -82,21 +83,6 @@ class _GitBranchesTabState extends ConsumerState<GitBranchesTab> {
     return Column(
       children: [
         if (summary != null && summary.isDetached) const _DetachedBanner(),
-        Align(
-          alignment: Alignment.centerRight,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.sm,
-              vertical: AppSpacing.xs,
-            ),
-            child: TextButton.icon(
-              onPressed:
-                  state.busyOps.contains('create') ? null : _newBranch,
-              icon: const Icon(Icons.add_rounded, size: 18),
-              label: const Text('新建分支'),
-            ),
-          ),
-        ),
         Expanded(child: _body(context, theme, branches, state, currentName)),
       ],
     );
@@ -135,13 +121,13 @@ class _GitBranchesTabState extends ConsumerState<GitBranchesTab> {
       );
     }
     if (branches.isEmpty) {
-      return Center(
-        child: Text(
-          '暂无本地分支',
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
+      // 空列表也保留 add 行 (替代原顶部「新建分支」孤儿条与居中空态文案)。
+      return ListView(
+        children: [
+          _AddBranchTile(
+            onTap: state.busyOps.contains('create') ? null : _newBranch,
           ),
-        ),
+        ],
       );
     }
     final busy = state.busyOps.contains('switch') ||
@@ -161,7 +147,41 @@ class _GitBranchesTabState extends ConsumerState<GitBranchesTab> {
             busy: busy,
             onSwitch: () => _confirmSwitch(b.name),
           ),
+        _AddBranchTile(onTap: busy ? null : _newBranch),
       ],
+    );
+  }
+}
+
+/// 列表尾「新建分支」add 行 (accent 色; 替代原顶部右对齐孤儿按钮条)。
+class _AddBranchTile extends StatelessWidget {
+  final VoidCallback? onTap;
+
+  const _AddBranchTile({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.sm,
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.add_rounded, size: 18, color: AppColors.accent),
+            const SizedBox(width: AppSpacing.sm),
+            Text(
+              '新建分支',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: AppColors.accent,
+                    fontWeight: FontWeight.w500,
+                  ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -336,14 +356,12 @@ class _NewBranchDialogState extends State<_NewBranchDialog> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          TextField(
+          CapsField(
             controller: _name,
+            label: '分支名称',
+            hint: '如 feat/new-thing',
+            mono: true,
             autofocus: true,
-            decoration: const InputDecoration(
-              labelText: '分支名称',
-              hintText: '如 feat/new-thing',
-              border: OutlineInputBorder(),
-            ),
             onSubmitted: (_) => _submit(),
           ),
           if (!_showStart)
@@ -355,13 +373,11 @@ class _NewBranchDialogState extends State<_NewBranchDialog> {
           else
             Padding(
               padding: const EdgeInsets.only(top: AppSpacing.sm),
-              child: TextField(
+              child: CapsField(
                 controller: _start,
-                decoration: const InputDecoration(
-                  labelText: '起点 (可选)',
-                  hintText: '分支名 / tag / commit hash',
-                  border: OutlineInputBorder(),
-                ),
+                label: '起点 (可选)',
+                hint: '分支名 / tag / commit hash',
+                mono: true,
               ),
             ),
         ],

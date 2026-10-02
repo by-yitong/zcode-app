@@ -1,11 +1,15 @@
 // lib/features/git/screens/git_screen.dart
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/relay/git_api.dart';
 import '../../../providers/git_provider.dart';
 import '../../../shared/theme/app_design_tokens.dart';
+import '../../../shared/widgets/app_empty_state.dart';
+import '../../agent/widgets/caps_page_chrome.dart';
+import '../../agent/widgets/caps_widgets.dart';
 import '../widgets/commit_sheet.dart';
 import '../widgets/git_branches_tab.dart';
 import '../widgets/git_change_list.dart';
@@ -68,75 +72,33 @@ class _GitScreenState extends ConsumerState<GitScreen>
       }
     });
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Git'),
-        bottom: state.phase == GitPhase.ready
-            ? TabBar(
-                controller: _tab,
-                tabs: const [
-                  Tab(text: '更改'),
-                  Tab(text: '分支'),
-                  Tab(text: '历史'),
-                ],
-              )
-            : null,
-      ),
-      body: switch (state.phase) {
-        GitPhase.loading => const Center(child: CircularProgressIndicator()),
-        GitPhase.empty => const _EmptyRepoView(),
-        GitPhase.ready => _ReadyView(
-            controller: ref.read(gitProvider(widget.gitRef).notifier),
-            state: state,
-            tabController: _tab,
-            gitRef: widget.gitRef,
-            onCommitTap: () => showCommitSheet(context, ref, widget.gitRef),
-            onDiscardConfirm: confirmDiscard,
-            onOpenDiff: (change) => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => GitDiffScreen(
-                  gitRef: widget.gitRef,
-                  change: change,
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: CapsPageHeader.overlayStyle(context),
+      child: Scaffold(
+        appBar: const CapsPageHeader(title: 'Git'),
+        body: switch (state.phase) {
+          GitPhase.loading => const Center(child: CircularProgressIndicator()),
+          GitPhase.empty => const AppEmptyState(
+              icon: Icons.folder_off_rounded,
+              title: '当前工作区不是 Git 仓库或 git 不可用',
+            ),
+          GitPhase.ready => _ReadyView(
+              controller: ref.read(gitProvider(widget.gitRef).notifier),
+              state: state,
+              tabController: _tab,
+              gitRef: widget.gitRef,
+              onCommitTap: () => showCommitSheet(context, ref, widget.gitRef),
+              onDiscardConfirm: confirmDiscard,
+              onOpenDiff: (change) => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => GitDiffScreen(
+                    gitRef: widget.gitRef,
+                    change: change,
+                  ),
                 ),
               ),
             ),
-          ),
-      },
-    );
-  }
-}
-
-// ================================================================
-// 非仓库空态
-// ================================================================
-
-class _EmptyRepoView extends StatelessWidget {
-  const _EmptyRepoView();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.xxl),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.folder_off_rounded,
-              size: 40,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-            const SizedBox(height: AppSpacing.md),
-            Text(
-              '当前工作区不是 Git 仓库或 git 不可用',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
+        },
       ),
     );
   }
@@ -176,6 +138,15 @@ class _ReadyView extends StatelessWidget {
     return Column(
       children: [
         if (summary != null) _headerCard(context, summary),
+        // TabBar 放 body (头部卡片之下), 吃全局 tabBarTheme; 仅 ready 态渲染。
+        TabBar(
+          controller: tabController,
+          tabs: const [
+            Tab(text: '更改'),
+            Tab(text: '分支'),
+            Tab(text: '历史'),
+          ],
+        ),
         Expanded(
           child: RefreshIndicator(
             onRefresh: controller.refresh,
@@ -193,7 +164,7 @@ class _ReadyView extends StatelessWidget {
     );
   }
 
-  /// 头部卡片: 分支名 / ↑ahead ↓behind 徽标 / 刷新。
+  /// 头部卡片: 分支名 / ↑ahead ↓behind 徽标 / 「提交」钮 / 刷新。
   Widget _headerCard(BuildContext context, GitSummary summary) {
     final branch = summary.branchName;
     final label = (branch == null || branch.isEmpty)
@@ -207,14 +178,9 @@ class _ReadyView extends StatelessWidget {
         AppSpacing.md,
         0,
       ),
-      child: Card(
+      child: CapsCard(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.lg,
-            AppSpacing.xs,
-            AppSpacing.xs,
-            AppSpacing.xs,
-          ),
+          padding: const EdgeInsets.all(AppSpacing.md),
           child: Row(
             children: [
               Expanded(
@@ -243,7 +209,20 @@ class _ReadyView extends StatelessWidget {
                   bg: AppColors.warningContainer,
                 ),
               ],
+              const SizedBox(width: AppSpacing.sm),
+              FilledButton(
+                onPressed: onCommitTap,
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  minimumSize: const Size(0, 32),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md,
+                  ),
+                ),
+                child: const Text('提交'),
+              ),
               IconButton(
+                visualDensity: VisualDensity.compact,
                 tooltip: '刷新',
                 onPressed: refreshing ? null : controller.refresh,
                 icon: refreshing
@@ -261,63 +240,44 @@ class _ReadyView extends StatelessWidget {
     );
   }
 
-  /// 更改 Tab: 右上角「提交」+ 未暂存/已暂存两段列表。
+  /// 更改 Tab: 未暂存/已暂存两段列表 (「提交」入口已并入头部卡片)。
   Widget _changesTab(BuildContext context) {
-    return Column(
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        0,
+        AppSpacing.md,
+        AppSpacing.xl,
+      ),
       children: [
-        Align(
-          alignment: Alignment.centerRight,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.sm,
-              vertical: AppSpacing.xs,
-            ),
-            child: TextButton(
-              onPressed: onCommitTap,
-              child: const Text('提交'),
-            ),
+        GitChangeList(
+          title: '未暂存 (${state.unstaged.length})',
+          changes: state.unstaged,
+          emptyHint: '没有未暂存的更改',
+          busyOps: state.busyOps,
+          onStage: (c) => controller.stage([c.path]),
+          onDiscard: (c) => onDiscardConfirm(
+            context,
+            change: c,
+            controller: controller,
+            staged: false,
           ),
+          onTap: onOpenDiff,
         ),
-        Expanded(
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpacing.md,
-              0,
-              AppSpacing.md,
-              AppSpacing.xl,
-            ),
-            children: [
-              GitChangeList(
-                title: '未暂存 (${state.unstaged.length})',
-                changes: state.unstaged,
-                emptyHint: '没有未暂存的更改',
-                busyOps: state.busyOps,
-                onStage: (c) => controller.stage([c.path]),
-                onDiscard: (c) => onDiscardConfirm(
-                  context,
-                  change: c,
-                  controller: controller,
-                  staged: false,
-                ),
-                onTap: onOpenDiff,
-              ),
-              const SizedBox(height: AppSpacing.md),
-              GitChangeList(
-                title: '已暂存 (${state.staged.length})',
-                changes: state.staged,
-                emptyHint: '没有已暂存的更改',
-                busyOps: state.busyOps,
-                onUnstage: (c) => controller.unstage([c.path]),
-                onDiscard: (c) => onDiscardConfirm(
-                  context,
-                  change: c,
-                  controller: controller,
-                  staged: true,
-                ),
-                onTap: onOpenDiff,
-              ),
-            ],
+        const SizedBox(height: AppSpacing.md),
+        GitChangeList(
+          title: '已暂存 (${state.staged.length})',
+          changes: state.staged,
+          emptyHint: '没有已暂存的更改',
+          busyOps: state.busyOps,
+          onUnstage: (c) => controller.unstage([c.path]),
+          onDiscard: (c) => onDiscardConfirm(
+            context,
+            change: c,
+            controller: controller,
+            staged: true,
           ),
+          onTap: onOpenDiff,
         ),
       ],
     );

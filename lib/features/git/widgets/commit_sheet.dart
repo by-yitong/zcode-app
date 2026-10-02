@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../providers/git_provider.dart';
 import '../../../shared/theme/app_design_tokens.dart';
+import '../../agent/widgets/caps_widgets.dart';
 
 /// 提交底部弹窗 (Task 4): 变更文件勾选 (默认全选) + 仅提交已暂存开关 +
 /// 提交信息 (AI 生成) + 提交后推送 + 「提交」。
@@ -18,12 +19,8 @@ Future<void> showCommitSheet(
   GitRef gitRef,
 ) {
   // ref 参数按任务卡签名保留 (冻结); 弹窗体为独立 Consumer, 自取 ref watch 状态。
-  return showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    showDragHandle: true,
-    builder: (_) => _CommitSheetBody(gitRef: gitRef),
-  );
+  // capsSheet 统一外壳: isScrollControlled/showDragHandle/SafeArea 已内置。
+  return capsSheet<void>(context, child: _CommitSheetBody(gitRef: gitRef));
 }
 
 class _CommitSheetBody extends ConsumerStatefulWidget {
@@ -171,7 +168,6 @@ class _CommitSheetBodyState extends ConsumerState<_CommitSheetBody> {
               keyboardType: TextInputType.multiline,
               decoration: InputDecoration(
                 hintText: '提交信息',
-                border: const OutlineInputBorder(),
                 suffixIcon: IconButton(
                   tooltip: 'AI 生成',
                   onPressed: aiBusy ? null : _generate,
