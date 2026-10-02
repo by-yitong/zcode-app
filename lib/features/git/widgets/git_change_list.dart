@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../../../core/relay/git_api.dart';
 import '../../../shared/theme/app_design_tokens.dart';
+import '../../agent/widgets/caps_page_chrome.dart' show CapsSectionHeader;
+import '../../agent/widgets/caps_widgets.dart' show CapsCard;
 import 'git_change_tile.dart';
 
 /// 更改段列表: 段标题 (如 '未暂存 (3)') + 变更行; 空段显示提示行。
@@ -52,47 +54,43 @@ class GitChangeList extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.md,
-            AppSpacing.md,
-            AppSpacing.md,
-            AppSpacing.xs,
-          ),
-          child: Text(
-            title,
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w600,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
+        CapsSectionHeader(title, showChevron: false),
+        CapsCard(
+          child: changes.isEmpty
+              ? Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.md,
+                    AppSpacing.sm,
+                    AppSpacing.md,
+                    AppSpacing.sm,
+                  ),
+                  child: Text(
+                    emptyHint,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                )
+              : Column(
+                  children: [
+                    for (final c in changes)
+                      GitChangeTile(
+                        change: c,
+                        onTap:
+                            onTap == null || _noDiff(c) ? null : () => onTap!(c),
+                        onStage: onStage == null || _busy(c)
+                            ? null
+                            : () => onStage!(c),
+                        onUnstage: onUnstage == null || _busy(c)
+                            ? null
+                            : () => onUnstage!(c),
+                        onDiscard: onDiscard == null || _busy(c)
+                            ? null
+                            : () => onDiscard!(c),
+                      ),
+                  ],
+                ),
         ),
-        if (changes.isEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpacing.xl,
-              AppSpacing.xs,
-              AppSpacing.md,
-              AppSpacing.sm,
-            ),
-            child: Text(
-              emptyHint,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          )
-        else
-          for (final c in changes)
-            GitChangeTile(
-              change: c,
-              onTap: onTap == null || _noDiff(c) ? null : () => onTap!(c),
-              onStage: onStage == null || _busy(c) ? null : () => onStage!(c),
-              onUnstage:
-                  onUnstage == null || _busy(c) ? null : () => onUnstage!(c),
-              onDiscard:
-                  onDiscard == null || _busy(c) ? null : () => onDiscard!(c),
-            ),
       ],
     );
   }

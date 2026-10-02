@@ -90,7 +90,8 @@ class GitChangeTile extends StatelessWidget {
       onTap: onTap,
       dense: true,
       visualDensity: VisualDensity.compact,
-      contentPadding: EdgeInsets.zero,
+      // 行包在 CapsCard 里, md 内缩对齐卡内节奏 (水波纹由卡裁圆角)。
+      contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
       title: Text(
         change.workspaceRelativePath,
         maxLines: 1,

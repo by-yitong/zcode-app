@@ -264,7 +264,7 @@ class _ReadyView extends StatelessWidget {
           ),
           onTap: onOpenDiff,
         ),
-        const SizedBox(height: AppSpacing.md),
+        // 段间距由 CapsSectionHeader 自带 24pt 上间距提供, 不再叠加 SizedBox。
         GitChangeList(
           title: '已暂存 (${state.staged.length})',
           changes: state.staged,

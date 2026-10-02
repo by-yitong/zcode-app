@@ -121,33 +121,45 @@ class _GitBranchesTabState extends ConsumerState<GitBranchesTab> {
       );
     }
     if (branches.isEmpty) {
-      // 空列表也保留 add 行 (替代原顶部「新建分支」孤儿条与居中空态文案)。
-      return ListView(
-        children: [
-          _AddBranchTile(
+      // 空列表也保留 add 行 (包圆角卡; 替代原孤儿条与居中空态文案)。
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md,
+          AppSpacing.xs,
+          AppSpacing.md,
+          0,
+        ),
+        child: CapsCard(
+          child: _AddBranchTile(
             onTap: state.busyOps.contains('create') ? null : _newBranch,
           ),
-        ],
+        ),
       );
     }
     final busy = state.busyOps.contains('switch') ||
         state.busyOps.contains('create');
     return ListView(
       padding: const EdgeInsets.fromLTRB(
+        AppSpacing.md,
         AppSpacing.xs,
-        0,
-        AppSpacing.xs,
+        AppSpacing.md,
         AppSpacing.xl,
       ),
       children: [
-        for (final b in branches)
-          _BranchTile(
-            info: b,
-            current: b.name == currentName,
-            busy: busy,
-            onSwitch: () => _confirmSwitch(b.name),
+        CapsCard(
+          child: Column(
+            children: [
+              for (final b in branches)
+                _BranchTile(
+                  info: b,
+                  current: b.name == currentName,
+                  busy: busy,
+                  onSwitch: () => _confirmSwitch(b.name),
+                ),
+              _AddBranchTile(onTap: busy ? null : _newBranch),
+            ],
           ),
-        _AddBranchTile(onTap: busy ? null : _newBranch),
+        ),
       ],
     );
   }

@@ -28,10 +28,17 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Debug 变体装成独立包 (com.zcode.zcode_app.debug), 与 release
+            // 共存: 签名/数据互不干扰, flutter run 不会覆盖 release 包。
+            applicationIdSuffix = ".debug"
+            manifestPlaceholders["launcherLabel"] = "ZCode 调试"
+        }
         release {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            manifestPlaceholders["launcherLabel"] = "ZCode"
         }
     }
 }
