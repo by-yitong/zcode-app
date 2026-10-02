@@ -2027,6 +2027,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
           state.pendingPermissions.isNotEmpty) {
         _playSound();
       }
+      // ★ AI 提问提示音: patch 实时路径同样仅「null → 非空」响一声
+      //   (提问经 delta 增量到达、会话内直接弹答题窗, 不必等全量快照);
+      //   保持非空的幂等刷新不重复响 (对齐 _checkNotify 的 null→非空判定)。
+      if (prevState.pendingQuestion == null &&
+          state.pendingQuestion != null) {
+        _playSound();
+      }
     }
     if (patch.containsKey('plan')) {
       final planRaw = patch['plan'] as Map<String, dynamic>?;

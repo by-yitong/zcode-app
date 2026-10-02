@@ -202,5 +202,41 @@ void main() {
       expect(notifier.state.pendingPermissions.length, 1);
       expect(soundCalls, 1, reason: '保持非空不重复响');
     });
+
+    test('提问经 patch 实时路径到达 → 响 1 次; 幂等刷新不重响', () async {
+      // delta 增量帧: wire 形状为 {interactionId, kind, payload} (fromJson 键)
+      const questionPatch = {
+        'pendingInteractions': [
+          {
+            'interactionId': 'q_patch_1',
+            'kind': 'userInput',
+            'payload': {
+              'questions': [
+                {
+                  'question': '继续吗?',
+                  'header': '确认',
+                  'multiSelect': false,
+                  'options': [
+                    {'value': 'yes', 'label': '继续'},
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      };
+      notifier.debugHandleFrameForTest(
+        deltasFrame([const V4StateUpdated(questionPatch)]),
+      );
+      expect(notifier.state.pendingQuestion, isNotNull);
+      expect(soundCalls, 1, reason: '提问经增量 patch 到达弹窗时响一声');
+
+      // 幂等刷新 (pendingQuestion 保持非空) → 不重复响
+      notifier.debugHandleFrameForTest(
+        deltasFrame([const V4StateUpdated(questionPatch)]),
+      );
+      expect(notifier.state.pendingQuestion, isNotNull);
+      expect(soundCalls, 1, reason: '保持非空的重复 patch 不重复响');
+    });
   });
 }
