@@ -20,12 +20,18 @@ class GitSummary {
   final int ahead;
   final int behind;
 
+  /// git 二进制可用 / 工作区在仓库内 (服务端实测必返; null = 未知, 按可用处理)
+  final bool? isGitAvailable;
+  final bool? isRepository;
+
   const GitSummary({
     required this.branchName,
     required this.trackingBranchName,
     required this.headRefType,
     required this.ahead,
     required this.behind,
+    this.isGitAvailable,
+    this.isRepository,
   });
 
   bool get isDetached => headRefType != 'branch';
@@ -36,6 +42,8 @@ class GitSummary {
     headRefType: j['headRefType'] as String?,
     ahead: (j['ahead'] as num?)?.toInt() ?? 0,
     behind: (j['behind'] as num?)?.toInt() ?? 0,
+    isGitAvailable: j['isGitAvailable'] as bool?,
+    isRepository: j['isRepository'] as bool?,
   );
 }
 

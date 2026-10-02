@@ -77,6 +77,8 @@ void main() {
         'headRefType': 'branch',
         'ahead': 2,
         'behind': 1,
+        'isGitAvailable': true,
+        'isRepository': true,
       };
     };
     final s = await api.getRepositorySummary('/ws');
@@ -84,6 +86,8 @@ void main() {
     expect(s.branchName, 'main');
     expect(s.ahead, 2);
     expect(s.isDetached, isFalse);
+    expect(s.isGitAvailable, isTrue);
+    expect(s.isRepository, isTrue);
   });
 
   test('commit 参数严格, 返回 commitHash+summary', () async {

@@ -78,9 +78,17 @@ class _GitScreenState extends ConsumerState<GitScreen>
         appBar: const CapsPageHeader(title: 'Git'),
         body: switch (state.phase) {
           GitPhase.loading => const Center(child: CircularProgressIndicator()),
-          GitPhase.empty => const AppEmptyState(
+          // 空态文案对齐网页端三态: git 不可用 / 非仓库 / (兜底) 合并文案
+          GitPhase.empty => AppEmptyState(
               icon: Icons.folder_off_rounded,
-              title: '当前工作区不是 Git 仓库或 git 不可用',
+              title: switch ((
+                state.summary?.isGitAvailable,
+                state.summary?.isRepository,
+              )) {
+                (false, _) => '当前环境没有可用的 git',
+                (_, false) => '当前工作区不是 Git 仓库',
+                _ => '当前工作区不是 Git 仓库或 git 不可用',
+              },
             ),
           GitPhase.ready => _ReadyView(
               controller: ref.read(gitProvider(widget.gitRef).notifier),

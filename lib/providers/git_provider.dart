@@ -349,3 +349,20 @@ final gitProvider = StateNotifierProvider.autoDispose
       if (relay == null) throw StateError('RelayClient not available');
       return GitController(gitRef, GitApi(relay.rpcCallMap));
     });
+
+/// GitApi 工厂 (测试缝: 覆盖本 provider 即可用假 GitApi 驱动下游)。
+final gitApiProvider = Provider.autoDispose<GitApi>((ref) {
+  final relay = ref.watch(relayClientProvider);
+  if (relay == null) throw StateError('RelayClient not available');
+  return GitApi(relay.rpcCallMap);
+});
+
+/// 工作区是否可提供 Git 工具 (git 可用 且 在仓库内, 对齐网页端
+/// 「顶部 Git 操作入口可用性」: 非 git 项目隐藏入口)。
+/// 拉取失败按不可用处理 (null) — 入口隐藏, 不弹错。
+final gitAvailabilityProvider = FutureProvider.autoDispose
+    .family<bool, String>((ref, workspacePath) async {
+      final api = ref.watch(gitApiProvider);
+      final s = await api.getRepositorySummary(workspacePath);
+      return (s.isGitAvailable ?? true) && (s.isRepository ?? true);
+    });

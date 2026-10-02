@@ -1,4 +1,5 @@
 // test/git_provider_test.dart
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zcode_app/core/relay/git_api.dart';
 import 'package:zcode_app/providers/git_provider.dart';
@@ -14,6 +15,50 @@ void main() {
 
   GitController make(Map<String, dynamic> Function(String method) respond) =>
       GitController(gitRef, fakeApi(respond));
+
+  test('gitAvailabilityProvider: git 仓库 → true', () async {
+    final c = ProviderContainer(
+      overrides: [
+        gitApiProvider.overrideWith((ref) => fakeApi((m) => {
+              ...okSummary(),
+              'isGitAvailable': true,
+              'isRepository': true,
+            })),
+      ],
+    );
+    addTearDown(c.dispose);
+    expect(await c.read(gitAvailabilityProvider('/ws').future), isTrue);
+  });
+
+  test('gitAvailabilityProvider: 非 git 仓库 → false (隐藏入口)', () async {
+    final c = ProviderContainer(
+      overrides: [
+        gitApiProvider.overrideWith((ref) => fakeApi((m) => {
+              'branchName': null,
+              'headRefType': null,
+              'isGitAvailable': true,
+              'isRepository': false,
+            })),
+      ],
+    );
+    addTearDown(c.dispose);
+    expect(await c.read(gitAvailabilityProvider('/ws').future), isFalse);
+  });
+
+  test('gitAvailabilityProvider: git 不可用 → false', () async {
+    final c = ProviderContainer(
+      overrides: [
+        gitApiProvider.overrideWith((ref) => fakeApi((m) => {
+              'branchName': null,
+              'headRefType': null,
+              'isGitAvailable': false,
+              'isRepository': false,
+            })),
+      ],
+    );
+    addTearDown(c.dispose);
+    expect(await c.read(gitAvailabilityProvider('/ws').future), isFalse);
+  });
 
   test('初始 refresh: ready + summary 解析', () async {
     final c = make((m) =>
