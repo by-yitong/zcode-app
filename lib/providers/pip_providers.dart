@@ -39,9 +39,13 @@ import 'chat_provider.dart';
 //   - pipPushSchedulerProvider: 节流 500ms shareData 推快照 + 行数变化 resize
 //   - pipLivenessProvider: 悬浮窗被 X 关闭后主引擎收不到通知, 轮询兜底回收
 //   - pipActionPollerProvider: 悬浮窗打开期间 300ms 轮询 SharedPreferences
-//                         动作信箱 (pip.action), 取走即清空 (IPC 契约 v5)
+//                         动作信箱 (pip.action), 取走即清空 (IPC 契约 v5/v6:
+//                         动作集不变, v6 只加快照可选变形字段 mo/fx/fy/tw/th)
 //   - pipActionHandlerProvider: 处理悬浮窗七类动作 (open/home/size/collapse/
-//                         minimize/expand/pillMoved, 信箱轮询喂入)
+//                         minimize/expand/pillMoved, 信箱轮询喂入);
+//                         expand/minimize/collapse 在变形序列进行中
+//                         (pipMorphBusyProvider) 被丢弃防竞态
+//   - pipMorphBusyProvider: 展开/收拢变形序列互斥锁 (序列开始置位、结束清位)
 //   - openPipOverlay / hidePipOverlay / restorePipFromHidden /
 //     collapsePipToPill / expandPipFromPill: 顶层例程, 供动作处理器与
 //                         main.dart 生命周期复用; Widget 侧 (WidgetRef 无公共
@@ -110,6 +114,13 @@ final pipPillPosProvider = StateProvider<OverlayPosition?>((ref) => null);
 
 /// 悬浮窗是否处于打开状态 (show 失败 / 被 X 关闭时回滚为 false)
 final pipOverlayActiveProvider = StateProvider<bool>((ref) => false);
+
+/// 展开/收拢变形序列互斥锁 (v6): 序列开始置位、序列结束 (收拢含归位 glide)
+/// 清位。动作处理器收到 expand/minimize/collapse 时若 busy 则丢弃 —
+/// 防止上一段变形的快照/裁剪/归位时序被下一段动作打断 (半变形状态)。
+/// openPipOverlay / restorePipFromHidden / hidePipOverlay / 自动打开
+/// 不置位 (瞬时直出, 不带 mo 字段, 行为与 v5 一致)。
+final pipMorphBusyProvider = StateProvider<bool>((ref) => false);
 
 /// 进入悬浮窗时钉住的当前会话 (即使已完成也保留为页)
 final pipPinnedTaskProvider = StateProvider<String?>((ref) => null);
@@ -285,10 +296,28 @@ class PipPushScheduler {
 
   /// 立即推送当前快照 (showOverlay 成功后首推防白屏 / resize 后)。
   /// [ifChangedSince] 非空时内容一致则跳过 (轮询去重, 避免无变化空推)。
-  Future<void> pushNow({String? ifChangedSince}) async {
+  /// [morph] 系参数 (v6): 仅展开/收拢例程的翻转沿一次性携带的变形字段
+  /// (mo + 对应坐标对), 叠加在本帧快照 JSON 上; 流式推送一律不传 (悬浮窗
+  /// 侧 mo 只在翻转沿启动一次变形, 不带 = 只更新数据)。
+  Future<void> pushNow({
+    String? ifChangedSince,
+    String? morph,
+    double? morphX,
+    double? morphY,
+    double? targetW,
+    double? targetH,
+  }) async {
     try {
       final snapshot = _ref.read(pipMonitorProvider);
-      final json = jsonEncode(snapshot.toJson());
+      final map = snapshot.toJson();
+      if (morph != null) {
+        map['mo'] = morph;
+        if (morphX != null) map['fx'] = morphX;
+        if (morphY != null) map['fy'] = morphY;
+        if (targetW != null) map['tw'] = targetW;
+        if (targetH != null) map['th'] = targetH;
+      }
+      final json = jsonEncode(map);
       if (ifChangedSince != null && json == ifChangedSince) return;
       final totalChars = snapshot.sessions.fold<int>(
         0,
@@ -404,12 +433,25 @@ final pipActionHandlerProvider =
       case PipSizeAction():
         unawaited(_cyclePipSizeStep(ref));
       case PipCollapseAction():
-        // 拖出屏: v5 与最小化同语义 — 收拢成胶囊放记忆位, form=collapsed
+        // 拖出屏: v5 与最小化同语义 — 收拢成胶囊放记忆位, form=collapsed。
+        // v6 串行守卫: 变形序列进行中丢弃 (防上一段的裁剪/归位时序被打断)
+        if (ref.read(pipMorphBusyProvider)) {
+          appLog.d('[Pip] collapse 动作丢弃: 变形序列进行中');
+          return;
+        }
         unawaited(collapsePipToPill(ref));
       case PipMinimizeAction():
         // 最小化钮: 同上 (form 记忆统一后不再区分"普通收拢/用户隐藏")
+        if (ref.read(pipMorphBusyProvider)) {
+          appLog.d('[Pip] minimize 动作丢弃: 变形序列进行中');
+          return;
+        }
         unawaited(collapsePipToPill(ref));
       case PipExpandAction():
+        if (ref.read(pipMorphBusyProvider)) {
+          appLog.d('[Pip] expand 动作丢弃: 变形序列进行中');
+          return;
+        }
         unawaited(expandPipFromPill(ref));
       case PipPillMovedAction(:final x, :final y):
         unawaited(_persistPipPillPos(ref, x, y));
@@ -659,80 +701,155 @@ Future<void> restorePipFromHidden(Ref ref) async {
   await ref.read(pipPushSchedulerProvider).pushNow();
 }
 
-/// 收拢悬浮窗为胶囊 (v5 统一语义: 最小化钮 / 拖出屏收拢两个动作都走这里):
-/// 展开态先记忆展开位置 → resize 108×44 → 胶囊放记忆位 (无记忆顶部居中;
-/// 拖出屏不再贴拖出侧, 位置语义统一由用户拖拽记忆承载) →
-/// form=collapsed 持久化 + mode=collapsed + 重推快照。
+/// 收拢悬浮窗为胶囊 (v6 变形时序: 最小化钮 / 拖出屏收拢共用)。
+/// 窗口一步不动先变形, 再裁剪, 最后归位 — 全程无跳变:
+///   1. 记录面板窗口左上 (winPos, 兼作展开位置记忆) + 确定性重算面板宽 W。
+///   2. 先推快照 (collapsed=true + mo='collapse' + fx=(W-108)/2, fy=0):
+///      悬浮窗侧面板变形缩到窗口内 (fx, fy, 108, 44) 的胶囊 — 动画在窗口
+///      不动的条件下进行 (260ms), 无任何 resize 间隙闪烁。
+///   3. 等 340ms (动画 260ms + 余量) → 裁剪: pillAbs = winPos+(fx,fy),
+///      resize(108,44) + move(pillAbs) — 胶囊视觉不动, 裁掉的只是透明区。
+///   4. 归位: 胶囊记忆位 (无记忆顶部居中) 用原生动画 move glide ~200ms;
+///      失败/非 Android 回落普通 moveOverlay (PipService.moveAnimated 内置)。
+/// form=collapsed 持久化、mode=collapsed、collapsedProvider 在第 2 步推
+/// 快照前设置 (v5 语义时点不变)。变形序列互斥: 进出置位/清位
+/// pipMorphBusyProvider (动作处理器据此丢弃并发 expand/minimize/collapse)。
 /// 原生 resizeOverlay/moveOverlay 均传逻辑 dp (原生侧 dpToPx 换算一次)。
 Future<void> collapsePipToPill(Ref ref) async {
-  if (!ref.read(pipOverlayActiveProvider)) return;
-  final screen = ref.read(pipScreenDpProvider);
-  if (screen == null) {
-    appLog.w('[Pip] 收拢跳过: 无屏幕尺寸记录');
-    return;
+  ref.read(pipMorphBusyProvider.notifier).state = true;
+  try {
+    if (!ref.read(pipOverlayActiveProvider)) return;
+    final screen = ref.read(pipScreenDpProvider);
+    if (screen == null) {
+      appLog.w('[Pip] 收拢跳过: 无屏幕尺寸记录');
+      return;
+    }
+    // 已是胶囊/隐藏态: 无面板可变形, 幂等直接返回 (v5 无脑 resize 反而
+    // 会把隐藏窗口撕开 1×1 伪装)
+    if (ref.read(pipModeProvider) != PipMode.expanded) {
+      appLog.d('[Pip] 收拢跳过: 非展开态');
+      return;
+    }
+    final pip = ref.read(pipServiceProvider);
+    // 面板窗口左上: 展开位置记忆 (恢复展开时 move 回去) 与变形裁剪锚点共用
+    final winPos = await pip.getOverlayPosition();
+    if (winPos != null) {
+      ref.read(pipExpandedPosProvider.notifier).state = winPos;
+    }
+    // 窗口实际宽度确定性重算 (当前档位 fraction; 不查窗口 — 查询值经
+    // px→dp 往返有舍入误差, 与展开例程同一公式零漂移)
+    final step = ref.read(pipSizeStepProvider);
+    final winW = screen.w * pipWindowWidthFractionForStep(step);
+    // 变形目标: 胶囊在面板顶水平居中 (窗口内局部 dp)
+    final fx = (winW - pipCollapsedWidth) / 2;
+    const fy = 0.0;
+    // form 记忆 = 用户最后主动选择的形态: 收拢后自动打开/后台恢复仍弹胶囊,
+    // 直到点胶囊展开才翻回 expanded (持久化跨进程生效)
+    ref.read(pipFormProvider.notifier).state = PipForm.collapsed;
+    unawaited(persistPipForm(PipForm.collapsed));
+    ref.read(pipModeProvider.notifier).state = PipMode.collapsed;
+    // 收拢标志随快照推送驱动悬浮窗变形 (MediaQuery 不刷新也可靠)
+    ref.read(pipCollapsedProvider.notifier).state = true;
+    await ref
+        .read(pipPushSchedulerProvider)
+        .pushNow(morph: 'collapse', morphX: fx, morphY: fy);
+    // 等变形动画完成 (260ms) + 余量后才动窗口 — 动画期间窗口保持不动
+    await Future<void>.delayed(const Duration(milliseconds: 340));
+    // 时序守卫: 等待期间 app 可能回前台 (hidePipOverlay 已把窗口完全隐藏,
+    // mode=hidden) 或悬浮窗被 X 关闭 (active=false) — 再 resize/move 会撕开
+    // 1×1 伪装重新上屏, 直接终止序列 (形态/快照已到位, 恢复路径不受影响)
+    if (ref.read(pipModeProvider) != PipMode.collapsed ||
+        !ref.read(pipOverlayActiveProvider)) {
+      appLog.d('[Pip] 收拢序列终止: 等待期间窗口被隐藏/关闭');
+      return;
+    }
+    if (winPos != null) {
+      // 裁剪: 窗口缩到 108×44 并移到胶囊绝对位 (胶囊视觉不动, 裁掉的
+      // 只是透明区)。winPos 查询失败时跳过裁剪, 直接落归位目标 (瞬移)。
+      final pillAbs = OverlayPosition(winPos.x + fx, winPos.y + fy);
+      await pip.resize(pipCollapsedWidth.round(), pipCollapsedHeight.round());
+      await pip.moveOverlay(pillAbs);
+    } else {
+      await pip.resize(pipCollapsedWidth.round(), pipCollapsedHeight.round());
+    }
+    // 归位: 胶囊记忆位 (有拖拽记忆用记忆位, 否则顶部居中默认) 原生动画 glide
+    final pill = _pipPillPlacement(ref, screen.w);
+    await pip.moveAnimated(pill, const Duration(milliseconds: 200));
+    appLog.d(
+      '[Pip] 收拢为胶囊 (变形) fx=$fx → 裁剪 (${winPos?.x}, ${winPos?.y})'
+      '→ 归位 (${pill.x}, ${pill.y})',
+    );
+  } finally {
+    ref.read(pipMorphBusyProvider.notifier).state = false;
   }
-  final pip = ref.read(pipServiceProvider);
-  // 展开态先记忆位置 (恢复展开时 move 回去); 已是胶囊则位置没变无需重记
-  if (ref.read(pipModeProvider) == PipMode.expanded) {
-    final pos = await pip.getOverlayPosition();
-    if (pos != null) ref.read(pipExpandedPosProvider.notifier).state = pos;
-  }
-  final pill = _pipPillPlacement(ref, screen.w);
-  await pip.resize(pipCollapsedWidth.round(), pipCollapsedHeight.round());
-  await pip.moveOverlay(pill);
-  // form 记忆 = 用户最后主动选择的形态: 收拢后自动打开/后台恢复仍弹胶囊,
-  // 直到点胶囊展开才翻回 expanded (持久化跨进程生效)
-  ref.read(pipFormProvider.notifier).state = PipForm.collapsed;
-  unawaited(persistPipForm(PipForm.collapsed));
-  ref.read(pipModeProvider.notifier).state = PipMode.collapsed;
-  // 收拢标志随快照推送驱动悬浮窗切换胶囊渲染 (MediaQuery 不刷新也可靠)
-  ref.read(pipCollapsedProvider.notifier).state = true;
-  await ref.read(pipPushSchedulerProvider).pushNow();
-  appLog.d('[Pip] 收拢为胶囊 x=${pill.x} y=${pill.y}');
 }
 
-/// 在胶囊当前位置原地展开 (点胶囊):
-/// 胶囊中心 = 当前窗口位置 (getOverlayPosition — 用户可能刚拖过, 拿不到用
-/// 胶囊记忆位/默认位兜底) + (54, 22); 小窗顶部中点对齐胶囊中心, 顶部与胶囊
-/// 齐平: x = 中心x - W/2, y = 胶囊 y; 钳回屏内后 resize + move。
-/// form=expanded 持久化 (点胶囊 = 用户主动选展开形态)。
-/// 展开不做 move 动画 — 原生窗口无过渡, 多步插值逐帧 resize/move 反而抖。
+/// 在胶囊当前位置原地展开 (v6 变形时序):
+///   1. 胶囊左上 = 窗口实际位置 (getOverlayPosition, 拿不到用记忆位/默认位
+///      兜底); 按档位算目标面板 W×H。
+///   2. 窗口锚定规则: 窗口左上 = 胶囊左上, 钳制面板整体在屏内 — resize+move
+///      一步换框 (不逐帧 resize)。在 resize 完成→快照到达的 IPC 间隙里,
+///      旧胶囊子树渲染在新窗口左上角 = 胶囊原位, 视觉不动、无缝 (未钳制时
+///      窗口左上==胶囊位; 钳制时接受极小的一次位移)。
+///   3. 推快照 collapsed=false + mo='expand' + tw/th (目标尺寸显式传 —
+///      resize 后悬浮窗引擎 MediaQuery 可能不刷新, 不得读窗口尺寸做目标):
+///      悬浮窗侧胶囊从 (0,0,108,44) 变形到 (0,0,tw,th) 的面板 (~260ms),
+///      四周透明 (窗口原生本就透明)。
+/// form=expanded 持久化、mode/collapsed provider、scheduler configure 照
+/// v5 语义; 主 App 不等动画完成 (窗口已是最终框)。变形序列互斥:
+/// 进出置位/清位 pipMorphBusyProvider。
 Future<void> expandPipFromPill(Ref ref) async {
-  if (!ref.read(pipOverlayActiveProvider)) return;
-  final screen = ref.read(pipScreenDpProvider);
-  if (screen == null) {
-    appLog.w('[Pip] 恢复展开跳过: 无屏幕尺寸记录');
-    return;
+  ref.read(pipMorphBusyProvider.notifier).state = true;
+  try {
+    if (!ref.read(pipOverlayActiveProvider)) return;
+    final screen = ref.read(pipScreenDpProvider);
+    if (screen == null) {
+      appLog.w('[Pip] 恢复展开跳过: 无屏幕尺寸记录');
+      return;
+    }
+    final pip = ref.read(pipServiceProvider);
+    final step = ref.read(pipSizeStepProvider);
+    final lines = ref.read(pipLinesProvider);
+    final widthDp = screen.w * pipWindowWidthFractionForStep(step);
+    final heightDp = pipWindowHeightForStep(lines, step, screen.h);
+    // 胶囊左上角: 窗口实际位置优先 (点胶囊时窗口就在胶囊位), 记忆位/默认位兜底
+    final pill = await pip.getOverlayPosition() ??
+        _pipPillPlacement(ref, screen.w);
+    // 窗口左上锚定胶囊左上; 变大后钳回屏内 (胶囊贴边时面板必须整体可见)
+    final maxX = (screen.w - widthDp).clamp(0.0, screen.w);
+    final maxY = (screen.h - heightDp).clamp(0.0, screen.h);
+    final x = pill.x.clamp(0.0, maxX).toDouble();
+    final y = pill.y.clamp(0.0, maxY).toDouble();
+    await pip.resize(widthDp.round(), heightDp.round());
+    await pip.moveOverlay(OverlayPosition(x, y));
+    // 时序守卫: 执行期间 app 回前台可能已把窗口完全隐藏 (mode=hidden) —
+    // 不得把 mode 覆写回 expanded (否则切后台 restore 被跳过, 小窗永不恢复)
+    if (ref.read(pipModeProvider) == PipMode.hidden) {
+      appLog.d('[Pip] 展开序列终止: 等待期间窗口被隐藏');
+      return;
+    }
+    // 新展开位置记忆 = 本次实际落位 (下次收拢→展开回到视觉连续的位置)
+    ref.read(pipExpandedPosProvider.notifier).state = OverlayPosition(x, y);
+    ref.read(pipFormProvider.notifier).state = PipForm.expanded;
+    unawaited(persistPipForm(PipForm.expanded));
+    ref.read(pipModeProvider.notifier).state = PipMode.expanded;
+    ref.read(pipCollapsedProvider.notifier).state = false;
+    // 同步 scheduler 的窗口宽度记录 (后续行数变化 resize 用)
+    ref.read(pipPushSchedulerProvider).configure(
+      windowWidthPx: (widthDp * screen.dpr).round(),
+      devicePixelRatio: screen.dpr,
+    );
+    // 翻转沿快照: 带 mo='expand' + tw/th, 悬浮窗侧据此播放变形
+    await ref
+        .read(pipPushSchedulerProvider)
+        .pushNow(morph: 'expand', targetW: widthDp, targetH: heightDp);
+    appLog.d(
+      '[Pip] 胶囊位原地展开 (变形) step=$step x=$x y=$y '
+      'w=${widthDp.round()} h=${heightDp.round()}',
+    );
+  } finally {
+    ref.read(pipMorphBusyProvider.notifier).state = false;
   }
-  final pip = ref.read(pipServiceProvider);
-  final step = ref.read(pipSizeStepProvider);
-  final lines = ref.read(pipLinesProvider);
-  final widthDp = screen.w * pipWindowWidthFractionForStep(step);
-  final heightDp = pipWindowHeightForStep(lines, step, screen.h);
-  // 胶囊左上角: 窗口实际位置优先 (点胶囊时窗口就在胶囊位), 记忆位/默认位兜底
-  final pill = await pip.getOverlayPosition() ??
-      _pipPillPlacement(ref, screen.w);
-  // 小窗顶部中点对齐胶囊中心; 变大后钳回屏内 (胶囊贴边时窗口必须整体可见)
-  final centerX = pill.x + pipCollapsedWidth / 2;
-  final maxX = (screen.w - widthDp).clamp(0.0, screen.w);
-  final maxY = (screen.h - heightDp).clamp(0.0, screen.h);
-  final x = (centerX - widthDp / 2).clamp(0.0, maxX).toDouble();
-  final y = pill.y.clamp(0.0, maxY).toDouble();
-  await pip.resize(widthDp.round(), heightDp.round());
-  await pip.moveOverlay(OverlayPosition(x, y));
-  // 新展开位置记忆 = 本次实际落位 (下次收拢→展开回到视觉连续的位置)
-  ref.read(pipExpandedPosProvider.notifier).state = OverlayPosition(x, y);
-  ref.read(pipFormProvider.notifier).state = PipForm.expanded;
-  unawaited(persistPipForm(PipForm.expanded));
-  ref.read(pipModeProvider.notifier).state = PipMode.expanded;
-  ref.read(pipCollapsedProvider.notifier).state = false;
-  // 同步 scheduler 的窗口宽度记录 (后续行数变化 resize 用) + 重推防白屏
-  ref.read(pipPushSchedulerProvider).configure(
-    windowWidthPx: (widthDp * screen.dpr).round(),
-    devicePixelRatio: screen.dpr,
-  );
-  await ref.read(pipPushSchedulerProvider).pushNow();
-  appLog.d('[Pip] 胶囊位原地展开 step=$step x=$x y=$y w=${widthDp.round()} h=${heightDp.round()}');
 }
 
 /// 双击循环尺寸档位: step=(step+1)%4 → 持久化 → resize 新宽高 (逻辑 dp) →

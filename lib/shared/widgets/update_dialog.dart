@@ -1,9 +1,10 @@
-/// 版本更新对话框 — 应用内下载 (进度) + 浏览器下载兜底
+// 版本更新对话框 — 应用内下载 (进度) + 浏览器下载兜底
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/services/update_service.dart';
 import '../theme/app_design_tokens.dart';
+import 'ai_markdown.dart';
 
 /// 弹出更新对话框; 返回用户是否选择了"本次忽略"
 Future<bool> showUpdateDialog(BuildContext context, UpdateInfo info) {
@@ -87,11 +88,17 @@ class _UpdateDialogState extends State<_UpdateDialog> {
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 220),
               child: SingleChildScrollView(
-                child: Text(
-                  info.notes,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
+                // 更新日志按 Markdown 渲染 (标题/列表/代码块), 与 AI 消息同源
+                child: AiMarkdown(
+                  data: info.notes,
+                  ink: theme.colorScheme.onSurface,
+                  codeBg: theme.colorScheme.surfaceContainerHigh,
+                  minimal: true,
+                  isStreaming: false,
+                  bodyStyle: TextStyle(
+                    fontSize: AppTextSizes.bodySm,
                     height: 1.5,
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
               ),

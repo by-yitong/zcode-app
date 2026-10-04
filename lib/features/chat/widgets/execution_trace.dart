@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 
 import '../../../providers/chat_provider.dart';
 import '../../../shared/theme/app_design_tokens.dart';
@@ -598,6 +599,11 @@ class _ExecutionDetailSheetState extends State<_ExecutionDetailSheet> {
   Timer? _liveTimer;
   String? _liveStatus;
 
+  // ── 贴底跟随: 用户在底部时新内容自动滚到底; 上滑看历史即暂停,
+  // 滚回底部自动恢复 (内容来自 2s 轮询, 不跟随会被顶得看不到最新)
+  bool _followBottom = true;
+  ScrollController? _innerScrollController;
+
   @override
   void initState() {
     super.initState();
@@ -631,6 +637,7 @@ class _ExecutionDetailSheetState extends State<_ExecutionDetailSheet> {
         _loadingChildren = false;
         _liveStatus = r.status;
       });
+      _followToBottom();
       final running = r.status == null
           ? hasRunningActivity(r.parts) // 嵌套子代理: 用内容判断
           : r.status == 'running'; // 顶层: 用权威行状态
@@ -649,6 +656,7 @@ class _ExecutionDetailSheetState extends State<_ExecutionDetailSheet> {
       final parts = await loader(sid);
       if (!mounted) return;
       setState(() => _childNodes = buildExecutionNodes(parts));
+      _followToBottom();
     } catch (_) {
       if (mounted) setState(() => _childrenError = '子任务详情加载失败');
     } finally {
@@ -658,6 +666,32 @@ class _ExecutionDetailSheetState extends State<_ExecutionDetailSheet> {
 
   static const double _minSize = 0.3;
   static const double _maxSize = 0.92;
+
+  /// 跟随状态下内容更新后跳到底部 (postFrame, 等新内容排版完成)
+  void _followToBottom() {
+    if (!_followBottom) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final sc = _innerScrollController;
+      if (sc == null || !sc.hasClients) return;
+      sc.jumpTo(sc.position.maxScrollExtent);
+    });
+  }
+
+  /// 用户滚动方向决定是否跟随: 向下滚 → 恢复跟随; 向上滚 → 暂停。
+  /// 只认 UserScrollNotification — 程序化 jumpTo 不会误关跟随。
+  bool _onScrollNotification(ScrollNotification n) {
+    if (n is UserScrollNotification) {
+      switch (n.direction) {
+        case ScrollDirection.reverse:
+          _followBottom = true;
+        case ScrollDirection.forward:
+          _followBottom = false;
+        case ScrollDirection.idle:
+          break;
+      }
+    }
+    return false;
+  }
 
   // 拖拽条在 Sheet 结构中固定于顶部 (不随内容滚动);
   // 由于它不在 scrollController 驱动的 Scrollable 内,
@@ -687,56 +721,64 @@ class _ExecutionDetailSheetState extends State<_ExecutionDetailSheet> {
       snap: true,
       snapSizes: const [0.5, 0.92],
       builder: (ctx, scrollController) {
-        return Container(
-          decoration: BoxDecoration(
-            // 与全 app 底部弹层一致的不透明提升面 (composer 模型选择等同款)
-            color: Color.alphaBlend(
-              theme.colorScheme.surfaceContainerHigh,
-              theme.colorScheme.surfaceContainerLowest,
-            ),
-            borderRadius: const BorderRadius.vertical(
-              top: Radius.circular(AppRadius.lg),
-            ),
-            border: Border(
-              top: BorderSide(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.2),
+        _innerScrollController = scrollController;
+        return NotificationListener<ScrollNotification>(
+          onNotification: _onScrollNotification,
+          child: Container(
+            decoration: BoxDecoration(
+              // 与全 app 底部弹层一致的不透明提升面 (composer 模型选择等同款)
+              color: Color.alphaBlend(
+                theme.colorScheme.surfaceContainerHigh,
+                theme.colorScheme.surfaceContainerLowest,
+              ),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(AppRadius.lg),
+              ),
+              border: Border(
+                top: BorderSide(
+                  color: theme.colorScheme.outlineVariant.withValues(
+                    alpha: 0.2,
+                  ),
+                ),
               ),
             ),
-          ),
-          child: Column(
-            children: [
-              // drag handle — 固定在 Sheet 顶部, 不参与内容滚动
-              GestureDetector(
-                onVerticalDragUpdate: _onHandleDrag,
-                child: Center(
-                  child: Container(
-                    width: 36,
-                    height: 4,
-                    margin: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.onSurfaceVariant.withValues(
-                        alpha: 0.4,
+            child: Column(
+              children: [
+                // drag handle — 固定在 Sheet 顶部, 不参与内容滚动
+                GestureDetector(
+                  onVerticalDragUpdate: _onHandleDrag,
+                  child: Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.symmetric(
+                        vertical: AppSpacing.sm,
                       ),
-                      borderRadius: BorderRadius.circular(2),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.onSurfaceVariant.withValues(
+                          alpha: 0.4,
+                        ),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
                   ),
                 ),
-              ),
-              Expanded(
-                // scrollController 必须传给内部 Scrollable,
-                // 这样内容滚到顶后继续下拉仍会带动 Sheet 收起
-                child: SingleChildScrollView(
-                  controller: scrollController,
-                  padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.md,
-                    0,
-                    AppSpacing.md,
-                    AppSpacing.xl,
+                Expanded(
+                  // scrollController 必须传给内部 Scrollable,
+                  // 这样内容滚到顶后继续下拉仍会带动 Sheet 收起
+                  child: SingleChildScrollView(
+                    controller: scrollController,
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.md,
+                      0,
+                      AppSpacing.md,
+                      AppSpacing.xl,
+                    ),
+                    child: _buildContent(context, theme),
                   ),
-                  child: _buildContent(context, theme),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         );
       },

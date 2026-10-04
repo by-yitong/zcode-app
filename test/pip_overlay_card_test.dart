@@ -983,6 +983,199 @@ void main() {
     expect(pip.dragToggles, isEmpty, reason: '轻点不触发 pan 起手');
     expect(pip.moves, isEmpty, reason: '轻点不产生钳制移动/pillMoved');
   });
+
+  testWidgets('v6 展开: 注入 mo=expand 快照 → 变形过渡 → 完成后渲染面板', (tester) async {
+    final controller = StreamController<dynamic>();
+    addTearDown(controller.close);
+
+    // 窗口已被主 App resize 到面板尺寸 (320×160), 快照 collapsed=true 仍渲染
+    // 胶囊 (v4.1 语义) — 变形前胶囊渲染在新窗口左上角 = 胶囊原位, 视觉不动
+    await _pumpCard(
+      tester,
+      controller: controller,
+      size: const Size(320, 160),
+      collapsed: true,
+      sessions: <PipSessionSnapshot>[
+        _session(key: 'task-a', title: '任务Alpha', running: false, text: 'alpha'),
+      ],
+    );
+    expect(find.byKey(const ValueKey('pip-collapsed-pill')), findsOneWidget);
+
+    // 翻转沿快照: collapsed=false + mo='expand' + tw/th (目标尺寸显式传)
+    controller.add(
+      jsonEncode(
+        PipSnapshot(
+          v: 1,
+          index: 0,
+          sessions: <PipSessionSnapshot>[
+            _session(
+              key: 'task-a',
+              title: '任务Alpha',
+              running: false,
+              text: 'alpha',
+            ),
+          ],
+          morph: 'expand',
+          targetW: 320,
+          targetH: 160,
+        ).toJson(),
+      ),
+    );
+    // 流事件经微任务送达 (一次 pump 送达、再一次渲染), 双 pump 确保变形首帧
+    await tester.pump(); // 微任务送达快照
+    await tester.pump(); // 应用快照 → 渲染变形首帧 (t=0)
+    expect(
+      find.byKey(const ValueKey('pip-morph')),
+      findsOneWidget,
+      reason: '翻转沿启动变形过渡组件',
+    );
+    // 变形中: 胶囊内容 (淡出中) 与面板子树 (淡入中) 共存
+    expect(find.byKey(const ValueKey('pip-collapsed-pill')), findsOneWidget);
+    expect(find.byType(PageView), findsOneWidget);
+
+    await tester.pump(const Duration(milliseconds: 130)); // 中点: 仍在变形
+    expect(find.byKey(const ValueKey('pip-morph')), findsOneWidget);
+
+    // 泵过动画全程 (260ms + 首帧 ticker 启动余量)
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(); // onCompleted → setState 清变形态 → 正常面板渲染
+    expect(find.byKey(const ValueKey('pip-morph')), findsNothing);
+    expect(find.byType(PageView), findsOneWidget, reason: '完成后正常面板渲染');
+    expect(find.byTooltip('关闭悬浮窗'), findsOneWidget);
+    expect(_bodyText('alpha'), findsOneWidget);
+  });
+
+  testWidgets('v6 收拢: 注入 mo=collapse 快照 → 变形过渡 → 完成后渲染胶囊', (tester) async {
+    final controller = StreamController<dynamic>();
+    addTearDown(controller.close);
+
+    // 面板态 (窗口 320×160, 未 resize — 变形在窗口不动条件下进行)
+    await _pumpCard(
+      tester,
+      controller: controller,
+      size: const Size(320, 160),
+      sessions: <PipSessionSnapshot>[
+        _session(key: 'task-a', title: '任务Alpha', running: false, text: 'alpha'),
+      ],
+    );
+    expect(find.byType(PageView), findsOneWidget);
+
+    // 翻转沿快照: collapsed=true + mo='collapse' + fx/fy (胶囊目标 = 窗口内
+    // 局部坐标, 面板顶水平居中 (320-108)/2=106)
+    controller.add(
+      jsonEncode(
+        PipSnapshot(
+          v: 1,
+          index: 0,
+          sessions: <PipSessionSnapshot>[
+            _session(
+              key: 'task-a',
+              title: '任务Alpha',
+              running: false,
+              text: 'alpha',
+            ),
+          ],
+          collapsed: true,
+          morph: 'collapse',
+          morphX: 106,
+          morphY: 0,
+        ).toJson(),
+      ),
+    );
+    await tester.pump(); // 微任务送达快照
+    await tester.pump(); // 渲染变形首帧 (t=0)
+    expect(find.byKey(const ValueKey('pip-morph')), findsOneWidget);
+    // 变形中: 面板子树 (淡出中) 与胶囊内容 (淡入中) 共存
+    expect(find.byType(PageView), findsOneWidget);
+    expect(find.byKey(const ValueKey('pip-collapsed-pill')), findsOneWidget);
+
+    // 泵过动画全程 (260ms + 首帧 ticker 启动余量)
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(); // onCompleted → 正常胶囊渲染 (collapsed=true 驱动)
+    expect(find.byKey(const ValueKey('pip-morph')), findsNothing);
+    expect(find.byType(PageView), findsNothing, reason: '完成后正常胶囊渲染');
+    expect(find.byKey(const ValueKey('pip-collapsed-pill')), findsOneWidget);
+    expect(find.text('任务Alpha'), findsOneWidget);
+  });
+
+  testWidgets('v6 变形期间无 mo 流式快照: 不重启动画, 数据更新在完成后生效', (tester) async {
+    final controller = StreamController<dynamic>();
+    addTearDown(controller.close);
+
+    await _pumpCard(
+      tester,
+      controller: controller,
+      size: const Size(320, 160),
+      collapsed: true,
+      sessions: <PipSessionSnapshot>[
+        _session(key: 'task-a', title: '任务Alpha', running: false, text: 'v1'),
+      ],
+    );
+
+    // 启动展开变形
+    controller.add(
+      jsonEncode(
+        PipSnapshot(
+          v: 1,
+          index: 0,
+          sessions: <PipSessionSnapshot>[
+            _session(
+              key: 'task-a',
+              title: '任务Alpha',
+              running: false,
+              text: 'v1',
+            ),
+          ],
+          morph: 'expand',
+          targetW: 320,
+          targetH: 160,
+        ).toJson(),
+      ),
+    );
+    await tester.pump(); // 微任务送达快照
+    await tester.pump(); // t=0: 变形启动
+
+    // t=100ms: 流式快照 (无 mo, 文本 v2) 到达 → 只更新数据, 不重启动画
+    await tester.pump(const Duration(milliseconds: 100));
+    controller.add(
+      jsonEncode(
+        PipSnapshot(
+          v: 1,
+          index: 0,
+          sessions: <PipSessionSnapshot>[
+            _session(
+              key: 'task-a',
+              title: '任务Alpha',
+              running: false,
+              text: 'v2',
+            ),
+          ],
+        ).toJson(),
+      ),
+    );
+    await tester.pump(); // 微任务送达
+    await tester.pump(); // 数据应用 (动画继续, 不重启)
+    expect(
+      find.byKey(const ValueKey('pip-morph')),
+      findsOneWidget,
+      reason: '无 mo 快照不中断变形',
+    );
+    // 未重启的证据: 面板子树仍是启动时缓存的一帧 (v1) — 若被 v2 重启,
+    // 过渡组件会重建并重新构建面板子树, v2 立即上屏。
+    expect(_bodyText('v1'), findsOneWidget);
+    expect(_bodyText('v2'), findsNothing);
+
+    // 泵过动画全程: 完成后按最新快照渲染, v2 上屏
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump(); // onCompleted → setState 清变形态
+    expect(
+      find.byKey(const ValueKey('pip-morph')),
+      findsNothing,
+      reason: '动画完成 (未被流式快照重启拖长)',
+    );
+    expect(_bodyText('v2'), findsOneWidget);
+    expect(_bodyText('v1'), findsNothing);
+  });
 }
 
 /// 假 PipService: 记录 setNativeDrag 开关 / moveOverlay 调用,

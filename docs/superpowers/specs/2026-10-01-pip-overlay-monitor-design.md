@@ -48,6 +48,26 @@ AI 输出进度：从会话页点"画中画"按钮 → 弹出系统级悬浮小�
    松手切回 false 并把窗口钳制回屏内（TOP|LEFT 绝对锚点，屏幕尺寸经快照
    `sw/sh` 带给悬浮窗引擎）。`positionGravity: none`（不做松手吸边）。
 5. 关闭悬浮窗后 ZCode 任务继续跑（已有前台服务保活）。
+6. 胶囊↔面板丝滑变形（v6，灵动岛式）：窗口原生本就透明，变形动画全部在
+   悬浮窗引擎的 Flutter 内容层做，四周透明。
+   - **展开**（点胶囊）：主 App 一步 resize+move 把窗口换到目标面板框
+     （窗口左上锚定胶囊左上，钳制面板整体在屏内）——在 resize 完成→快照
+     到达的 IPC 间隙里，旧胶囊子树渲染在新窗口左上角 = 胶囊原位，视觉
+     不动。随后推快照 `mo='expand'` + `tw/th`，悬浮窗侧胶囊从 (0,0,108,44)
+     变形到 (0,0,tw,th) 的面板（~260ms，圆角 18→面板圆角，胶囊内容淡出、
+     面板内容淡入），完成后正常面板渲染。
+   - **收拢**（最小化钮/拖出屏）：先推快照 `mo='collapse'` + `fx/fy`
+     （胶囊目标 = 面板顶水平居中），悬浮窗侧面板变形缩到窗口内
+     (fx, fy, 108, 44) 的胶囊（动画在窗口不动的条件下进行，无 resize 间隙
+     闪烁）；主 App 等 340ms（动画 260ms + 余量）后裁剪窗口——
+     resize(108,44) + move(胶囊绝对位)，胶囊视觉不动、裁掉的只是透明区；
+     最后用原生动画 move（逐帧只改位置不 resize，无 surface 重分配）把
+     胶囊 glide 到记忆位（~200ms，无记忆则顶部居中）。
+   - 变形目标尺寸/坐标一律显式随快照传（resize 后悬浮窗引擎 MediaQuery
+     可能不刷新，不得读窗口尺寸做动画目标）；`mo` 只在翻转沿启动一次变形，
+     动画期间到达的流式快照（不带 `mo`）只更新数据不重启动画。
+   - 串行守卫：展开/收拢序列进行中（`pipMorphBusyProvider`）到达的
+     expand/minimize/collapse 动作直接丢弃，防时序交错出半变形状态。
 
 ### 尾部行提取规则
 
@@ -97,7 +117,7 @@ TextPart / 旧路径 content），按行切分取尾部至多 60 行（缓冲常
   `app/pip` 通道 `bringToForeground` + `goRouter.go('${AppRoutes.chat}?workspace=...')`
   （与 history_drawer 跳会话同款）。
 
-### IPC 契约（冻结，v3 — 悬浮窗 UI 修订）
+### IPC 契约（冻结，v6 — 胶囊↔面板丝滑变形；动作集与 v5 一致）
 
 `flutter_overlay_window` 0.5.0 的 `x-slayer/overlay_messenger` 通道每个引擎只有
 一个 handler 槽位，且主引擎槽位被 Dart 侧 `overlayListener` 占用后，原生转发器
@@ -107,10 +127,16 @@ TextPart / 旧路径 content），按行切分取尾部至多 60 行（缓冲常
   **主 App 一律不得访问 `overlayListener`**（会抢掉原生槽位导致推送失效）。
 - **悬浮窗 → 主 App**：SharedPreferences 信箱，key `pip.action`（JSON 字符串）。
   两引擎同进程共享同一 SharedPreferences 实例，写后立即可见；主 App 仅在悬浮窗
-  打开期间以 300ms 轮询读取，取走即清空。动作只有一种：
+  打开期间以 300ms 轮询读取，取走即清空。动作七类（v5，v6 不变）：
 
 ```json
-{"action": "open", "key": "task-uuid"}
+{"action": "open", "key": "task-uuid"}   // home 钮（有会话）回 app 跳会话
+{"action": "home"}                       // home 钮（空态）仅回前台
+{"action": "size"}                       // 双击正文循环尺寸档位（仅展开态）
+{"action": "collapse"}                   // 窗口中心拖出屏外 → 收拢为胶囊
+{"action": "minimize"}                   // 最小化钮 → 收拢为胶囊（同 collapse）
+{"action": "expand"}                     // 点胶囊 → 胶囊位原地展开
+{"action": "pillMoved","x":..,"y":..}    // 胶囊拖拽松手 → 记忆胶囊位置（dp）
 ```
 
 - **防白屏**：不再用 refresh 动作；主 App 在 showOverlay 成功后立即主动推一次
@@ -119,8 +145,11 @@ TextPart / 旧路径 content），按行切分取尾部至多 60 行（缓冲常
   （listenManual 收不到通知），事件驱动推送在后台失效。因此悬浮窗打开期间
   由 push scheduler 以 500ms 周期主动 `read` 快照（强制重算），内容有变化才推
   （与上次推送 JSON 对比去重）。前台事件驱动路径保留作为快路径。
+- **串行守卫（v6）**：展开/收拢变形序列进行中（`pipMorphBusyProvider`）到达的
+  `expand`/`minimize`/`collapse` 动作直接丢弃并落日志，防时序交错。
 
-主 App → 悬浮窗快照结构（v3：session 载荷由 `lines` 行数组改为 `text` 原文）：
+主 App → 悬浮窗快照结构（v6：v3 快照结构不变，新增可选变形字段；纯可选、
+不 bump `v`，老载荷缺省即 v5 行为）：
 
 ```json
 {
@@ -134,10 +163,21 @@ TextPart / 旧路径 content），按行切分取尾部至多 60 行（缓冲常
       "error": false,
       "text": "尾部原文（markdown 源文本，≤60 逻辑行 / ≤4000 字符，含最后一行最新流式内容）"
     }
-  ]
+  ],
+  "sw": 1080, "sh": 2400,          // 屏幕物理 px（可选；松手钳制回屏用）
+  "co": true,                      // 收拢标志（可选，v4.1；true 才发）
+  "mo": "expand",                  // 变形方向（可选，v6）：'expand' | 'collapse'
+  "tw": 320.6, "th": 160.0,        // 仅 expand：目标面板尺寸 dp（显式传，不读窗口）
+  "fx": 106.3, "fy": 0             // 仅 collapse：胶囊目标左上角窗口内局部坐标 dp
 }
 ```
 
+- 变形字段语义（v6，键名 `mo`/`fx`/`fy`/`tw`/`th`）：仅展开/收拢例程的翻转沿
+  一次性携带；流式快照一律不带。`mo` 缺省 null = 无变形，悬浮窗瞬时切换子树
+  （v5 行为，向后兼容）。解码防御式解析：`mo` 非法值、坐标对残缺
+  （expand 缺 `tw`/`th`、collapse 缺 `fx`/`fy`）、坐标非 num → 一律回落 null。
+  悬浮窗侧 `mo` 只在翻转沿（且当前无进行中动画）启动一次变形，动画期间到达的
+  快照只更新数据，不中断不重启。
 - `text` 语义：该会话尾部 AI 输出的 markdown **源文本**（跨最多 3 条 assistant
   消息拼接，尾部 60 行 / 4000 字符截断），悬浮窗侧用 Markdown 渲染（深色小号，
   复用 AiMarkdown minimal 语义；行内代码/代码块按悬浮窗深色令牌渲染）。

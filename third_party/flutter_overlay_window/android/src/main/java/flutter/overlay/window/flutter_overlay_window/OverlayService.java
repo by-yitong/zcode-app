@@ -1,5 +1,8 @@
 package flutter.overlay.window.flutter_overlay_window;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ValueAnimator;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -23,6 +26,7 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.view.animation.DecelerateInterpolator;
 
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
@@ -67,6 +71,10 @@ public class OverlayService extends Service implements View.OnTouchListener {
     private float lastX, lastY;
     private int lastYPosition;
     private boolean dragging;
+    // ZCode 补丁: 胶囊归位动画 (v6 变形收拢的 glide 阶段) 持有的 animator。
+    // 逐帧只改 LayoutParams x/y (尺寸不变 → 无 surface 重分配); 新动画 /
+    // resize / move / 关闭时先 cancel, 防新旧动画同时 updateViewLayout 打架。
+    private ValueAnimator mMoveAnimator;
     // ZCode 补丁: 拖动开关在手指已按下后才打开 (标题栏手势识别 ~18px 后)。
     // 原版此时 lastX/lastY 还是上一会话的旧值, 首个 MOVE 用旧基准算差值,
     // 窗口瞬移一大截 (固定错位的来源)。开关打开后的首个 MOVE 只重置基准。
@@ -86,6 +94,7 @@ public class OverlayService extends Service implements View.OnTouchListener {
     @Override
     public void onDestroy() {
         Log.d("OverLay", "Destroying the overlay window service");
+        cancelMoveAnimator(); // ZCode 补丁: 关闭时取消进行中的归位动画
         if (windowManager != null) {
             windowManager.removeView(flutterView);
             windowManager = null;
@@ -106,6 +115,7 @@ public class OverlayService extends Service implements View.OnTouchListener {
         int startY = intent.getIntExtra("startY", OverlayConstants.DEFAULT_XY);
         boolean isCloseWindow = intent.getBooleanExtra(INTENT_EXTRA_IS_CLOSE_WINDOW, false);
         if (isCloseWindow) {
+            cancelMoveAnimator(); // ZCode 补丁: 关窗时取消进行中的归位动画
             if (windowManager != null) {
                 windowManager.removeView(flutterView);
                 windowManager = null;
@@ -258,6 +268,7 @@ public class OverlayService extends Service implements View.OnTouchListener {
 
     private void resizeOverlay(int width, int height, boolean enableDrag, MethodChannel.Result result) {
         if (windowManager != null) {
+            cancelMoveAnimator(); // ZCode 补丁: resize 打断进行中的归位动画
             WindowManager.LayoutParams params = (WindowManager.LayoutParams) flutterView.getLayoutParams();
             params.width = (width == -1999 || width == -1) ? -1 : dpToPx(width);
             params.height = (height != 1999 || height != -1) ? dpToPx(height) : height;
@@ -271,6 +282,7 @@ public class OverlayService extends Service implements View.OnTouchListener {
 
     private void moveOverlay(int x, int y, MethodChannel.Result result) {
         if (windowManager != null) {
+            cancelMoveAnimator(); // ZCode 补丁: 直接 move 打断进行中的归位动画
             WindowManager.LayoutParams params = (WindowManager.LayoutParams) flutterView.getLayoutParams();
             params.x = (x == -1999 || x == -1) ? -1 : dpToPx(x);
             params.y = dpToPx(y);
@@ -298,6 +310,7 @@ public class OverlayService extends Service implements View.OnTouchListener {
     public static boolean moveOverlay(int x, int y) {
         if (instance != null && instance.flutterView != null) {
             if (instance.windowManager != null) {
+                instance.cancelMoveAnimator(); // ZCode 补丁: move 打断进行中的归位动画
                 WindowManager.LayoutParams params = (WindowManager.LayoutParams) instance.flutterView.getLayoutParams();
                 params.x = (x == -1999 || x == -1) ? -1 : instance.dpToPx(x);
                 params.y = instance.dpToPx(y);
@@ -318,6 +331,7 @@ public class OverlayService extends Service implements View.OnTouchListener {
     public static boolean resizeOverlay(int width, int height, boolean enableDrag) {
         if (instance != null && instance.flutterView != null) {
             if (instance.windowManager != null) {
+                instance.cancelMoveAnimator(); // resize 打断进行中的归位动画
                 WindowManager.LayoutParams params = (WindowManager.LayoutParams) instance.flutterView.getLayoutParams();
                 params.width = (width == -1999 || width == -1) ? -1 : instance.dpToPx(width);
                 params.height = (height == -1999 || height == -1) ? height : instance.dpToPx(height);
@@ -329,6 +343,81 @@ public class OverlayService extends Service implements View.OnTouchListener {
             }
         } else {
             return false;
+        }
+    }
+
+    // ZCode 补丁: 动画移动悬浮窗 (v6 胶囊归位动画)。逐帧只插值
+    // WindowManager.LayoutParams 的 x/y 后 updateViewLayout — 尺寸不变,
+    // 无 surface 重分配 (与逐帧 resize 的掉帧坑不同路), 帧率稳。
+    // ValueAnimator 0→1 + DecelerateInterpolator; 结束帧精确落位目标值
+    // (逐帧取整的累积误差不过夜)。UI 线程执行 (channel 回调本就在主线程)。
+    private void moveOverlayAnimatedInternal(int x, int y, long durationMs) {
+        if (windowManager == null || flutterView == null) {
+            return;
+        }
+        // 先取当前视觉位置再 cancel 旧动画 (cancel 不回写旧目标, 见 listener)
+        WindowManager.LayoutParams params = (WindowManager.LayoutParams) flutterView.getLayoutParams();
+        final int startX = params.x;
+        final int startY = params.y;
+        final int endX = (x == -1999 || x == -1) ? -1 : dpToPx(x);
+        final int endY = dpToPx(y);
+        cancelMoveAnimator();
+        mMoveAnimator = ValueAnimator.ofFloat(0f, 1f);
+        mMoveAnimator.setDuration(durationMs);
+        mMoveAnimator.setInterpolator(new DecelerateInterpolator());
+        mMoveAnimator.addUpdateListener(animation -> {
+            if (windowManager == null || flutterView == null) {
+                return;
+            }
+            float fraction = animation.getAnimatedFraction();
+            WindowManager.LayoutParams p = (WindowManager.LayoutParams) flutterView.getLayoutParams();
+            p.x = startX + (int) ((endX - startX) * fraction);
+            p.y = startY + (int) ((endY - startY) * fraction);
+            windowManager.updateViewLayout(flutterView, p);
+        });
+        mMoveAnimator.addListener(new AnimatorListenerAdapter() {
+            private boolean cancelled = false;
+
+            @Override
+            public void onAnimationCancel(Animator animation) {
+                cancelled = true; // 被打断: 不回写目标, 最终位置由打断方 (move/resize) 决定
+            }
+
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                mMoveAnimator = null;
+                if (cancelled || windowManager == null || flutterView == null) {
+                    return;
+                }
+                WindowManager.LayoutParams p = (WindowManager.LayoutParams) flutterView.getLayoutParams();
+                p.x = endX;
+                p.y = endY;
+                windowManager.updateViewLayout(flutterView, p);
+            }
+        });
+        mMoveAnimator.start();
+    }
+
+    // ZCode 补丁: 主引擎侧 moveOverlayAnimated 静态转发 (同 resizeOverlay
+    // 补丁模式)。入参 dp, 原生 dpToPx 换算一次。
+    public static boolean moveOverlayAnimated(int x, int y, long durationMs) {
+        if (instance != null && instance.flutterView != null) {
+            if (instance.windowManager != null) {
+                instance.moveOverlayAnimatedInternal(x, y, durationMs);
+                return true;
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    // ZCode 补丁: 取消进行中的归位动画 (onAnimationCancel 置标志, 结束不回写目标)
+    private void cancelMoveAnimator() {
+        if (mMoveAnimator != null) {
+            mMoveAnimator.cancel();
+            mMoveAnimator = null;
         }
     }
 

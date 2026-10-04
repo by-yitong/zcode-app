@@ -9,13 +9,21 @@ import '../logging/app_logger.dart';
 // ================================================================
 // 悬浮窗进度监视器 (画中画) — flutter_overlay_window 封装 + IPC 契约模型
 //
-// 契约冻结 v5 (v3 快照结构不变, 动作信箱扩展; 交互 v5: 胶囊可拖拽/形态记忆):
+// 契约冻结 v6 (动作集与 v5 完全一致; 快照新增可选变形字段, 胶囊↔面板丝滑
+// 变形 = 灵动岛式):
 //   主 App → 悬浮窗: shareData(json) 推快照 (走原生 Java 转发器)。
 //     主 App 一律不得在 Dart 侧绑定 x-slayer/overlay_messenger 的 handler —
 //     那会抢掉通道的原生槽位, 导致推送回声到主引擎自身。
 //     session 载荷为 markdown 源文本 text (v2 行数组 lines 已废弃)。
+//     快照可选变形字段 (v6, 键名 mo/fx/fy/tw/th; 仅展开/收拢例程的翻转沿
+//     推送携带, 流式快照一律不带 — 缺省 null = 无变形, 瞬时切换, v5 行为):
+//       mo='expand'  + tw/th (目标面板尺寸 dp): 悬浮窗侧从 108×44 变形到面板
+//                    (resize 后 MediaQuery 可能不刷新, 目标尺寸必须显式传,
+//                    不得读窗口/MediaQuery 尺寸做动画目标)
+//       mo='collapse'+ fx/fy (胶囊目标左上角在窗口内的局部坐标 dp):
+//                    面板变形缩到窗口内 (fx,fy,108,44) 的胶囊
 //   悬浮窗 → 主 App: SharedPreferences 信箱, key pip.action, 取走即清空。
-//     动作 (v5):
+//     动作 (v5, v6 不变):
 //       {"action":"open","key":"<taskId>"}  home 图标钮, 有会话 → 回 app 跳会话
 //       {"action":"home"}                   home 图标钮, 空态 → 仅回前台
 //       {"action":"size"}                   双击正文 → 循环尺寸档位 (仅展开态)
@@ -182,6 +190,26 @@ class PipSnapshot {
   /// 收拢渲染改由本字段驱动, 窗口尺寸判定仅作兜底)。缺省 false 向后兼容。
   final bool collapsed;
 
+  /// 变形方向 (v6): 'expand' (胶囊→面板) | 'collapse' (面板→胶囊)。
+  /// 仅主 App 展开/收拢例程的翻转沿推送携带; 流式快照一律不带。
+  /// 缺省 null = 无变形, 悬浮窗瞬时切换子树 (v5 行为, 向后兼容)。
+  final String? morph;
+
+  /// 收拢变形目标: 胶囊左上角在窗口内的局部坐标 (逻辑 dp)。
+  /// 仅 collapse 用 (expand 时为 null)。主 App 固定传面板顶水平居中。
+  final double? morphX;
+
+  /// 收拢变形目标 Y (逻辑 dp), 与 [morphX] 成对。仅 collapse 用。
+  final double? morphY;
+
+  /// 展开变形目标面板宽 (逻辑 dp)。仅 expand 用 — 悬浮窗引擎 resize 后
+  /// MediaQuery 可能不刷新 (v4.1 真机教训), 动画目标尺寸必须显式传,
+  /// 不得读窗口/MediaQuery 尺寸。
+  final double? targetW;
+
+  /// 展开变形目标面板高 (逻辑 dp), 与 [targetW] 成对。仅 expand 用。
+  final double? targetH;
+
   const PipSnapshot({
     required this.v,
     required this.index,
@@ -189,6 +217,11 @@ class PipSnapshot {
     this.screenW,
     this.screenH,
     this.collapsed = false,
+    this.morph,
+    this.morphX,
+    this.morphY,
+    this.targetW,
+    this.targetH,
   });
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -198,6 +231,11 @@ class PipSnapshot {
     if (screenW != null) 'sw': screenW,
     if (screenH != null) 'sh': screenH,
     if (collapsed) 'co': true,
+    if (morph != null) 'mo': morph,
+    if (morphX != null) 'fx': morphX,
+    if (morphY != null) 'fy': morphY,
+    if (targetW != null) 'tw': targetW,
+    if (targetH != null) 'th': targetH,
   };
 
   /// 解码悬浮窗收到的快照 (JSON 字符串或已解码 Map); 结构非法返回 null
@@ -234,9 +272,36 @@ class PipSnapshot {
         screenW: decoded['sw'] is int ? decoded['sw'] as int : null,
         screenH: decoded['sh'] is int ? decoded['sh'] as int : null,
         collapsed: decoded['co'] == true,
+        morph: _decodeMorph(decoded),
+        morphX: _decodeNum(decoded['fx']),
+        morphY: _decodeNum(decoded['fy']),
+        targetW: _decodeNum(decoded['tw']),
+        targetH: _decodeNum(decoded['th']),
       );
     } catch (_) {
       return null;
+    }
+  }
+
+  /// 防御式 num 解析 (v6): int/double 皆可 → double, 缺失/类型错 → null
+  static double? _decodeNum(dynamic raw) =>
+      raw is num ? raw.toDouble() : null;
+
+  /// 防御式变形方向解析 (v6): mo 仅认 'expand'/'collapse', 且必须携带
+  /// 对应坐标对 (expand → tw+th, collapse → fx+fy); 非法值 / 坐标残缺 →
+  /// null (整体视为无变形, 悬浮窗回落 v5 瞬时切换, 不会拿到残缺目标崩溃)。
+  static String? _decodeMorph(Map decoded) {
+    switch (decoded['mo']) {
+      case 'expand':
+        final tw = _decodeNum(decoded['tw']);
+        final th = _decodeNum(decoded['th']);
+        return tw != null && th != null ? 'expand' : null;
+      case 'collapse':
+        final fx = _decodeNum(decoded['fx']);
+        final fy = _decodeNum(decoded['fy']);
+        return fx != null && fy != null ? 'collapse' : null;
+      default:
+        return null;
     }
   }
 }
@@ -457,6 +522,33 @@ class PipService {
       await FlutterOverlayWindow.moveOverlay(position);
     } catch (e) {
       appLog.w('[Pip] moveOverlay 失败: $e');
+    }
+  }
+
+  /// 动画移动悬浮窗到绝对位置 (v6 胶囊归位动画): 原生 ValueAnimator 逐帧
+  /// 只改位置不 resize (无 surface 重分配, 帧率稳)。失败/非 Android/原生
+  /// 返回 false → 回落普通 moveOverlay (瞬移, 功能不丢)。
+  Future<void> moveAnimated(
+    OverlayPosition position,
+    Duration duration,
+  ) async {
+    try {
+      final ok =
+          await FlutterOverlayWindow.moveOverlayAnimated(
+            position,
+            duration.inMilliseconds,
+          ) ??
+          false;
+      if (!ok) {
+        await FlutterOverlayWindow.moveOverlay(position);
+      }
+    } catch (e) {
+      appLog.w('[Pip] moveAnimated 失败, 回落 moveOverlay: $e');
+      try {
+        await FlutterOverlayWindow.moveOverlay(position);
+      } catch (e2) {
+        appLog.w('[Pip] moveOverlay 失败: $e2');
+      }
     }
   }
 

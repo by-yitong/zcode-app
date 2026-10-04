@@ -119,6 +119,14 @@ public class FlutterOverlayWindowPlugin implements
             int x = call.argument("x");
             int y = call.argument("y");
             result.success(OverlayService.moveOverlay(x, y));
+        } else if (call.method.equals("moveOverlayAnimated")) {
+            // ZCode 补丁: 动画 move (仅位置不 resize) — v6 胶囊归位动画用。
+            // 原生侧 ValueAnimator 逐帧插值 LayoutParams x/y, 无 surface 重分配。
+            int x = call.argument("x");
+            int y = call.argument("y");
+            Number durationMs = call.argument("durationMs");
+            result.success(OverlayService.moveOverlayAnimated(x, y,
+                    durationMs == null ? 200L : durationMs.longValue()));
         } else if (call.method.equals("resizeOverlay")) {
             // ZCode 补丁: 主引擎 resizeOverlay 转发 (原版只挂在悬浮窗引擎的
             // flutterChannel 上, 主引擎调用 notImplemented → resize 无声失败)

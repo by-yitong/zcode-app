@@ -62,10 +62,13 @@ class ChatFloatingHeader extends StatelessWidget
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    // 深色: 实色深底 + blur (不用半透明 surface, 那会偏白); 浅色: 半透明白
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    // 深色: 与输入框同色 (surfaceContainerHigh = 输入框填充色, 6% 白半透)。
+    // 原实色 0xF008090A 与暗背景几乎重叠, 无内容滚过时胶囊边界不可见;
+    // 浅色维持半透明白。
     final bg = isDark
-        ? const Color(0xF008090A)
+        ? theme.colorScheme.surfaceContainerHigh
         : Colors.white.withValues(alpha: 0.72);
     final inkColor = isDark ? const Color(0xFFF7F8F8) : Colors.black;
 

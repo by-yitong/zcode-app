@@ -188,28 +188,30 @@ class UsageDetailSheet extends StatelessWidget {
           const SizedBox(height: 6),
           _Bar(value: u.max > 0 ? (u.input / u.max).clamp(0.0, 1.0) : 0.0),
           const SizedBox(height: 6),
-          Text(
-            '累计输出 ↓${_fmt(u.output)} · 接近容量时将自动压缩历史',
-            style: TextStyle(
-              fontSize: AppTextSizes.label,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-          // 手动压缩 (/compact 同款, 原上下文弹窗并入): 先关弹窗再执行
-          if (onCompact != null) ...[
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: () {
-                  Navigator.pop(context);
-                  onCompact!();
-                },
-                icon: const Icon(Icons.compress_rounded, size: 18),
-                label: const Text('压缩'),
+          // 尾行: 提示文字居左 + 压缩胶囊居右 (原通栏大按钮按反馈改小)
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '累计输出 ↓${_fmt(u.output)} · 接近容量时将自动压缩历史',
+                  style: TextStyle(
+                    fontSize: AppTextSizes.label,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
               ),
-            ),
-          ],
+              // 手动压缩 (/compact 同款, 原上下文弹窗并入): 先关弹窗再执行
+              if (onCompact != null)
+                _CapsuleAction(
+                  icon: Icons.compress_rounded,
+                  label: '压缩',
+                  onTap: () {
+                    Navigator.pop(context);
+                    onCompact!();
+                  },
+                ),
+            ],
+          ),
         ],
       ],
     );
@@ -224,7 +226,7 @@ class UsageDetailSheet extends StatelessWidget {
       children: [
         const _SectionHeader(
           icon: Icons.local_fire_department_outlined,
-          label: 'GLM Coding Plan',
+          label: '编码套餐',
         ),
         const SizedBox(height: 8),
         quotaAsync.when(
@@ -342,10 +344,10 @@ class UsageDetailSheet extends StatelessWidget {
             else
               const Spacer(),
             if (onRefresh != null)
-              TextButton.icon(
-                onPressed: onRefresh,
-                icon: const Icon(Icons.refresh_rounded, size: 16),
-                label: const Text('刷新'),
+              _CapsuleAction(
+                icon: Icons.refresh_rounded,
+                label: '刷新',
+                onTap: onRefresh!,
               ),
           ],
         ),
@@ -379,6 +381,52 @@ class _SectionHeader extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// 区块右下角的小胶囊操作按钮 (压缩/刷新共用, 高 30 描边样式)
+class _CapsuleAction extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _CapsuleAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final fg = theme.colorScheme.onSurfaceVariant;
+    return Material(
+      color: Colors.transparent,
+      shape: StadiumBorder(
+        side: BorderSide(color: theme.colorScheme.outlineVariant),
+      ),
+      child: InkWell(
+        customBorder: const StadiumBorder(),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: 6,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 14, color: fg),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: TextStyle(fontSize: AppTextSizes.label, color: fg),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

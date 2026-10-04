@@ -160,6 +160,20 @@ class FlutterOverlayWindow {
     return _res;
   }
 
+  /// ZCode 补丁: 动画移动悬浮窗 (仅位置, 尺寸不变 — 逐帧插值
+  /// WindowManager.LayoutParams x/y, 无 surface 重分配)。走主引擎通道
+  /// (同 moveOverlay 补丁模式), 原生 ValueAnimator + DecelerateInterpolator。
+  static Future<bool?> moveOverlayAnimated(
+    OverlayPosition position,
+    int durationMs,
+  ) async {
+    final bool? _res = await _channel.invokeMethod<bool?>(
+      'moveOverlayAnimated',
+      <String, dynamic>{...position.toMap(), 'durationMs': durationMs},
+    );
+    return _res;
+  }
+
   /// Get the current overlay position
   ///
   /// `return` the current overlay position
