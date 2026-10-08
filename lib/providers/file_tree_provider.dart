@@ -323,6 +323,7 @@ class FileTreeController extends StateNotifier<FileTreeState> {
         ignoredSet = ignored.toSet();
       } catch (_) {// 过滤是增强, 失败不挡浏览
       }
+      if (_disposed) return; // 内层 await 抛错时恢复点落在本 catch, 同样要挡
       state = state.copyWith(
         phase: FileTreePhase.ready,
         roots: {
