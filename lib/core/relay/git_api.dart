@@ -339,6 +339,24 @@ class GitApi {
     });
   }
 
+  /// 忽略路径过滤 (网页端文件树: readdir 后用它过滤 git 忽略项)。
+  /// 传入待查 paths (绝对), 返回被忽略的子集。响应形状未动态坐实,
+  /// 按 [裸数组 | {paths:[...]}] 双兼容解析 (与 getChanges 同策略)。
+  Future<List<String>> getIgnoredPaths(
+    String workspacePath,
+    List<String> paths,
+  ) async {
+    final b = await _rpc('getIgnoredPaths', {
+      'workspacePath': workspacePath,
+      'paths': paths,
+    });
+    final list = (b['paths'] ?? b['raw']) as List<dynamic>? ?? const [];
+    return [
+      for (final p in list)
+        p is Map ? (p['path'] as String? ?? '') : p as String,
+    ].where((p) => p.isNotEmpty).toList();
+  }
+
   /// 返回 AI 生成的提交信息 (生成在桌面端执行, App 只收结果)。
   Future<String> generateCommitMessage(
     String workspacePath, {

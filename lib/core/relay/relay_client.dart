@@ -2039,6 +2039,31 @@ class RelayClient {
     _log('info', 'V4 sessions-index unsubscribe: $subscriptionId');
   }
 
+  /// 通用原始帧订阅 (LISTEN + activate 激活动作; type-204 事件按 LISTEN
+  /// 请求 id 路由到原始 map 表, body 原样转发)。供 file-watcher 等动态通道
+  /// 复用。失败自动清理 LISTEN 并关闭流 (模式同 [subscribeSessionsIndexV4])。
+  Future<Stream<Map<String, dynamic>>> subscribeRawFrames(
+    String channel,
+    String event,
+    Map<String, dynamic> listenArgs, {
+    required Future<void> Function() activate,
+  }) async {
+    _rpcReqId++;
+    final id = _rpcReqId;
+    final controller = StreamController<Map<String, dynamic>>();
+    _indexFrameSubs[id] = controller;
+    _sendRpcFrameData(RpcCodec.encodeListen(id, channel, event, listenArgs));
+    try {
+      await activate();
+      return controller.stream;
+    } catch (e) {
+      _indexFrameSubs.remove(id);
+      unawaited(controller.close());
+      _sendRpcFrameData(RpcCodec.encodeUnlisten(id));
+      rethrow;
+    }
+  }
+
   /// 通用 RPC 调用 (兜底, 用于尚未封装的方法)
   Future<RpcFrame> rpcCall(String channel, String method, dynamic args) {
     return _rpcCall(channel, method, args);
