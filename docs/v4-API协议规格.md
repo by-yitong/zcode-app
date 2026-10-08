@@ -1238,7 +1238,7 @@ body 为 Map 时返回拷贝, 否则包一层 `{'raw': body}`) → `GitApi`
 | 方法 | wire 契约 (预留) | 状态 |
 |------|-----------------|------|
 | `getIdentity` | `{workspacePath}` → `{userName, userEmail, nameSource?, emailSource?}` | 未接入 |
-| `getIgnoredPaths` | `{workspacePath, paths[]}` | 未接入 |
+| `getIgnoredPaths` | `{workspacePath, paths[]}` | 已接入 — app 已封装 (GitApi.getIgnoredPaths / FileApi.getIgnoredPaths, 2026-10-08 项目文件树) |
 | `getBranchComparison` | `{workspacePath}` → `{baseRef, headRef, comparisonLabel, changes[]}` | 未接入 |
 | `getWorkspaceRepositoryInfo` | `{workspacePath}` | 未接入 |
 

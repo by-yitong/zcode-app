@@ -447,6 +447,8 @@ class FileTreeController extends StateNotifier<FileTreeState> {
     if (w == null || _watchIds.containsKey(path)) return;
     () async {
       final id = await _files.watchDir(channel: w.channel, path: path);
+      // dispose 落在 RPC 在途时 _watchIds 已清空且 stopAll 已发, 再写入会泄漏服务端 watch
+      if (_disposed) return;
       if (id != null && id.isNotEmpty) _watchIds[path] = id;
     }();
   }

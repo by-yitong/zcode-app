@@ -843,8 +843,9 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                   workspaceIdentity: widget.chatRef.workspaceIdentity,
                 ),
                 onAddToChat: (rel) {
-                  // 树页已 pop 自己; 此刻 chat 页在顶, 插入 @提及
+                  // 树页已 pop 自己; 此刻 chat 页在顶, 插入 @提及并聚焦输入框
                   _insertAtCursor('@$rel ');
+                  _inputFocusNode.requestFocus();
                 },
               ),
             ),
