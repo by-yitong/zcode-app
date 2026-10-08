@@ -1233,7 +1233,7 @@ body 为 Map 时返回拷贝, 否则包一层 `{'raw': body}`) → `GitApi`
 | `commit` | `{workspacePath, message, paths?, stagedOnly?}` (paths 空/false 时不发送) | `{commitHash, summary?}` | `commit` |
 | `push` | `{workspacePath}` | 结果对象 (键名实现期核对, App 原样透传 Map) | `push` |
 
-### 未接入 (v1 排除, 4 个)
+### 未接入 (v1 排除, 3 个)
 
 | 方法 | wire 契约 (预留) | 状态 |
 |------|-----------------|------|
