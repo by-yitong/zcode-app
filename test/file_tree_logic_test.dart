@@ -19,7 +19,7 @@ void main() {
     expect(relativePathOf('/other/x', '/ws'), '/other/x');
   });
 
-  test('entrySortCompare: 目录(含符号链接目录)先, 名称 case-insensitive', () {
+  test('entrySortCompare: 目录(含符号链接目录)先 + ASCII 序(大写在前)', () {
     final link = FileEntry(
       name: 'zz', path: '/ws/zz', type: 'directory', isSymbolicLink: true,
     );
@@ -103,6 +103,6 @@ void main() {
       changedOnly: false,
       search: '',
     );
-    expect(all.length, 3); // a + 两个文件 (未展开不深入)
+    expect(all.length, 1); // 只有 'a': 未展开不深入(all 模式)
   });
 }

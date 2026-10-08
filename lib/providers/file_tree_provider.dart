@@ -141,8 +141,8 @@ String relativePathOf(String absPath, String workspacePath) {
   return absPath;
 }
 
-/// 目录(含符号链接目录)先, 名称按 ASCII 比较 (测试冻结期望序:
-/// 'A.txt' 排 'a.dart' 前, 任何 case-insensitive 比较均推不出该序)。
+/// 目录(含符号链接目录)先, 名称 ASCII 序 (大写在前, 对齐冻结测试期望序
+/// 'A.txt' < 'a.dart')。
 int entrySortCompare(FileEntry a, FileEntry b) {
   final da = a.isDirectory ? 0 : 1;
   final db = b.isDirectory ? 0 : 1;
@@ -230,9 +230,9 @@ List<(FileTreeNode, int)> visibleRows({
       final selfMatch =
           q.isNotEmpty && n.entry.name.toLowerCase().contains(q);
       final childRows = <(FileTreeNode, int)>[];
-      // 下钻条件 (测试冻结): 展开态、或搜索中 (搜索即全量找)、或非
-      // changedOnly 浏览 (此时子行可见与否由子节点自身过滤决定)。
-      final descend = n.expanded || q.isNotEmpty || !changedOnly;
+      // 下钻条件 (懒加载树语义): 展开态、或搜索中 (搜索即全量找, 深入
+      // 已加载子树不管 expanded); 「全部文件」模式下未展开只渲染自身。
+      final descend = n.expanded || q.isNotEmpty;
       if (descend) {
         final kids = [...n.children.values]
           ..sort((a, b) => entrySortCompare(a.entry, b.entry));
@@ -245,7 +245,15 @@ List<(FileTreeNode, int)> visibleRows({
       final statusHit = q.isEmpty &&
           changedOnly &&
           statusByPath.keys.any((k) => k.startsWith('$dirRel/'));
-      if (!selfMatch && !childHit(childRows) && !statusHit) return null;
+      // 「全部文件」浏览 (search 空 + 非 changedOnly): 目录是树骨架,
+      // 未展开也渲染自身 (不下钻)。
+      final plainBrowsing = q.isEmpty && !changedOnly;
+      if (!selfMatch &&
+          !childHit(childRows) &&
+          !statusHit &&
+          !plainBrowsing) {
+        return null;
+      }
       return [(n, depth), ...childRows];
     }
     final rel = relativePathOf(n.entry.path, workspacePath);
@@ -431,12 +439,17 @@ class FileTreeController extends StateNotifier<FileTreeState> {
     _files.unwatch(channel: w.channel, watchId: id).ignore();
   }
 
-  /// 手动刷新: 根 + 已展开目录逐个重载, git 状态重拉。
+  /// 递归收集任意深度已展开目录路径 (refresh 整树刷新用)。
+  static List<String> _collectExpanded(Map<String, FileTreeNode> map) => [
+    for (final n in map.values) ...[
+      if (n.expanded) n.entry.path,
+      ..._collectExpanded(n.children),
+    ],
+  ];
+
+  /// 手动刷新: 根 + 全部已展开目录 (任意深度) 逐个重载, git 状态重拉。
   Future<void> refresh() async {
-    final expanded = [
-      for (final r in state.roots.values)
-        if (r.expanded) r.entry.path,
-    ];
+    final expanded = _collectExpanded(state.roots);
     try {
       final results = await Future.wait<Object?>([
         _files.readdir(_ws),

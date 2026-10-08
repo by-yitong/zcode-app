@@ -165,14 +165,20 @@ void main() {
   test('refresh 重拉根 + 已展开目录 + git 状态', () async {
     final api = FakeFileApi(dirs: {
       '/ws': [FileEntry(name: 'lib', path: '/ws/lib', type: 'directory', isSymbolicLink: false)],
-      '/ws/lib': const [],
+      '/ws/lib': [
+        FileEntry(name: 'sub', path: '/ws/lib/sub', type: 'directory', isSymbolicLink: false),
+      ],
+      '/ws/lib/sub': [
+        FileEntry(name: 'x.dart', path: '/ws/lib/sub/x.dart', type: 'file', isSymbolicLink: false),
+      ],
     });
     final c = await makeContainer(api, FakeGitApi());
     final ctrl = c.read(fileTreeProvider(ref1).notifier);
     await Future<void>.delayed(Duration.zero);
     await ctrl.toggleDir('/ws/lib');
+    await ctrl.toggleDir('/ws/lib/sub');
     api.reloaded.clear();
     await ctrl.refresh();
-    expect(api.reloaded, containsAll(['/ws', '/ws/lib']));
+    expect(api.reloaded, containsAll(['/ws', '/ws/lib', '/ws/lib/sub']));
   });
 }
