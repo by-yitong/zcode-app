@@ -36,6 +36,9 @@ class ChatFloatingHeader extends StatelessWidget
   /// Git 工具全屏页 (null = 不显示入口胶囊)
   final VoidCallback? onOpenGit;
 
+  /// 更多菜单 → 项目文件树 (null = 菜单项隐藏; chat_screen 恒传, 预留门控缝)。
+  final VoidCallback? onOpenFileTree;
+
   /// 更多菜单 → 设置页
   final VoidCallback onOpenSettings;
 
@@ -48,6 +51,7 @@ class ChatFloatingHeader extends StatelessWidget
     required this.onNewChat,
     this.onOpenPip,
     this.onOpenGit,
+    this.onOpenFileTree,
     required this.onOpenSettings,
   });
 
@@ -230,6 +234,15 @@ class ChatFloatingHeader extends StatelessWidget
                   onNewChat();
                 },
               ),
+              if (onOpenFileTree != null)
+                ListTile(
+                  leading: const Icon(Icons.folder_open_rounded),
+                  title: const Text('文件树'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    onOpenFileTree!();
+                  },
+                ),
               if (onOpenPip != null)
                 ListTile(
                   leading: const Icon(Icons.picture_in_picture_alt_rounded),

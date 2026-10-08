@@ -47,7 +47,9 @@ import '../widgets/message_bubble.dart';
 import '../widgets/history_drawer.dart';
 import '../../../shared/widgets/reveal_drawer.dart';
 import '../../git/screens/git_screen.dart';
+import '../../files/screens/file_tree_screen.dart';
 import '../../../providers/git_provider.dart' show GitRef, gitAvailabilityProvider;
+import '../../../providers/file_tree_provider.dart';
 
 /// AI 对话页 — 核心交互界面 (实测对接 2026-06-15)
 ///
@@ -830,6 +832,24 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
         },
         // 悬浮窗进度监视器 (画中画; flutter_overlay_window 仅 Android)
         onOpenPip: Platform.isAndroid ? _openPipOverlay : null,
+        // 项目文件树 (对齐网页端 WorkspaceFileTree; 任何项目可用, 无门控)
+        onOpenFileTree: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute<void>(
+              builder: (_) => FileTreeScreen(
+                treeRef: FileTreeRef(
+                  workspacePath: widget.workspacePath,
+                  workspaceIdentity: widget.chatRef.workspaceIdentity,
+                ),
+                onAddToChat: (rel) {
+                  // 树页已 pop 自己; 此刻 chat 页在顶, 插入 @提及
+                  _insertAtCursor('@$rel ');
+                },
+              ),
+            ),
+          );
+        },
         // Git 工具全屏页 (查看更改/分支/历史/提交/推送)
         // Git 工具入口: 对齐网页端「顶部 Git 操作入口可用性」— 非 git 项目
         // (git 不可用/不在仓库内) 不显示胶囊; 探测中/失败也隐藏 (null)。

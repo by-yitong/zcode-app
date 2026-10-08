@@ -117,6 +117,47 @@ void main() {
     expect(pipTaps, 1);
   });
 
+  testWidgets('更多菜单含「文件树」项且点击触发 onOpenFileTree', (tester) async {
+    var opened = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          appBar: ChatFloatingHeader(
+            title: 't',
+            onMenuTap: () {},
+            onNewChat: () {},
+            onOpenFileTree: () => opened++,
+            onOpenSettings: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byTooltip('更多'));
+    await tester.pumpAndSettle();
+    expect(find.text('文件树'), findsOneWidget);
+    await tester.tap(find.text('文件树'));
+    await tester.pump();
+    expect(opened, 1);
+  });
+
+  testWidgets('onOpenFileTree 为 null 时不渲染「文件树」项', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          appBar: ChatFloatingHeader(
+            title: 't',
+            onMenuTap: () {},
+            onNewChat: () {},
+            onOpenSettings: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byTooltip('更多'));
+    await tester.pumpAndSettle();
+    expect(find.text('文件树'), findsNothing);
+  });
+
   testWidgets('上下文用量弹窗: 压缩按钮关闭弹窗并触发 onCompact', (tester) async {
     var compacted = false;
     await tester.pumpWidget(
