@@ -291,6 +291,16 @@ class FileTreeController extends StateNotifier<FileTreeState> {
   Timer? _reloadDebounce;
   StreamSubscription<FileWatchEvent>? _eventSub;
 
+  /// 快速进出页面时 notifier 会被 autoDispose 回收; 所有 await 恢复点
+  /// 写 state 前查此标志, 避免 "after dispose" 断言崩。
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
   Future<void> _init() async {
     try {
       final results = await Future.wait<Object?>([
@@ -298,6 +308,7 @@ class FileTreeController extends StateNotifier<FileTreeState> {
         _git.getChanges(_ws, 'unstaged'),
         _git.getChanges(_ws, 'staged'),
       ]);
+      if (_disposed) return;
       final entries = results[0] as List<FileEntry>;
       final changes = [
         ...results[1] as List<GitChange>,
@@ -308,6 +319,7 @@ class FileTreeController extends StateNotifier<FileTreeState> {
         final ignored = await _git.getIgnoredPaths(_ws, [
           for (final e in entries) e.path,
         ]);
+        if (_disposed) return;
         ignoredSet = ignored.toSet();
       } catch (_) {// 过滤是增强, 失败不挡浏览
       }
@@ -321,16 +333,18 @@ class FileTreeController extends StateNotifier<FileTreeState> {
         ignoredPaths: ignoredSet,
       );
     } catch (e) {
+      if (_disposed) return;
       state = state.copyWith(phase: FileTreePhase.ready, rootError: e);
       return;
     }
+    if (_disposed) return;
     await _probeWatcher();
   }
 
   Future<void> _probeWatcher() async {
     try {
       final w = await _files.probeWatcher(rootPath: _ws);
-      if (w == null) return; // 全候选失败 = 本会话手动刷新
+      if (_disposed || w == null) return; // 全候选失败 = 本会话手动刷新
       _watcher = w;
       _watchIds[_ws] = w.rootWatchId;
       state = state.copyWith(watcherAvailable: true);
@@ -366,6 +380,7 @@ class FileTreeController extends StateNotifier<FileTreeState> {
   Future<void> _reloadDir(String dir) async {
     try {
       final entries = await _files.readdir(dir);
+      if (_disposed) return;
       _patchNode(dir, (n) => _nodeWithChildren(n, entries));
     } catch (_) {// 目录可能被删; 手动刷新兜底
     }
@@ -391,7 +406,7 @@ class FileTreeController extends StateNotifier<FileTreeState> {
       final ignored = await _git.getIgnoredPaths(_ws, [
         for (final e in entries) e.path,
       ]);
-      if (ignored.isEmpty) return;
+      if (_disposed || ignored.isEmpty) return;
       state = state.copyWith(
         ignoredPaths: {...state.ignoredPaths, ...ignored},
       );
@@ -415,10 +430,13 @@ class FileTreeController extends StateNotifier<FileTreeState> {
     _patchNode(path, (n) => n.copyWith(expanded: true, loading: true));
     try {
       final entries = await _files.readdir(path);
+      if (_disposed) return;
       await _mergeIgnored(entries);
+      if (_disposed) return;
       _patchNode(path, (n) => _nodeWithChildren(n, entries));
       _watchDir(path);
     } catch (e) {
+      if (_disposed) return;
       _patchNode(path, (n) => n.withError(e));
     }
   }
@@ -456,6 +474,7 @@ class FileTreeController extends StateNotifier<FileTreeState> {
         _git.getChanges(_ws, 'unstaged'),
         _git.getChanges(_ws, 'staged'),
       ]);
+      if (_disposed) return;
       final entries = results[0] as List<FileEntry>;
       final ignoredSet = state.ignoredPaths;
       var roots = {
@@ -465,11 +484,13 @@ class FileTreeController extends StateNotifier<FileTreeState> {
       for (final dir in expanded) {
         try {
           final kids = await _files.readdir(dir);
+          if (_disposed) return;
           roots = _patchMap(roots, dir, (n) => _nodeWithChildren(n, kids));
         } catch (_) {
           roots = _patchMap(roots, dir, (n) => n.withError('目录读取失败'));
         }
       }
+      if (_disposed) return;
       state = state.copyWith(
         roots: roots,
         rootError: null,
@@ -479,6 +500,7 @@ class FileTreeController extends StateNotifier<FileTreeState> {
         ]),
       );
     } catch (e) {
+      if (_disposed) return;
       state = state.copyWith(rootError: e);
     }
   }

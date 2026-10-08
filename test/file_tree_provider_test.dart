@@ -62,6 +62,16 @@ class FakeGitApi implements GitApi {
       throw UnimplementedError('${i.memberName} 未在测试中使用');
 }
 
+/// readdir 可用 Completer 挂起的 FakeFileApi (模拟慢速 IO, 制造异步恢复点)。
+class GatedFileApi extends FakeFileApi {
+  GatedFileApi({required this.gate, super.dirs});
+  final Completer<void> gate;
+
+  @override
+  Future<List<FileEntry>> readdir(String path) =>
+      gate.future.then((_) => super.readdir(path));
+}
+
 const ref1 = FileTreeRef(workspacePath: '/ws');
 
 Future<ProviderContainer> makeContainer(FakeFileApi api, FakeGitApi git) async {
@@ -160,6 +170,22 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 400)); // 越过 300ms 防抖
     expect(api.reloaded.length, greaterThan(before));
     await events.close();
+  });
+
+  test('异步恢复点 disposed 守卫: 关保活 listen 回收后放行 readdir 不抛', () async {
+    final gate = Completer<void>();
+    final api = GatedFileApi(dirs: {'/ws': const []}, gate: gate);
+    final c = ProviderContainer(overrides: [
+      fileApiProvider.overrideWith((ref) => api),
+      gitApiProvider.overrideWith((ref) => FakeGitApi()),
+    ]);
+    addTearDown(c.dispose);
+    final keep = c.listen(fileTreeProvider(ref1), (_, _) {}); // 保活 + 创建
+    await Future<void>.delayed(Duration.zero); // _init 停在 readdir 挂起点
+    keep.close(); // 关监听触发 autoDispose 回收 (不动 ProviderContainer)
+    await Future<void>.delayed(Duration.zero); // 先让回收落盘 (notifier.dispose)
+    gate.complete(); // 放行 → _init 异步恢复; 有守卫则静默返回, 无守卫抛 StateError
+    await Future<void>.delayed(Duration.zero);
   });
 
   test('refresh 重拉根 + 已展开目录 + git 状态', () async {
