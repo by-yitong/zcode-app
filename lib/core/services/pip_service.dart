@@ -196,7 +196,8 @@ class PipSnapshot {
   final String? morph;
 
   /// 收拢变形目标: 胶囊左上角在窗口内的局部坐标 (逻辑 dp)。
-  /// 仅 collapse 用 (expand 时为 null)。主 App 固定传面板顶水平居中。
+  /// 仅 collapse 用 (expand 时为 null)。主 App 固定传 (0,0) = 窗口左上 —
+  /// 与正常胶囊渲染位、裁剪后窗口原点重合 (变形→正常→裁剪零跳变)。
   final double? morphX;
 
   /// 收拢变形目标 Y (逻辑 dp), 与 [morphX] 成对。仅 collapse 用。
@@ -550,6 +551,31 @@ class PipService {
         appLog.w('[Pip] moveOverlay 失败: $e2');
       }
     }
+  }
+
+  /// 原子 resize+move (v6.5.2): 一次原生 updateViewLayout 同时改尺寸与
+  /// 位置 — 分两调时中间态 (新尺寸×旧位置) 会上一帧, 收拢裁剪表现为
+  /// "胶囊向左抽一下"。失败回落 resize+moveOverlay 两调 (非 Android/旧
+  /// 原生侧, 中间态风险自担但功能不丢)。均传逻辑 dp。
+  Future<void> resizeMove(
+    int widthPx,
+    int heightPx,
+    OverlayPosition position,
+  ) async {
+    try {
+      final ok =
+          await FlutterOverlayWindow.resizeMoveOverlay(
+            widthPx,
+            heightPx,
+            position,
+          ) ??
+          false;
+      if (ok) return;
+    } catch (e) {
+      appLog.w('[Pip] resizeMove 失败, 回落 resize+moveOverlay: $e');
+    }
+    await resize(widthPx, heightPx);
+    await moveOverlay(position);
   }
 
   /// 推送数据到对端引擎 (主 App → 悬浮窗, 走原生 Java 转发器; JSON 字符串)。

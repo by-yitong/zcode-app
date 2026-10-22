@@ -160,6 +160,25 @@ class FlutterOverlayWindow {
     return _res;
   }
 
+  /// ZCode 补丁: 原子 resize+move — 一次原生 updateViewLayout 同时改
+  /// w/h/x/y。resize 与 move 分两调时中间态 (新尺寸×旧位置) 会上一帧,
+  /// 收拢裁剪表现为 "胶囊向左抽一下" (v6.5.2)。走主引擎通道。
+  static Future<bool?> resizeMoveOverlay(
+    int width,
+    int height,
+    OverlayPosition position,
+  ) async {
+    final bool? _res = await _channel.invokeMethod<bool?>(
+      'resizeMoveOverlay',
+      {
+        ...position.toMap(),
+        'width': width,
+        'height': height,
+      },
+    );
+    return _res;
+  }
+
   /// ZCode 补丁: 动画移动悬浮窗 (仅位置, 尺寸不变 — 逐帧插值
   /// WindowManager.LayoutParams x/y, 无 surface 重分配)。走主引擎通道
   /// (同 moveOverlay 补丁模式), 原生 ValueAnimator + DecelerateInterpolator。

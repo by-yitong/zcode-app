@@ -93,6 +93,32 @@ Future<void> _pumpCard(
 Finder _bodyText(String substring) =>
     find.textContaining(substring, findRichText: true);
 
+/// v6.3 温面板场景: 面板/胶囊恒挂载 (收拢态面板透明度 0 仅跳过绘制),
+/// 可见性断言改用层透明度 + 层内 descendant 查找。
+double _panelFade(WidgetTester tester) =>
+    tester
+        .widget<FadeTransition>(find.byKey(const ValueKey('pip-panel-fade')))
+        .opacity
+        .value;
+
+double _pillFade(WidgetTester tester) =>
+    tester
+        .widget<FadeTransition>(find.byKey(const ValueKey('pip-pill-fade')))
+        .opacity
+        .value;
+
+/// 面板层内查找 (标题等在胶囊层还有一份隐藏拷贝, 断言面板内容须限定)
+Finder _inPanel(Finder f) => find.descendant(
+      of: find.byKey(const ValueKey('pip-panel-fade')),
+      matching: f,
+    );
+
+/// 胶囊层内查找
+Finder _inPill(Finder f) => find.descendant(
+      of: find.byKey(const ValueKey('pip-pill-fade')),
+      matching: f,
+    );
+
 /// 迭代式深度优先遍历 span 树 (流式 reveal 的 span 树可能很深, 不递归),
 /// [test] 命中即停; 回调携带祖先是否加粗 (粗体样式常挂在父 span 上)
 bool _visitSpans(
@@ -480,12 +506,17 @@ void main() {
       ],
     );
 
-    // 出胶囊 (状态点 + 会话标题), 不出标题栏/正文/页码结构
+    // 出胶囊 (状态点 + 会话标题); 面板层温挂载但透明度 0 (不参与绘制)
     expect(find.byKey(const ValueKey('pip-collapsed-pill')), findsOneWidget);
-    expect(find.byTooltip('关闭悬浮窗'), findsNothing);
-    expect(find.byTooltip('返回应用'), findsNothing);
-    expect(find.byType(PageView), findsNothing);
-    expect(find.text('任务Alpha'), findsOneWidget);
+    expect(_pillFade(tester), 1.0);
+    expect(_panelFade(tester), 0.0, reason: '收拢态面板层不可见');
+    expect(
+      _inPanel(find.byTooltip('关闭悬浮窗')),
+      findsOneWidget,
+      reason: 'v6.3 温面板: 恒挂载 (仅透明)',
+    );
+    expect(_inPanel(find.byType(PageView)), findsOneWidget);
+    expect(_inPill(find.text('任务Alpha')), findsOneWidget);
 
     // 点胶囊 → expand 动作 (主 App resize 回档位尺寸 + move 回记忆位置)
     await tester.tap(find.byKey(const ValueKey('pip-collapsed-pill')));
@@ -520,8 +551,8 @@ void main() {
     );
 
     expect(find.byKey(const ValueKey('pip-collapsed-pill')), findsOneWidget);
-    expect(find.byType(PageView), findsNothing);
-    expect(find.text('任务Alpha'), findsOneWidget);
+    expect(_panelFade(tester), 0.0, reason: '快照字段驱动收拢 (不赌窗口尺寸)');
+    expect(_inPill(find.text('任务Alpha')), findsOneWidget);
   });
 
   testWidgets('双会话快照渲染 + 左右滑动切换 + 页码指示', (tester) async {
@@ -540,8 +571,9 @@ void main() {
       ],
     );
 
-    // 第 1 页可见: 标题 + 页码 + 内容
-    expect(find.text('任务Alpha'), findsOneWidget);
+    // 第 1 页可见: 标题 + 页码 + 内容 (标题断言限定面板层 — 胶囊层还有
+    // 一份隐藏拷贝, v6.3 温面板恒挂载)
+    expect(_inPanel(find.text('任务Alpha')), findsOneWidget);
     expect(find.text('1/2'), findsOneWidget);
     expect(_bodyText('alpha-line-1'), findsOneWidget);
     // PageView 只构建当前页, 第 2 页标题不可见
@@ -553,7 +585,7 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
 
     expect(find.text('2/2'), findsOneWidget);
-    expect(find.text('任务Beta'), findsOneWidget);
+    expect(_inPanel(find.text('任务Beta')), findsOneWidget);
     expect(_bodyText('beta-line-1'), findsOneWidget);
   });
 
@@ -728,7 +760,8 @@ void main() {
     expect(find.text('暂无进行中会话'), findsOneWidget);
     expect(find.byType(PageView), findsNothing);
     // 空态必须保留标题栏 (拖动手柄 + X 关闭 + 中性灰点), 不能整树替换
-    expect(find.text('ZCode'), findsOneWidget, reason: '空态标题栏标题');
+    // ('ZCode' 限定面板层 — 胶囊层还有一份隐藏拷贝)
+    expect(_inPanel(find.text('ZCode')), findsOneWidget, reason: '空态标题栏标题');
     expect(find.byTooltip('关闭悬浮窗'), findsOneWidget, reason: '空态 X 关闭在');
     expect(find.byKey(const ValueKey('pip-dot-empty')), findsOneWidget);
     expect(find.text('1/1'), findsNothing, reason: '空态无页码指示');
@@ -746,14 +779,14 @@ void main() {
         _session(key: 'task-a', title: '任务Alpha', running: true, text: 'v1'),
       ],
     );
-    expect(find.text('任务Alpha'), findsOneWidget);
+    expect(_inPanel(find.text('任务Alpha')), findsOneWidget);
 
     // 推空快照 → 防抖挂起, 内容仍在
     controller.add(
       jsonEncode(const PipSnapshot(v: 1, index: 0, sessions: []).toJson()),
     );
     await tester.pump();
-    expect(find.text('任务Alpha'), findsOneWidget, reason: '防抖期内不切空态');
+    expect(_inPanel(find.text('任务Alpha')), findsOneWidget, reason: '防抖期内不切空态');
 
     // 防抖期内新内容到达 → 取消防抖, 立即应用 (会话状态翻转不闪空)
     controller.add(
@@ -781,7 +814,7 @@ void main() {
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 700));
-    expect(find.text('任务Alpha'), findsOneWidget, reason: '防抖窗口内维持内容');
+    expect(_inPanel(find.text('任务Alpha')), findsOneWidget, reason: '防抖窗口内维持内容');
     await tester.pump(const Duration(seconds: 1));
     expect(find.text('暂无进行中会话'), findsOneWidget, reason: '超时后切空态');
   });
@@ -839,9 +872,10 @@ void main() {
       ],
     );
 
-    // 按住标题栏拖动 (进入 _dragging, 冻结 rebuild)
+    // 按住标题栏拖动 (进入 _dragging, 冻结 rebuild); 定位限定面板层 —
+    // 胶囊层还有一份同名隐藏拷贝 (v6.3 温面板)
     final gesture = await tester.startGesture(
-      tester.getCenter(find.text('任务Alpha')),
+      tester.getCenter(_inPanel(find.text('任务Alpha'))),
     );
     await gesture.moveBy(const Offset(20, 10));
     await tester.pump();
@@ -889,9 +923,10 @@ void main() {
       ],
     );
 
-    // 从标题栏起手拖动 → onPanStart: 原生拖动开关打开 (不触发 relayout)
+    // 从标题栏起手拖动 → onPanStart: 原生拖动开关打开 (不触发 relayout);
+    // 定位限定面板层 (胶囊层有同名隐藏拷贝)
     final gesture = await tester.startGesture(
-      tester.getCenter(find.text('任务Alpha')),
+      tester.getCenter(_inPanel(find.text('任务Alpha'))),
     );
     await gesture.moveBy(const Offset(40, 0));
     await tester.pump();
@@ -984,12 +1019,12 @@ void main() {
     expect(pip.moves, isEmpty, reason: '轻点不产生钳制移动/pillMoved');
   });
 
-  testWidgets('v6 展开: 注入 mo=expand 快照 → 变形过渡 → 完成后渲染面板', (tester) async {
+  testWidgets('v6.3 展开: 注入 mo=expand 快照 → 场景动画 → 完成后面板可见', (tester) async {
     final controller = StreamController<dynamic>();
     addTearDown(controller.close);
 
     // 窗口已被主 App resize 到面板尺寸 (320×160), 快照 collapsed=true 仍渲染
-    // 胶囊 (v4.1 语义) — 变形前胶囊渲染在新窗口左上角 = 胶囊原位, 视觉不动
+    // 胶囊 (v4.1 语义) — 变形前胶囊在新窗口左上角 = 胶囊原位, 视觉不动
     await _pumpCard(
       tester,
       controller: controller,
@@ -999,7 +1034,8 @@ void main() {
         _session(key: 'task-a', title: '任务Alpha', running: false, text: 'alpha'),
       ],
     );
-    expect(find.byKey(const ValueKey('pip-collapsed-pill')), findsOneWidget);
+    expect(_pillFade(tester), 1.0);
+    expect(_panelFade(tester), 0.0);
 
     // 翻转沿快照: collapsed=false + mo='expand' + tw/th (目标尺寸显式传)
     controller.add(
@@ -1021,31 +1057,26 @@ void main() {
         ).toJson(),
       ),
     );
-    // 流事件经微任务送达 (一次 pump 送达、再一次渲染), 双 pump 确保变形首帧
     await tester.pump(); // 微任务送达快照
-    await tester.pump(); // 应用快照 → 渲染变形首帧 (t=0)
-    expect(
-      find.byKey(const ValueKey('pip-morph')),
-      findsOneWidget,
-      reason: '翻转沿启动变形过渡组件',
-    );
-    // 变形中: 胶囊内容 (淡出中) 与面板子树 (淡入中) 共存
-    expect(find.byKey(const ValueKey('pip-collapsed-pill')), findsOneWidget);
-    expect(find.byType(PageView), findsOneWidget);
+    await tester.pump(); // 应用快照 → 动画起播 (t=0)
 
-    await tester.pump(const Duration(milliseconds: 130)); // 中点: 仍在变形
-    expect(find.byKey(const ValueKey('pip-morph')), findsOneWidget);
+    // 中点: 双层交叉淡化进行中 (面板淡入 0<f<1, 胶囊淡出)
+    await tester.pump(const Duration(milliseconds: 130));
+    final mid = _panelFade(tester);
+    expect(mid, allOf(greaterThan(0), lessThan(1)), reason: '变形进行中');
+    expect(_inPanel(find.byType(PageView)), findsOneWidget,
+        reason: 'v6.3 温面板: 变形中面板已挂载 (零冷挂载)');
 
-    // 泵过动画全程 (260ms + 首帧 ticker 启动余量)
+    // 泵过动画全程 (260ms + 余量) → 面板完全可见
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.pump(); // onCompleted → setState 清变形态 → 正常面板渲染
-    expect(find.byKey(const ValueKey('pip-morph')), findsNothing);
-    expect(find.byType(PageView), findsOneWidget, reason: '完成后正常面板渲染');
+    await tester.pump();
+    expect(_panelFade(tester), 1.0, reason: '完成后面板可见');
+    expect(_pillFade(tester), 0.0);
     expect(find.byTooltip('关闭悬浮窗'), findsOneWidget);
     expect(_bodyText('alpha'), findsOneWidget);
   });
 
-  testWidgets('v6 收拢: 注入 mo=collapse 快照 → 变形过渡 → 完成后渲染胶囊', (tester) async {
+  testWidgets('v6.3 收拢: 注入 mo=collapse 快照 → 场景动画 → 完成后胶囊可见', (tester) async {
     final controller = StreamController<dynamic>();
     addTearDown(controller.close);
 
@@ -1058,10 +1089,10 @@ void main() {
         _session(key: 'task-a', title: '任务Alpha', running: false, text: 'alpha'),
       ],
     );
-    expect(find.byType(PageView), findsOneWidget);
+    expect(_panelFade(tester), 1.0);
 
-    // 翻转沿快照: collapsed=true + mo='collapse' + fx/fy (胶囊目标 = 窗口内
-    // 局部坐标, 面板顶水平居中 (320-108)/2=106)
+    // 翻转沿快照: collapsed=true + mo='collapse' (fx/fy 为 v6.2 遗留字段,
+    // v6.3 场景几何恒锚定窗口左上, 不再消费)
     controller.add(
       jsonEncode(
         PipSnapshot(
@@ -1077,28 +1108,34 @@ void main() {
           ],
           collapsed: true,
           morph: 'collapse',
-          morphX: 106,
+          morphX: 0,
           morphY: 0,
         ).toJson(),
       ),
     );
     await tester.pump(); // 微任务送达快照
-    await tester.pump(); // 渲染变形首帧 (t=0)
-    expect(find.byKey(const ValueKey('pip-morph')), findsOneWidget);
-    // 变形中: 面板子树 (淡出中) 与胶囊内容 (淡入中) 共存
-    expect(find.byType(PageView), findsOneWidget);
-    expect(find.byKey(const ValueKey('pip-collapsed-pill')), findsOneWidget);
+    await tester.pump(); // 动画起播 (t=0, 反向)
 
-    // 泵过动画全程 (260ms + 首帧 ticker 启动余量)
+    // 中点: 面板淡出中
+    await tester.pump(const Duration(milliseconds: 130));
+    final mid = _panelFade(tester);
+    expect(mid, allOf(greaterThan(0), lessThan(1)), reason: '变形进行中');
+
+    // 泵过动画全程 → 胶囊可见, 面板温挂载但透明
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.pump(); // onCompleted → 正常胶囊渲染 (collapsed=true 驱动)
-    expect(find.byKey(const ValueKey('pip-morph')), findsNothing);
-    expect(find.byType(PageView), findsNothing, reason: '完成后正常胶囊渲染');
+    await tester.pump();
+    expect(_panelFade(tester), 0.0, reason: '收拢完成面板不可见');
+    expect(_pillFade(tester), 1.0);
     expect(find.byKey(const ValueKey('pip-collapsed-pill')), findsOneWidget);
-    expect(find.text('任务Alpha'), findsOneWidget);
+    expect(
+      _inPanel(find.byType(PageView)),
+      findsOneWidget,
+      reason: 'v6.3 温面板: 收拢后仍挂载 (下次展开零冷成本)',
+    );
+    expect(_inPill(find.text('任务Alpha')), findsOneWidget);
   });
 
-  testWidgets('v6 变形期间无 mo 流式快照: 不重启动画, 数据更新在完成后生效', (tester) async {
+  testWidgets('v6.3 变形期间无 mo 流式快照: 不重启动画, 数据更新在完成后生效', (tester) async {
     final controller = StreamController<dynamic>();
     addTearDown(controller.close);
 
@@ -1135,7 +1172,8 @@ void main() {
     await tester.pump(); // 微任务送达快照
     await tester.pump(); // t=0: 变形启动
 
-    // t=100ms: 流式快照 (无 mo, 文本 v2) 到达 → 只更新数据, 不重启动画
+    // t=100ms: 流式快照 (无 mo, 文本 v2) 到达 → 冻结挂起 (markdown 重排版
+    // 不与动画帧预算打架), 不重启动画
     await tester.pump(const Duration(milliseconds: 100));
     controller.add(
       jsonEncode(
@@ -1154,25 +1192,18 @@ void main() {
       ),
     );
     await tester.pump(); // 微任务送达
-    await tester.pump(); // 数据应用 (动画继续, 不重启)
-    expect(
-      find.byKey(const ValueKey('pip-morph')),
-      findsOneWidget,
-      reason: '无 mo 快照不中断变形',
-    );
-    // 未重启的证据: 面板子树仍是启动时缓存的一帧 (v1) — 若被 v2 重启,
-    // 过渡组件会重建并重新构建面板子树, v2 立即上屏。
-    expect(_bodyText('v1'), findsOneWidget);
-    expect(_bodyText('v2'), findsNothing);
+    await tester.pump(); // 冻结判定 (挂起)
+    // 未重启的证据: 动画进度单调推进 (若被重启会归零)
+    final f1 = _panelFade(tester);
+    await tester.pump(const Duration(milliseconds: 30));
+    expect(_panelFade(tester), greaterThan(f1),
+        reason: '无 mo 快照不重启动画 (进度单调)');
+    expect(_bodyText('v2'), findsNothing, reason: '变形中冻结数据应用');
 
-    // 泵过动画全程: 完成后按最新快照渲染, v2 上屏
-    await tester.pump(const Duration(milliseconds: 600));
-    await tester.pump(); // onCompleted → setState 清变形态
-    expect(
-      find.byKey(const ValueKey('pip-morph')),
-      findsNothing,
-      reason: '动画完成 (未被流式快照重启拖长)',
-    );
+    // 泵过动画全程: 完成后应用挂起快照, v2 上屏
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(); // onAnimating(false) → 应用挂起快照
+    expect(_panelFade(tester), 1.0, reason: '动画完成 (未被流式快照拖长)');
     expect(_bodyText('v2'), findsOneWidget);
     expect(_bodyText('v1'), findsNothing);
   });

@@ -80,14 +80,30 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
   /// 收拢态翻转日志去重 (每帧 build 都会走到, 不去重会刷屏)
   bool? _lastCollapsedReported;
 
-  /// 进行中的变形规格 (v6): 带 mo 快照的翻转沿写入, 动画完成回调清空。
-  /// 非空期间 build 返回 _MorphTransition (优先于收拢判定); 动画期间到达
-  /// 的流式快照 (无 mo) 只更新 _snapshot 数据, 不中断不重启动画。
-  _MorphSpec? _morph;
+  /// 下一次形态翻转是否播变形动画 (v6.3): 带 mo 快照的翻转沿置 true,
+  /// 场景据此 forward/reverse; v5 式直切快照 (自动打开/隐藏恢复) 为 false,
+  /// 场景直接跳到目标形态。
+  bool _animateNextFlip = false;
 
-  /// 变形序号: 每次启动 +1, 拼进 _MorphTransition 的 key — 新变形必然
-  /// 换 State (全新 controller), 不会复用已完成动画的旧 State。
-  int _morphSeq = 0;
+  /// 变形动画进行中 (v6.3): 期间冻结流式快照应用 — 温面板恒挂载后,
+  /// 流式文本更新会触发 markdown 重排版 (10-40ms), 撞上动画帧预算就掉帧;
+  /// 挂起待动画完成后一次性应用 (同 _dragging 冻结模式)。
+  bool _morphAnimating = false;
+
+  /// v6.6 小窗自治: 本地形态意图 (null = 跟随快照)。点胶囊/最小化在本地
+  /// 立即翻转形态并执行窗口操作 (动画与窗口操作同一引擎同一帧, 无跨
+  /// 引擎错帧/轮询死区), 主程序经信箱事后执行同几何参数的幂等操作收敛
+  /// 状态。快照的 collapsed 追上本地意图时清空, 回归快照权威。
+  bool? _formOverride;
+
+  /// v6.6 收拢裁剪参数 (本地路径): (收拢前面板窗口位, 胶囊局部 x)。
+  /// 动画结束帧 (onSettled) 执行裁剪 — 精确零间隙, 不再依赖主程序 340ms
+  /// 估计时序。
+  ({OverlayPosition winPos, double pillLocalX})? _pendingCrop;
+
+  /// 原生裁剪落地后的几何钉死 (见场景字段注释); 展开起播立即复位
+  bool _cropPinned = false;
+
 
   late void Function(String json) _send;
   late Future<void> Function() _close;
@@ -130,9 +146,10 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
     final snap = PipSnapshot.decode(raw);
     if (snap == null || !mounted) return;
     appLog.d('[Pip] ov recv pages=${snap.sessions.length} idx=${snap.index}');
-    // 拖动中冻结快照重建: 流式推送每 500ms 触发整卡 rebuild (markdown 重新
-    // 解析+布局), 撞上拖动帧预算就会掉帧抖动; 挂起待松手后一次性应用。
-    if (_dragging) {
+    // 拖动/变形动画中冻结快照重建: 流式推送每 500ms 触发整卡 rebuild
+    // (markdown 重新解析+布局), 撞上帧预算就会掉帧抖动; 挂起待结束一次性
+    // 应用。带 mo 的翻转沿快照除外 (它就是动画的触发器)。
+    if (snap.morph == null && (_dragging || _morphAnimating)) {
       _pendingSnapshot = snap;
       return;
     }
@@ -170,13 +187,135 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
       if (_index >= snap.sessions.length) {
         _index = snap.sessions.isEmpty ? 0 : snap.sessions.length - 1;
       }
-      // v6 变形触发: 仅翻转沿启动一次 (带 mo 且当前无进行中的变形)。
-      // 解码已保证坐标对完整 (expand→tw/th, collapse→fx/fy), 这里直接取。
-      final mo = snap.morph;
-      if (mo != null && _morph == null) {
-        _morph = _MorphSpec.fromSnapshot(snap, id: ++_morphSeq);
+      // v6.3 变形触发: 带 mo 的快照 = 形态翻转沿 → 场景播动画;
+      // 其余快照 (含 v5 式直切) 直接落到目标形态。
+      if (snap.morph != null) {
+        _animateNextFlip = true;
+      }
+      // v6.6 小窗自治: 快照的 collapsed 追上本地意图 → 主程序已收敛,
+      // 清空意图回归快照权威 (未追上时保留 — 主程序还在路上, 快照仍旧值)
+      if (_formOverride != null && _formOverride == snap.collapsed) {
+        _formOverride = null;
       }
     });
+  }
+
+  /// 变形动画起止回调 (场景侧调用): 起播置位冻结流式快照, 结束清位并把
+  /// 冻结期间挂起的快照一次性应用。
+  void _onSceneAnimating(bool animating) {
+    _morphAnimating = animating;
+    if (animating) return;
+    final pending = _pendingSnapshot;
+    _pendingSnapshot = null;
+    if (pending != null && mounted) _acceptSnapshot(pending);
+  }
+
+  // ================================================================
+  // v6.6 小窗自治变形: 点胶囊/最小化的动画与窗口操作在本地立即执行
+  // (同一引擎同一帧, 无跨引擎错帧), 信箱动作退化为"通知 + 主程序幂等
+  // 收敛"(主程序稍后按同公式重放 resizeMove/mo 推送, 已到位状态上是
+  // 视觉空操作)。本地路径前置条件不足 (无 tw/th 或屏幕尺寸) 时回落
+  // 纯信箱路径 (主程序老例程原样兜底)。
+  // 几何公式与 pip_providers 的 expandPipFromPill/collapsePipToPill
+  // 严格同源: 双边扩展 (窗口水平中心对齐胶囊中心)、顶对齐 (卡片顶=
+  // 胶囊内容顶=局部 4)、裁剪落点 = winPos+(pillLocalX-4, 0)。
+  // ================================================================
+
+  /// 本地展开 (点胶囊): 翻形态起播动画 + 原子 resizeMove 换框 + 通知主程序。
+  Future<void> _expandLocally() async {
+    if (_morphAnimating) return;
+    // 先解除钉死 (窗口未动前用居中公式才是正确位)
+    if (_cropPinned && mounted) setState(() => _cropPinned = false);
+    final snap = _snapshot;
+    final tw = snap?.targetW ?? 0;
+    final th = snap?.targetH ?? 0;
+    final sw = snap?.screenW;
+    final sh = snap?.screenH;
+    if (tw <= 0 || th <= 0 || sw == null || sh == null) {
+      // 本地路径前置条件不足: 纯信箱兜底 (主程序例程含窗口操作+变形)
+      _send(encodePipAction(const PipExpandAction()));
+      return;
+    }
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final screenW = sw / dpr;
+    final screenH = sh / dpr;
+    final pos = await _pip.getOverlayPosition();
+    final maxX = (screenW - tw).clamp(0.0, screenW);
+    final maxY = (screenH - th).clamp(0.0, screenH);
+    // v6.10 双边扩展: 窗口水平中心对齐胶囊中心; 垂直顶对齐
+    final pillCenterX = (pos?.x ?? 0) + pipCollapsedWidth / 2;
+    final x = (pillCenterX - tw / 2).clamp(0.0, maxX).toDouble();
+    final y = (pos?.y ?? 0).clamp(0.0, maxY).toDouble();
+    if (!mounted) return;
+    // 窗口换框先行、动画随后 (v6.6.1): 若动画先起播, 头 1-2 帧还跑在
+    // 108 宽的旧窗口里而目标几何已是全宽 — 盒子右缘撞窗边被裁、左缘
+    // 几乎不动, 视觉上是"单侧展开"。await 换框落地 (~20ms, 远低于感知
+    // 阈值) 再翻形态, 起播即在最终框内, 双边对称。翻形态前的窗口居中
+    // 平移对胶囊只是 4dp 级位移, 静止无感。
+    await _pip.resizeMove(tw.round(), th.round(), OverlayPosition(x, y));
+    if (!mounted) return;
+    // 置动画标志 — 场景据此 forward() 播变形 (v6.8 修复: 本地路径漏置,
+    // v6.6 起变形一直是瞬间直切, "点开一下子就变了" 的真因)
+    setState(() {
+      _animateNextFlip = true;
+      _formOverride = false;
+    });
+    // 通知主程序: 同步状态 (主程序已不碰窗口, 见 expandPipFromPill)
+    _send(encodePipAction(const PipExpandAction()));
+  }
+
+  /// 本地收拢 (最小化钮/拖出屏): 翻形态起播动画; 裁剪在动画结束帧
+  /// (onSettled) 精确执行; 通知主程序收敛。
+  Future<void> _collapseLocally(PipOverlayAction notify) async {
+    if (_morphAnimating) return;
+    final snap = _snapshot;
+    final tw = snap?.targetW ?? 0;
+    final sw = snap?.screenW;
+    if (tw <= 0 || sw == null) {
+      _send(encodePipAction(notify)); // 纯信箱兜底
+      return;
+    }
+    final winPos = await _pip.getOverlayPosition();
+    if (!mounted) return;
+    // v6.10 双边扩展: 胶囊收拢落点 = 面板窗口居中位 (场景同一公式)
+    final pillLocalX = (tw - (pipCollapsedWidth - 8)) / 2;
+    _pendingCrop = winPos == null
+        ? null
+        : (winPos: winPos, pillLocalX: pillLocalX);
+    setState(() {
+      _animateNextFlip = true;
+      _formOverride = true;
+    });
+    _send(encodePipAction(notify));
+  }
+
+  /// 场景动画落定回调 (v6.6): 收拢 → 精确在结束帧裁剪 + pillMoved 同步
+  /// 胶囊落点记忆; 展开 → 无事 (换框已在起播时完成)。
+  void _onSceneSettled(bool collapsed) {
+    if (!collapsed) return;
+    final crop = _pendingCrop;
+    _pendingCrop = null;
+    if (crop == null) return; // 主程序例程自行裁剪 (本地几何未知)
+    // 裁剪: 窗口缩到 108×44, 原点平移 (pillLocalX-4, 0) — 胶囊从居中位
+    // 对齐到裁剪窗口 (4,4), 绝对位置不动
+    final pillAbs = OverlayPosition(
+      crop.winPos.x + crop.pillLocalX - 4,
+      crop.winPos.y,
+    );
+    unawaited(_cropToPill(pillAbs));
+  }
+
+  /// 裁剪到 108×44 胶囊窗 + 落点回传 (主程序更新胶囊记忆, 其例程稍后的
+  /// 同值裁剪/持久化为幂等空操作)。
+  Future<void> _cropToPill(OverlayPosition pillAbs) async {
+    await _pip.resizeMove(
+      pipCollapsedWidth.round(),
+      pipCollapsedHeight.round(),
+      pillAbs,
+    );
+    // 原生裁剪已落地 → 钉死胶囊常量位, 度过约束滞后的 1-2 帧
+    if (mounted) setState(() => _cropPinned = true);
+    _send(encodePipAction(PipPillMovedAction(pillAbs.x, pillAbs.y)));
   }
 
   void _onPanStart(DragStartDetails details) {
@@ -225,7 +364,10 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
       final center = pos.x + windowWDp / 2;
       if (center >= 0 && center <= screenWDp) return false;
       appLog.d('[Pip] 窗口中心拖出屏外 ($center) → 隐藏意图');
-      _send(encodePipAction(const PipCollapseAction()));
+      // v6.6: 本地收拢 (动画+裁剪自治), 信箱通知主程序收敛
+      unawaited(
+        _collapseLocally(const PipCollapseAction()),
+      );
       return true;
     } catch (_) {
       return false;
@@ -314,37 +456,15 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
     final current = sessions.isEmpty
         ? null
         : sessions[_index.clamp(0, sessions.length - 1)];
-    // v6 变形过渡优先于收拢判定: 翻转沿启动的 ~260ms 内渲染过渡组件
-    // (胶囊↔面板几何插值 + 内容交叉淡入淡出), 完成后按最新快照渲染最终
-    // 形态。变形期间用户拖动手柄照 _dragging 冻结快照逻辑, 不特殊处理;
-    // 窗口透明区域会吞点击 (~300ms, 接受 — 变形是瞬时反馈, 拦截比误触安全)。
-    final morph = _morph;
-    if (morph != null) {
-      return KeyedSubtree(
-        // 外层恒定 key 供测试/调试定位; 内层 key 带序号, 新变形换新 State
-        key: const ValueKey('pip-morph'),
-        child: _MorphTransition(
-          key: ValueKey('pip-morph-${morph.id}'),
-          spec: morph,
-          buildPanel: () => _buildPanel(sessions: sessions, current: current),
-          buildPillContent: () => _buildCollapsedPillContent(current),
-          onCompleted: () {
-            if (mounted) setState(() => _morph = null);
-          },
-        ),
-      );
-    }
-    // 收拢态 (v4.1 双保险, v5 语义不变): 主 App 快照 collapsed 字段为主
-    // (真机实测 resize 后 MediaQuery 可能不刷新 — 窗口变小而内容仍渲染
-    // 完整卡, 被裁成一条缝; 状态驱动渲染不赌窗口尺寸), 窗口尺寸判定
-    // (108×44 命中, 展开态最小档 0.84 屏宽远大于 160dp 不误判) 兜底快照
-    // 未达的间隙。隐藏态窗口 1×1 同样命中胶囊渲染 — 窗口在屏外不可见,
-    // 渲染什么都不上屏, 无所谓。
-    // 点胶囊 → 回传 expand 由主 App 在胶囊位原地展开; 拖胶囊 → 松手回传
-    // pillMoved 由主 App 记忆位置。
+    // 收拢态判定 (v4.1 双保险, 语义不变): 主 App 快照 collapsed 字段为主
+    // (真机实测 resize 后 MediaQuery 可能不刷新 — 状态驱动渲染不赌窗口
+    // 尺寸), 窗口尺寸判定 (108×44 命中, 展开态最小档 0.84 屏宽远大于
+    // 160dp 不误判) 兜底快照未达的间隙。隐藏态窗口 1×1 同样命中 — 窗口
+    // 在屏外不可见, 渲染什么都不上屏。
     final winSize = MediaQuery.of(context).size;
-    final collapsed = _snapshot?.collapsed == true ||
-        (winSize.width < 160 && winSize.height < 56);
+    final collapsed = _formOverride ??
+        (_snapshot?.collapsed == true ||
+            (winSize.width < 160 && winSize.height < 56));
     if (collapsed != _lastCollapsedReported) {
       _lastCollapsedReported = collapsed;
       appLog.d(
@@ -352,14 +472,36 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
         'flag=${_snapshot?.collapsed}',
       );
     }
-    if (collapsed) {
-      return _buildCollapsedPill(current);
-    }
-    return _buildPanel(sessions: sessions, current: current);
+    // v6.3 常驻温面板场景: 真面板 + 胶囊恒挂载 (面板经 OverflowBox 按目标
+    // 尺寸布局, 收拢态透明度 0 = 布局保留/绘制跳过), 展开/收拢 = 纯合成器
+    // 动画 (几何 + 透明度插值, 不碰布局)。真面板挂载/重排版 ~100ms 的开销
+    // 只在悬浮窗打开时付一次, 变形零冷成本。
+    return _PipScene(
+      key: const ValueKey('pip-scene'),
+      collapsed: collapsed,
+      animateNext: _animateNextFlip,
+      targetW: _snapshot?.targetW ?? 0,
+      targetH: _snapshot?.targetH ?? 0,
+      panel: KeyedSubtree(
+        key: _panelHostKey,
+        child: _buildPanel(sessions: sessions, current: current),
+      ),
+      pill: _buildCollapsedPillLabel(current),
+      glowColor: _statusColor(current),
+      pinCollapsedGeometry: _cropPinned,
+      onPillTap: () => unawaited(_expandLocally()),
+      onPillPanStart: _onPillPanStart,
+      onPillPanEnd: (_) => unawaited(_onPillDragFinished()),
+      onPillPanCancel: () => unawaited(_onPillDragFinished()),
+      onAnimating: _onSceneAnimating,
+      onSettled: _onSceneSettled,
+    );
   }
 
-  /// 展开态面板子树 (v6 从 build 抽出, 正常态与变形过渡共用):
-  /// 铺满父盒 (正常态=整窗; 变形期间由 _MorphTransition 包进显式尺寸盒)。
+  /// 活面板宿主 key (v6.3 恒挂载于场景, key 供测试定位与语义锚点)
+  final GlobalKey _panelHostKey = GlobalKey(debugLabel: 'pip-panel-host');
+
+  /// 展开态面板子树 (v6.3 恒挂载于场景): 铺满父盒 (场景中的显式尺寸盒)。
   Widget _buildPanel({
     required List<PipSessionSnapshot> sessions,
     PipSessionSnapshot? current,
@@ -367,21 +509,15 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
     return Material(
       type: MaterialType.transparency,
       child: Padding(
-        // 与 pipWindowHeight 公式的铬高 (88) 对齐
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(AppRadius.lg),
-          child: Container(
-            color: AppColors.darkBg.withValues(alpha: 0.97),
-            // 边框画在前景: 不内缩 child, 保证正文视口高度 = N*pipLineExtent
-            foregroundDecoration: BoxDecoration(
-              border: Border.all(color: AppColors.darkBorder),
-              borderRadius: BorderRadius.circular(AppRadius.lg),
-            ),
-            // 空态也保留标题栏: 拖动手柄与 X 关闭不能因无会话而失效
-            // (曾因整树替换成 _EmptyBody 导致空态既不能拖也不能关)。
-            child: Column(
-              children: [
+        // 卡片底色/描边/圆角全部由场景的变形形状承载 (v6.8 单一形体):
+        // 面板自带卡片外观时, 交叉淡化中两块深色矩形叠加 = "还有底盒"
+        // (真机慢速反馈)。Padding 只负责内容排版; 上 4 下 16 = 卡片内距
+        // (上 4 与胶囊边距对齐 → 变形顶边不动, v6.5.2)。
+        // 空态也保留标题栏: 拖动手柄与 X 关闭不能因无会话而失效
+        // (曾因整树替换成 _EmptyBody 导致空态既不能拖也不能关)。
+        padding: const EdgeInsets.only(top: 4, bottom: 16),
+        child: Column(
+          children: [
                 _Header(
                   session: current,
                   onPanStart: _onPanStart,
@@ -398,9 +534,13 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
                       _send(encodePipAction(const PipHomeAction()));
                     }
                   },
-                  onMinimize: () =>
-                      _send(encodePipAction(const PipMinimizeAction())),
+                  // v6.6: 本地收拢 (动画+结束帧裁剪自治), 信箱通知主程序收敛
+                  onMinimize: () => unawaited(
+                    _collapseLocally(const PipMinimizeAction()),
+                  ),
                 ),
+                // 空态也保留标题栏: 拖动手柄与 X 关闭不能因无会话而失效
+                // (曾因整树替换成 _EmptyBody 导致空态既不能拖也不能关)。
                 Expanded(
                   child: sessions.isEmpty
                       ? const _EmptyBody()
@@ -435,9 +575,7 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
                     ),
                   ),
               ],
-            ),
           ),
-        ),
       ),
     );
   }
@@ -449,34 +587,22 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
   /// 搬窗, 松手钳回屏 + 回传 pillMoved 让主 App 记忆位置)。tap 与 pan 共存:
   /// 轻点无位移时 tap 在手势竞技场胜出 (pan 未过 slop 即被弃), 起手短暂
   /// 开关原生拖动无害。
-  Widget _buildCollapsedPill(PipSessionSnapshot? session) {
-    return Material(
-      type: MaterialType.transparency,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        // 轻点 → 主 App 在胶囊当前位置原地展开 (窗口左上锚定胶囊左上)
-        onTap: () => _send(encodePipAction(const PipExpandAction())),
-        // 拖拽 → 原生层直接搬窗口 (零延迟), 松手钳回屏 + 回传 pillMoved
-        onPanStart: _onPillPanStart,
-        onPanEnd: (_) => unawaited(_onPillDragFinished()),
-        onPanCancel: () => unawaited(_onPillDragFinished()),
-        child: _buildCollapsedPillContent(session),
-      ),
-    );
-  }
+  /// 胶囊状态色: 运行 accent / 完成 success / 出错 danger / 空态中性
+  Color _statusColor(PipSessionSnapshot? s) => s == null
+      ? AppColors.darkInkMuted
+      : s.running
+      ? AppColors.accent
+      : s.error
+      ? AppColors.danger
+      : AppColors.success;
 
-  /// 胶囊视觉内容 (v6 从 _buildCollapsedPill 抽出, 正常收拢态与变形过渡
-  /// 共用): 固定 100×36 (108×44 窗口减四周 4dp 柔光边距), 不含手势壳 —
-  /// 变形期间 (~300ms) 手势无意义, 交叉淡入淡出只搬视觉。
-  Widget _buildCollapsedPillContent(PipSessionSnapshot? session) {
+  /// 胶囊标签 (v6.8): 无底色版 — 胶囊的底色/描边/柔光由场景的变形形状
+  /// 自身承载 (胶囊本体在变形, 没有独立"底盒"垫板); 尺寸 100×36 保持
+  /// 手势区。Material 祖先必须有: 没有 DefaultTextStyle 来源的 Text 会
+  /// 渲染出"未解析样式"双下划线 (真机反馈过)。
+  Widget _buildCollapsedPillLabel(PipSessionSnapshot? session) {
     final s = session;
-    final color = s == null
-        ? AppColors.darkInkMuted
-        : s.running
-        ? AppColors.accent
-        : s.error
-        ? AppColors.danger
-        : AppColors.success;
+    final color = _statusColor(s);
     final running = s?.running ?? false;
     final glowDot = Container(
       width: 10,
@@ -489,160 +615,201 @@ class _PipOverlayCardState extends State<PipOverlayCard> {
         ],
       ),
     );
-    return Padding(
-      padding: const EdgeInsets.all(4),
-      child: Container(
+    return Material(
+      type: MaterialType.transparency,
+      child: SizedBox(
         key: const ValueKey('pip-collapsed-pill'),
         width: pipCollapsedWidth - 8,
         height: pipCollapsedHeight - 8,
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm + 2),
-        decoration: BoxDecoration(
-          color: AppColors.darkBg.withValues(alpha: 0.92),
-          borderRadius: BorderRadius.circular((pipCollapsedHeight - 8) / 2),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
-          // 状态色柔光: 任何桌面背景 (含浅色) 上都能浮出来, 状态一眼可见
-          boxShadow: [
-            BoxShadow(
-              color: color.withValues(alpha: 0.30),
-              blurRadius: 8,
-              spreadRadius: 1,
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            running ? _Breathing(child: glowDot) : glowDot,
-            const SizedBox(width: AppSpacing.sm),
-            Expanded(
-              child: Text(
-                s?.title ?? 'ZCode',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.darkInk,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm + 2),
+          child: Row(
+            children: [
+              running ? _Breathing(child: glowDot) : glowDot,
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  s?.title ?? 'ZCode',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.darkInk,
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-/// v6 变形规格: 带 mo 快照翻转沿的解析结果 (PipSnapshot.decode 已保证
-/// 坐标对完整 — expand 携 tw/th, collapse 携 fx/fy)。
-class _MorphSpec {
-  /// 启动序号 (拼进过渡组件 key, 保证每次变形拿到全新 controller)
-  final int id;
+/// v6.3 常驻温面板场景: 真面板与胶囊恒挂载。
+///
+/// - 面板层经 OverflowBox 按 [targetW]×[targetH] 布局 (收拢态窗口只有
+///   108×44, 布局尺寸照样全尺寸), FadeTransition 透明度 0 时 Flutter 跳过
+///   整个子树绘制 — 布局保留 (温)、光栅零开销。
+/// - 展开/收拢 = 纯合成器动画: 几何 rect/圆角插值 + 双层交叉淡化, 不碰
+///   任何子树布局。真面板挂载/重排版 ~100ms (markdown 解析+布局) 只在
+///   悬浮窗打开时付一次, 变形零冷成本 (v6.2 真机帧计时: 收拢起播仍有
+///   35-78ms 重排版一顿、展开结尾文字迟到 ~0.1s, 本版根除)。
+/// - 目标形态翻转: [animateNext]=true (快照 mo 翻转沿) → 260ms 动画;
+///   false (v5 式直切: 自动打开/隐藏恢复) → 直接跳到目标形态。
+/// - 目标尺寸显式来自快照 (tw/th 恒携带) — resize 后悬浮窗引擎
+///   MediaQuery 可能不刷新 (v4.1 真机教训), 不读窗口尺寸做几何。
+/// - 变形期间 [onAnimating] 回调置位, 卡片冻结流式快照 (markdown 重排版
+///   不与动画帧预算打架), 结束后一次性应用挂起快照。
+/// - 几何锚点恒为窗口左上 (0,0): 胶囊态、变形终点、收拢裁剪后窗口原点
+///   三点重合, 全程零跳变。
+class _PipScene extends StatefulWidget {
+  /// 目标形态: true = 胶囊 (收拢), false = 面板 (展开)
+  final bool collapsed;
 
-  /// true = 胶囊→面板 (expand); false = 面板→胶囊 (collapse)
-  final bool expand;
+  /// 本次翻转是否播动画 (快照 mo 翻转沿 true; v5 式直切 false)
+  final bool animateNext;
 
-  /// collapse 用: 胶囊目标左上角在窗口内的局部坐标 (逻辑 dp)
-  final double fx;
+  /// 面板目标宽 (逻辑 dp, 快照显式传; 0 = 无记录回落布局约束)
+  final double targetW;
 
-  /// collapse 用: 胶囊目标 Y (局部 dp, 主 App 固定传 0 = 面板顶)
-  final double fy;
+  /// 面板目标高 (逻辑 dp)
+  final double targetH;
 
-  /// expand 用: 目标面板宽 (逻辑 dp, 显式传 — resize 后悬浮窗引擎
-  /// MediaQuery 可能不刷新, 不得读窗口尺寸做动画目标, v4.1 真机教训)
-  final double tw;
+  /// 真面板子树 (恒挂载, 带 _panelHostKey)
+  final Widget panel;
 
-  /// expand 用: 目标面板高 (逻辑 dp)
-  final double th;
+  /// 胶囊视觉内容 (恒挂载, 无底色 — 外观由变形形状承载)
+  final Widget pill;
 
-  const _MorphSpec({
-    required this.id,
-    required this.expand,
-    this.fx = 0,
-    this.fy = 0,
-    this.tw = 0,
-    this.th = 0,
-  });
+  /// 胶囊态状态色 — 变形形状的柔光外晕用
+  final Color glowColor;
 
-  factory _MorphSpec.fromSnapshot(PipSnapshot snap, {required int id}) =>
-      _MorphSpec(
-        id: id,
-        expand: snap.morph == 'expand',
-        fx: snap.morphX ?? 0,
-        fy: snap.morphY ?? 0,
-        tw: snap.targetW ?? 0,
-        th: snap.targetH ?? 0,
-      );
-}
+  /// 原生裁剪"落地后"钉死胶囊窗口常量几何 (约束滞后帧兜底; 时序见
+  /// build 内注释 — 必须落地后置位, 提前 = 胶囊左跳)
+  final bool pinCollapsedGeometry;
 
-/// 胶囊↔面板变形过渡 (灵动岛式, v6): ~260ms 几何插值 + 内容交叉淡入淡出。
-/// - expand: 内容盒 (0,0,108,44) → (0,0,tw,th), 圆角 18 → AppRadius.lg,
-///   胶囊内容淡出 / 面板内容淡入 (交叠 ~150ms)。
-/// - collapse: 面板盒全窗 → (fx,fy,108,44), 圆角反向插值, 反向交叉淡化。
-/// 面板子树始终包在显式尺寸盒里布局 (expand=tw×th; collapse=当前布局
-/// 尺寸 — 后者仅动画起点, 起点取 LayoutBuilder 约束即面板真实视觉尺寸,
-/// 目标一律来自快照字段)。完成后回调 onCompleted → 正常形态渲染。
-class _MorphTransition extends StatefulWidget {
-  final _MorphSpec spec;
 
-  /// 面板子树构建器 (变形开始时构建一次缓存, 逐帧只重绘不重排 markdown;
-  /// 动画期间流式快照更新的数据在完成后按最新快照渲染)
-  final Widget Function() buildPanel;
+  // 胶囊层手势 (tap=expand / pan=原生拖拽开关), 仅胶囊可见时生效
+  final VoidCallback onPillTap;
+  final void Function(DragStartDetails) onPillPanStart;
+  final void Function(DragEndDetails) onPillPanEnd;
+  final VoidCallback onPillPanCancel;
 
-  /// 胶囊视觉内容构建器 (同上, 构建一次缓存)
-  final Widget Function() buildPillContent;
+  /// 变形动画起止回调 (起播 true / 结束 false)
+  final void Function(bool animating)? onAnimating;
 
-  final VoidCallback onCompleted;
+  /// 动画落定回调 (v6.6): 携带落定形态 (true=胶囊) — 收拢的裁剪挂在
+  /// 结束帧精确执行 (零间隙), 替代主程序 340ms 估计时序。
+  final void Function(bool collapsed)? onSettled;
 
-  const _MorphTransition({
+  const _PipScene({
     super.key,
-    required this.spec,
-    required this.buildPanel,
-    required this.buildPillContent,
-    required this.onCompleted,
+    required this.collapsed,
+    required this.animateNext,
+    required this.targetW,
+    required this.targetH,
+    required this.panel,
+    required this.pill,
+    required this.glowColor,
+    required this.pinCollapsedGeometry,
+    required this.onPillTap,
+    required this.onPillPanStart,
+    required this.onPillPanEnd,
+    required this.onPillPanCancel,
+    this.onAnimating,
+    this.onSettled,
   });
 
   @override
-  State<_MorphTransition> createState() => _MorphTransitionState();
+  State<_PipScene> createState() => _PipSceneState();
 }
 
-class _MorphTransitionState extends State<_MorphTransition>
+class _PipSceneState extends State<_PipScene>
     with SingleTickerProviderStateMixin {
-  /// 变形时长: 主 App 收拢例程按 260ms + 余量 (340ms) 才裁剪窗口,
-  /// 改这里必须同步改 pip_providers 的等待时长。
-  static const Duration _duration = Duration(milliseconds: 260);
+  /// 变形时长; 收拢裁剪挂 onSettled 动画结束帧, 自动跟随时长
+  static const Duration _duration = Duration(milliseconds: 300);
 
-  /// 旧内容 (expand=胶囊 / collapse=面板) 淡出区间
+  /// 旧内容 (退场方) 淡出区间
   static const Interval _oldFade = Interval(0.2, 0.8, curve: Curves.easeInCubic);
 
-  /// 新内容淡入区间 (与 _oldFade 交叠 ~150ms)
+  /// 新内容 (入场方) 淡入区间 (与 _oldFade 交叠 ~150ms)
   static const Interval _newFade = Interval(
     0.25,
     0.85,
     curve: Curves.easeOutCubic,
   );
 
-  late final AnimationController _controller = AnimationController(
+  /// 进度: 0 = 胶囊, 1 = 面板 (controller 即进度, 曲线在几何采样处另变)
+  late final AnimationController _c = AnimationController(
     vsync: this,
     duration: _duration,
   );
 
-  /// 子树缓存: 动画逐帧 rebuild 复用同一 Widget 实例 → Flutter 跳过子树
-  /// 重建, markdown 不逐帧重排 (掉帧防线)
-  late final Widget _panel = widget.buildPanel();
-  late final Widget _pill = widget.buildPillContent();
+  /// 当前静止形态 (翻转检测用)
+  bool _restCollapsed = true;
+
+  /// 双层淡化动画 (方向翻转时重配): 进度 0→1 为展开 (胶囊退场/面板入场),
+  /// 收拢 = 同一进度反向播放 (面板退场/胶囊入场)。
+  late Animation<double> _pillFade;
+  late Animation<double> _panelFade;
 
   @override
   void initState() {
     super.initState();
-    _controller.addStatusListener((status) {
-      if (status == AnimationStatus.completed) widget.onCompleted();
-    });
-    _controller.forward();
+    _restCollapsed = widget.collapsed;
+    _c.value = widget.collapsed ? 0.0 : 1.0;
+    _configureFades(expanding: !widget.collapsed);
+    _c.addStatusListener(_onStatus);
+  }
+
+  void _onStatus(AnimationStatus status) {
+    if (status == AnimationStatus.completed ||
+        status == AnimationStatus.dismissed) {
+      widget.onSettled?.call(_restCollapsed);
+      widget.onAnimating?.call(false);
+    }
+  }
+
+  /// 按方向配置交叉淡化: 展开时胶囊=退场(_oldFade 反向)、面板=入场
+  /// (_newFade); 收拢反过来。收拢是反向播放, 用 ReverseAnimation 对齐
+  /// "反向播放时入场方从 0 淡入"的语义。
+  void _configureFades({required bool expanding}) {
+    final oldC = CurvedAnimation(parent: _c, curve: _oldFade);
+    final newC = CurvedAnimation(parent: _c, curve: _newFade);
+    if (expanding) {
+      _pillFade = ReverseAnimation(oldC);
+      _panelFade = newC;
+    } else {
+      _pillFade = ReverseAnimation(newC);
+      _panelFade = oldC;
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _PipScene oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.collapsed == _restCollapsed) return;
+    _restCollapsed = widget.collapsed;
+    final expanding = !widget.collapsed;
+    _configureFades(expanding: expanding);
+    if (widget.animateNext) {
+      widget.onAnimating?.call(true);
+      if (expanding) {
+        _c.forward();
+      } else {
+        _c.reverse();
+      }
+    } else {
+      // v5 式直切 (自动打开/隐藏恢复): 无动画, 静止落位
+      _c.value = expanding ? 1.0 : 0.0;
+    }
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _c.dispose();
     super.dispose();
   }
 
@@ -650,86 +817,137 @@ class _MorphTransitionState extends State<_MorphTransition>
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        // collapse 的动画起点 = 当前窗口布局尺寸 (此刻窗口尚未 resize,
-        // 布局尺寸即面板真实视觉尺寸; 仅作起点 — 目标来自快照字段)。
-        final winW = constraints.maxWidth;
-        final winH = constraints.maxHeight;
+        // 目标尺寸: 快照显式值优先 (MediaQuery resize 后可能不刷新),
+        // 无记录 (老主 App 兼容) 回落当前布局约束
+        final tw = widget.targetW > 0 ? widget.targetW : constraints.maxWidth;
+        final th = widget.targetH > 0 ? widget.targetH : constraints.maxHeight;
+        // v6.5 双边扩展: 胶囊恒水平居中于窗口 (静止胶囊窗口 108 →
+        // (108-100)/2 = 4 与原位一致; 面板窗口 tw → 居中)。变形盒绕胶囊
+        // 中心左右对称生长, 面板卡片中心与胶囊中心重合 = "从两边扩展"
+        // (灵动岛式)。主 App 展开时窗口水平中心对齐胶囊中心, 窗口落位后
+        // 胶囊局部坐标随之更新 → 绝对位置不动 (LayoutBuilder 每帧取活
+        // 约束, resize 传播前后自校正)。
+        // v6.10.1 双边扩展 (用户指定): 胶囊恒水平居中于窗口, 变形盒绕
+        // 胶囊中心左右对称生长; 展开窗口水平中心对齐胶囊中心, 收拢裁剪
+        // 平移 (pillLocalX-4, 0) 保持胶囊绝对位置。裁剪后引擎约束滞后帧
+        // (实测 ~2 帧) 由 [pinCollapsedGeometry] 钉死胶囊窗口常量位兜底 —
+        // 属性由卡片在"原生裁剪落地后"置位; 动画结束帧就钉会把窗口未动
+        // 的 1-2 帧也钉进去 = 胶囊先左跳再回 ("位置正确然后左抽", 真机
+        // 反馈), 这是两版钉死时序之差的关键。
+        final pillX = widget.pinCollapsedGeometry
+            ? 4.0
+            : (constraints.maxWidth - (pipCollapsedWidth - 8)) / 2;
         return AnimatedBuilder(
-          animation: _controller,
+          animation: _c,
           builder: (context, _) {
-            final spec = widget.spec;
-            final t = Curves.easeInOutCubicEmphasized.transform(
-              _controller.value,
-            );
+            // (整体节奏由分轴 wT/hT 承载, 见下)
+            // 变形盒两端 = 真实视觉卡片盒 (胶囊内容 4dp 柔光边距, 水平
+            // 居中; 面板卡片上 4dp 下 16dp 内距), 两端与静止态逐像素重合;
+            // 两端顶边同在局部 y=4 → 变形全程顶边纹丝不动 (v6.5.2)。
+            // easeOutCubic 快起缓收: 点按后立刻有位移反馈
+            final t = Curves.easeOutCubic.transform(_c.value);
+            final rect = Rect.lerp(
+              Rect.fromLTWH(
+                pillX,
+                4,
+                pipCollapsedWidth - 8,
+                pipCollapsedHeight - 8,
+              ),
+              Rect.fromLTWH(0, 4, tw, th - 20),
+              t,
+            )!;
             const pillRadius = (pipCollapsedHeight - 8) / 2;
-            final Rect box;
-            final double radius;
-            if (spec.expand) {
-              box = Rect.fromLTWH(
-                0,
-                0,
-                lerpDouble(pipCollapsedWidth, spec.tw, t)!,
-                lerpDouble(pipCollapsedHeight, spec.th, t)!,
-              );
-              radius = lerpDouble(pillRadius, AppRadius.lg, t)!;
-            } else {
-              box = Rect.fromLTWH(
-                lerpDouble(0, spec.fx, t)!,
-                lerpDouble(0, spec.fy, t)!,
-                lerpDouble(winW, pipCollapsedWidth, t)!,
-                lerpDouble(winH, pipCollapsedHeight, t)!,
-              );
-              radius = lerpDouble(AppRadius.lg, pillRadius, t)!;
-            }
-            final oldT = _oldFade.transform(_controller.value);
-            final newT = _newFade.transform(_controller.value);
-            final pillOpacity = spec.expand ? 1 - oldT : newT;
-            final panelOpacity = spec.expand ? newT : 1 - oldT;
-            // 变形底盒 (深色玻璃 + 动画圆角) = "黑色岛"轮廓; 面板/胶囊内容
-            // 各自携带底色, 底盒只在尺寸差与圆角过渡期露出
-            final rr = RRect.fromRectAndRadius(
-              box,
-              Radius.circular(radius),
-            );
+            final radius = lerpDouble(pillRadius, AppRadius.lg, t)!;
             return Stack(
-              // 不裁剪: 底盒可能短暂超出布局盒 (MediaQuery 滞后的过渡帧),
-              // 让窗口 surface 自己决定裁剪边界
+              // 不裁剪: 底盒/面板层自管裁剪, 让窗口 surface 决定最终边界
               clipBehavior: Clip.none,
+              fit: StackFit.expand,
               children: [
+                // 变形形状 = 胶囊本体 (v6.8, 无独立底盒): 恒渲染。
+                // 收拢态它就是胶囊 — 胶囊的底色/描边/状态柔光外晕全在它
+                // 身上; 展开时它自己拉伸成面板卡片外观 (颜色/描边/圆角/
+                // 光晕随进度插值, 光晕渐熄)。胶囊标签和面板内容只是趴在
+                // 它上面交叉淡化 — 用户看到的是"胶囊在变形", 不是"一块
+                // 板子垫在下面长大" (真机反馈)。
                 Positioned.fromRect(
-                  rect: box,
+                  rect: rect,
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: AppColors.darkBg.withValues(alpha: 0.95),
+                      color: AppColors.darkBg.withValues(
+                        alpha: lerpDouble(0.92, 0.97, t)!,
+                      ),
                       borderRadius: BorderRadius.circular(radius),
-                      border: Border.all(color: AppColors.darkBorder),
+                      border: Border.all(
+                        color: Color.lerp(
+                          Colors.white.withValues(alpha: 0.10),
+                          AppColors.darkBorder,
+                          t,
+                        )!,
+                      ),
+                      boxShadow: t < 1
+                          ? [
+                              BoxShadow(
+                                color: widget.glowColor.withValues(
+                                  alpha: 0.30 * (1 - t),
+                                ),
+                                blurRadius: 8,
+                                spreadRadius: 1,
+                              ),
+                            ]
+                          : null,
                     ),
                   ),
                 ),
-                // 面板子树: 显式尺寸盒 + 动画圆角裁剪 (裁剪沿随底盒几何走)
-                Positioned.fill(
-                  child: Opacity(
-                    opacity: panelOpacity,
-                    child: ClipPath(
-                      clipper: _MorphRRectClipper(rr),
-                      child: Align(
-                        alignment: Alignment.topLeft,
-                        child: SizedBox(
-                          width: spec.expand ? spec.tw : winW,
-                          height: spec.expand ? spec.th : winH,
-                          child: _panel,
+                // 面板层 (温): 恒挂载 + OverflowBox 按目标尺寸布局; 收拢态
+                // fade=0 → RenderAnimatedOpacity 跳过整个子树绘制 (布局
+                // 保留 = 下次展开零冷成本)。ClipRRect 随底盒几何揭示;
+                // IgnorePointer 挡住不可见时的误触 (标题栏按钮等)。
+                Positioned.fromRect(
+                  rect: rect,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(radius),
+                    child: OverflowBox(
+                      alignment: Alignment.topLeft,
+                      minWidth: 0,
+                      maxWidth: double.infinity,
+                      minHeight: 0,
+                      maxHeight: double.infinity,
+                      child: SizedBox(
+                        width: tw,
+                        height: th,
+                        child: IgnorePointer(
+                          ignoring: _c.value < 0.95,
+                          child: FadeTransition(
+                            key: const ValueKey('pip-panel-fade'),
+                            opacity: _panelFade,
+                            child: widget.panel,
+                          ),
                         ),
                       ),
                     ),
                   ),
                 ),
-                // 胶囊子树: 固定 100×36 (108×44 减四周 4dp 柔光边距)。
-                // expand 停在 (4,4) 原位淡出; collapse 直接淡入在目标位
-                // (fx+4, fy+4), 面板缩过去与之合流。
+                // 胶囊层 (温): 恒挂载, (pillX, 4) 与变形盒 fromRect 逐像素
+                // 重合 (v6.8 标签无内边距)。展开态 fade=0 跳过绘制。
+                // 手势 (tap=expand / pan=拖拽) 仅胶囊可见时生效。
                 Positioned(
-                  left: spec.expand ? 4 : spec.fx + 4,
-                  top: spec.expand ? 4 : spec.fy + 4,
-                  child: Opacity(opacity: pillOpacity, child: _pill),
+                  left: pillX,
+                  top: 4,
+                  child: IgnorePointer(
+                    ignoring: _c.value > 0.05,
+                    child: FadeTransition(
+                      key: const ValueKey('pip-pill-fade'),
+                      opacity: _pillFade,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: widget.onPillTap,
+                        onPanStart: widget.onPillPanStart,
+                        onPanEnd: widget.onPillPanEnd,
+                        onPanCancel: widget.onPillPanCancel,
+                        child: widget.pill,
+                      ),
+                    ),
+                  ),
                 ),
               ],
             );
@@ -738,19 +956,6 @@ class _MorphTransitionState extends State<_MorphTransition>
       },
     );
   }
-}
-
-/// 动画圆角矩形裁剪器 (面板子树的裁剪沿随变形底盒几何走)
-class _MorphRRectClipper extends CustomClipper<Path> {
-  final RRect rrect;
-  const _MorphRRectClipper(this.rrect);
-
-  @override
-  Path getClip(Size size) => Path()..addRRect(rrect);
-
-  @override
-  bool shouldReclip(_MorphRRectClipper oldClipper) =>
-      oldClipper.rrect != rrect;
 }
 
 /// 空态: 全部会话结束 / 无运行中会话 (悬浮窗保留, 用户手动关闭)

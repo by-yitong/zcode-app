@@ -157,6 +157,15 @@ public class OverlayService extends Service implements View.OnTouchListener {
                 int height = call.argument("height");
                 boolean enableDrag = call.argument("enableDrag");
                 resizeOverlay(width, height, enableDrag, result);
+            } else if (call.method.equals("resizeMoveOverlay")) {
+                // ZCode 补丁: 原子 resize+move (小窗引擎本地通道版, v6.6
+                // 小窗自治变形 — 动画与窗口操作同一引擎同一帧)。一次
+                // updateViewLayout 同时改 w/h/x/y, 无中间态上屏。
+                int width = call.argument("width");
+                int height = call.argument("height");
+                int x = call.argument("x");
+                int y = call.argument("y");
+                result.success(resizeMoveOverlayInternal(width, height, x, y));
             } else if (call.method.equals("setDragEnabled")) {
                 // ZCode 补丁: 只翻转拖动标志, 不做 updateViewLayout —
                 // resizeOverlay 换拖动开关会触发 relayout, 部分 ROM 重套
@@ -341,6 +350,33 @@ public class OverlayService extends Service implements View.OnTouchListener {
             } else {
                 return false;
             }
+        } else {
+            return false;
+        }
+    }
+
+    // ZCode 补丁: 原子 resize+move (v6.5.2)。一次 updateViewLayout 同时改
+    // w/h/x/y — resize 与 move 分两次调用时, 中间态 (新尺寸×旧位置) 会
+    // 上屏一帧: 小窗收拢裁剪表现为 "胶囊向左抽一下" (窗口先缩在面板左缘,
+    // move 才把它送回落点, 真机反馈)。入参逻辑 dp, 原生 dpToPx 换算一次。
+    // 实例通道 (小窗引擎本地) 与静态转发 (主引擎) 共用。
+    private boolean resizeMoveOverlayInternal(int width, int height, int x, int y) {
+        if (windowManager == null || flutterView == null) {
+            return false;
+        }
+        cancelMoveAnimator();
+        WindowManager.LayoutParams params = (WindowManager.LayoutParams) flutterView.getLayoutParams();
+        params.width = (width == -1999 || width == -1) ? -1 : dpToPx(width);
+        params.height = (height == -1999 || height == -1) ? height : dpToPx(height);
+        params.x = (x == -1999 || x == -1) ? -1 : dpToPx(x);
+        params.y = dpToPx(y);
+        windowManager.updateViewLayout(flutterView, params);
+        return true;
+    }
+
+    public static boolean resizeMoveOverlay(int width, int height, int x, int y) {
+        if (instance != null && instance.flutterView != null) {
+            return instance.resizeMoveOverlayInternal(width, height, x, y);
         } else {
             return false;
         }
