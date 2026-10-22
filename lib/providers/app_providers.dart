@@ -6,6 +6,7 @@ import 'package:logger/logger.dart';
 
 import '../core/logging/app_logger.dart';
 import '../core/network/zcode_api_client.dart';
+import '../core/network/zcode_account_api.dart';
 import '../core/notifications/notification_service.dart';
 import '../core/relay/relay_client.dart';
 import '../core/relay/relay_protocol.dart';
@@ -190,12 +191,17 @@ final relayClientProvider = Provider<RelayClient?>((ref) {
       if (session == null || !session.isValid) return null;
 
       final logger = ref.read(loggerProvider);
-      final config = RelayConfig(
-        wsUrl: 'wss://zcode.z.ai/ws?mid=${session.mid}',
+
+      // 账号链路 (桌面端 3.16+): ws2 + JWT 换短时票
+      final config = RelayConfig.forAccount(
         deviceSid: session.deviceSid,
-        passHash: session.passHash,
-        cookie: session.cookie,
+        mid: session.mid,
         deviceName: session.deviceName,
+        appVersion: session.appVersion,
+        jwtProvider: () async =>
+            (await ref.read(secureStorageProvider).getAccount())?.jwt,
+        terminalTokenFetcher: (jwt) async =>
+            (await ZcodeAccountApi().issueTerminalToken(jwtOverride: jwt)).token,
       );
 
       final client = RelayClient(
@@ -291,18 +297,61 @@ class WorkspaceListNotifier extends StateNotifier<AsyncValue<List<Workspace>>> {
     // 接入后任务/工作区列表实时更新, 不再依赖手动 refresh
     final client = _ref.read(relayClientProvider);
     _pushSub = client?.onWorkspaceListUpdated.listen(_onPushUpdate);
+    // bridge 重开 (重连/切工作区) 后全局任务库重拉 (window-project 随 bridge 重建)
+    _readySub = client?.onRpcReadyChange.listen((ready) {
+      if (ready) unawaited(_refreshTreeTasks());
+    });
   }
 
-  /// 解析推送 payload 并更新 state + allTasks
+  StreamSubscription<bool>? _readySub;
+
+  /// 解析推送 payload 并更新 state; 任务列表改由全局任务库刷新
+  /// (3.16 起 workspace-list 推送不再含 tasks)
   void _onPushUpdate(Map<String, dynamic> payload) {
     if (payload['result'] is! Map) return;
     try {
       final workspaces = Workspace.parseList(payload);
-      final tasks = Workspace.parseTasks(payload);
+      unawaited(_refreshTreeTasks(notify: true));
+      state = AsyncValue.data(workspaces);
+      appLog.d('[Workspace] 推送更新: ${workspaces.length} 工作区');
+    } catch (e) {
+      appLog.w('[Workspace] 推送 payload 解析失败: $e');
+    }
+  }
 
+  /// 全局任务库 (window-project.readTree, 网页侧栏同源)
+  ///
+  /// 3.16 起 bootstrap/workspace-list 不含 tasks — 全局任务列表由此填充;
+  /// 每条含 workspacePath/pinned/archived, UI 各处按需过滤。
+  /// readTree 的 projects (含历史项目) 是项目列表主体, bootstrap 活跃工作区保底。
+  /// [notify] = true 时做任务完成检测 (running → 非 running 通知)。
+  /// readTree 走 RPC (需 bridge), bridge 未开时等就绪。
+  Future<void> _refreshTreeTasks({bool notify = false}) async {
+    final client = _ref.read(relayClientProvider);
+    if (client == null) return;
+    try {
+      await client.waitRpcReady(const Duration(seconds: 30));
+    } catch (_) {
+      appLog.d('[Workspace] 全局任务库: bridge 未就绪, 跳过');
+      return;
+    }
+    Map<String, dynamic> tree;
+    try {
+      tree = await client.projectReadTree();
+    } catch (e) {
+      appLog.w('[Workspace] 全局任务库拉取失败 (保持现值): $e');
+      return;
+    }
+    final tasks = Task.parseTreeTasks(tree);
+    final current = state.asData?.value ?? const <Workspace>[];
+    final merged = Workspace.parseTreeProjects(tree, current);
+    appLog.d(
+      '[Workspace] 全局任务库: keys=${tree.keys.toList()} '
+      'tasks=${tasks.length} projects合并=${merged.length}',
+    );
+    if (notify) {
       // ★ 任务完成通知: displayStatus running → 非 running (任何页面/任何任务,
-      // 含桌面端跑的会话)。挂在这个长生命周期推送上, 而非聊天页的 ChatNotifier
-      // (它是 autoDispose, 退出聊天页就销毁了, 后台看不到状态翻转)。
+      // 含桌面端跑的会话)。
       final prevTasks = {for (final p in _ref.read(allTasksProvider)) p.id: p};
       for (final t in tasks) {
         if (t.archived) continue;
@@ -318,15 +367,10 @@ class WorkspaceListNotifier extends StateNotifier<AsyncValue<List<Workspace>>> {
           );
         }
       }
-
-      _ref.read(allTasksProvider.notifier).state = tasks;
-      state = AsyncValue.data(workspaces);
-      appLog.d(
-        '[Workspace] 推送更新: ${workspaces.length} 工作区 / ${tasks.length} 任务',
-      );
-    } catch (e) {
-      appLog.w('[Workspace] 推送 payload 解析失败: $e');
     }
+    _ref.read(allTasksProvider.notifier).state = tasks;
+    state = AsyncValue.data(merged);
+    appLog.d('[Workspace] 全局任务库: ${tasks.length} 条');
   }
 
   Future<void> load() async {
@@ -338,12 +382,12 @@ class WorkspaceListNotifier extends StateNotifier<AsyncValue<List<Workspace>>> {
     try {
       final resp = await _repo!.bootstrap();
       final workspaces = Workspace.parseList(resp);
-      final tasks = Workspace.parseTasks(resp);
-      _ref.read(allTasksProvider.notifier).state = tasks;
+      // 先出工作区列表 (启动不被任务库阻塞); 任务库后台拉取 —
+      // readTree 需 bridge, 启动阶段 bridge 未开, 进聊天页 rpcReady 后
+      // 由 _readySub 自动补拉
       state = AsyncValue.data(workspaces);
-      appLog.i(
-        '[Workspace] bootstrap 完成: ${workspaces.length} 个工作区, ${tasks.length} 个任务',
-      );
+      appLog.i('[Workspace] bootstrap 完成: ${workspaces.length} 个工作区');
+      unawaited(_refreshTreeTasks());
     } catch (e, st) {
       appLog.e('[Workspace] bootstrap 加载失败', e, st);
       state = AsyncValue.error(e, st);
@@ -355,11 +399,10 @@ class WorkspaceListNotifier extends StateNotifier<AsyncValue<List<Workspace>>> {
     try {
       final resp = await _repo!.refresh();
       final workspaces = Workspace.parseList(resp);
-      final tasks = Workspace.parseTasks(resp);
-      _ref.read(allTasksProvider.notifier).state = tasks;
       state = AsyncValue.data(workspaces);
+      unawaited(_refreshTreeTasks());
       appLog.d(
-        '[Workspace] 列表刷新完成: ${workspaces.length} 个工作区, ${tasks.length} 个任务',
+        '[Workspace] 列表刷新完成: ${workspaces.length} 个工作区, ${_ref.read(allTasksProvider).length} 个任务',
       );
     } catch (e, st) {
       appLog.e('[Workspace] 列表刷新失败', e, st);
@@ -370,6 +413,7 @@ class WorkspaceListNotifier extends StateNotifier<AsyncValue<List<Workspace>>> {
   @override
   void dispose() {
     _pushSub?.cancel();
+    _readySub?.cancel();
     super.dispose();
   }
 }

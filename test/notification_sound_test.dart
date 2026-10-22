@@ -86,11 +86,12 @@ void main() {
     setUp(() {
       soundCalls = 0;
       relay = RelayClient(
-        config: const RelayConfig(
-          wsUrl: 'wss://unit.test/ws',
+        // 账号链路配置形态 (测试不触网, 闭包仅占位)
+        config: RelayConfig.forAccount(
           deviceSid: 'd_unit',
-          passHash: 'hash',
-          cookie: 'acw_tc=1',
+          mid: 'mid_unit',
+          jwtProvider: () async => null,
+          terminalTokenFetcher: (jwt) async => 'tt_unit',
         ),
       );
       notifier = _newNotifier(relay);

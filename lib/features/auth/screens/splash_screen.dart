@@ -46,16 +46,35 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
         if (s != null && s.isValid) {
           _connectRelay();
         } else {
-          context.go(AppRoutes.login);
+          _routeWithoutSession();
         }
       },
       loading: () {
         Future.delayed(const Duration(milliseconds: 300), _checkSession);
       },
       error: (_, __) {
-        context.go(AppRoutes.login);
+        _routeWithoutSession();
       },
     );
+  }
+
+  /// 无有效会话时的路由:
+  /// - 有账号凭据 (jwt 非空) → 设备选择页 (免重新授权直接选设备)
+  /// - 无账号 → 登录引导页
+  Future<void> _routeWithoutSession() async {
+    try {
+      final account = await ref.read(authRepositoryProvider).restoreAccount();
+      if (!mounted) return;
+      if (account != null && account.jwt.isNotEmpty) {
+        context.go(AppRoutes.devicePicker);
+        return;
+      }
+    } catch (e) {
+      // 账号读取失败不阻塞, 落回登录页
+      appLog.w('[Splash] 账号凭据读取失败, 走登录页: $e');
+    }
+    if (!mounted) return;
+    context.go(AppRoutes.login);
   }
 
   /// 连接 relay + 开 bridge + 加载数据, 完成后直达聊天页

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -11,12 +12,12 @@ import '../../../core/services/pip_service.dart';
 import '../../../core/services/update_service.dart';
 import '../../../core/storage/secure_storage.dart';
 import '../../../providers/app_providers.dart';
+import '../../../shared/theme/app_router.dart';
 import '../../../providers/pip_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/widgets/update_dialog.dart';
 import '../../agent/screens/cap_pages.dart';
 import '../../agent/widgets/caps_page_chrome.dart';
-import 'connections_screen.dart';
 import 'remote_settings_screen.dart';
 
 /// 设置页 — DNA 提取自参考截图 (hallmark study):
@@ -71,118 +72,109 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             AppSpacing.xxl,
           ),
           children: [
-            // 用户卡 — 头像 + 设备名/SID + 连接状态; 整卡点击 → 远程连接管理
+            // 用户卡 — 头像 + 设备名/SID + 连接状态 (点击切换设备)
             _SettingsCard(
-              child: InkWell(
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const ConnectionsScreen()),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
+              onTap: () => context.go(AppRoutes.devicePicker),
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpacing.md),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: const BoxDecoration(
+                            color: AppColors.accent,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.person_outline,
+                            color: Colors.white,
+                            size: 22,
+                          ),
+                        ),
+                        const SizedBox(width: AppSpacing.md),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                userName,
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              Text(
+                                'SID · $deviceId',
+                                style: AppText.mono(
+                                  context,
+                                  size: AppTextSizes.monoXs,
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    // 连接状态 pill (mono)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.sm,
+                        vertical: AppSpacing.xs,
+                      ),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(AppRadius.sm),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Container(
-                            width: 44,
-                            height: 44,
-                            decoration: const BoxDecoration(
-                              color: AppColors.accent,
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.person_outline,
-                              color: Colors.white,
-                              size: 22,
-                            ),
-                          ),
-                          const SizedBox(width: AppSpacing.md),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  userName,
-                                  style: theme.textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                Text(
-                                  'SID · $deviceId',
-                                  style: AppText.mono(
-                                    context,
-                                    size: AppTextSizes.monoXs,
-                                    color: theme.colorScheme.onSurfaceVariant,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ],
-                            ),
-                          ),
                           Icon(
-                            Icons.chevron_right,
-                            size: 20,
-                            color: theme.colorScheme.onSurfaceVariant,
+                            Icons.cloud_done_outlined,
+                            size: 14,
+                            color: connectionAsync.maybeWhen(
+                              data: (s) => s == RelayConnectionState.ready
+                                  ? AppColors.success
+                                  : AppColors.warning,
+                              orElse: () => AppColors.warning,
+                            ),
+                          ),
+                          const SizedBox(width: AppSpacing.xs),
+                          Text(
+                            connectionAsync.maybeWhen(
+                              data: (state) {
+                                final s = state;
+                                return switch (s) {
+                                  RelayConnectionState.ready =>
+                                    '已连接到 ZCode',
+                                  RelayConnectionState.connecting =>
+                                    '正在连接...',
+                                  RelayConnectionState.reconnecting =>
+                                    '正在重连...',
+                                  RelayConnectionState.disconnected =>
+                                    '未连接',
+                                  _ => '—',
+                                };
+                              },
+                              orElse: () => '—',
+                            ),
+                            style: AppText.mono(
+                              context,
+                              size: AppTextSizes.monoXs,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: AppSpacing.md),
-                      // 连接状态 pill (mono)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.sm,
-                          vertical: AppSpacing.xs,
-                        ),
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(AppRadius.sm),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.cloud_done_outlined,
-                              size: 14,
-                              color: connectionAsync.maybeWhen(
-                                data: (s) => s == RelayConnectionState.ready
-                                    ? AppColors.success
-                                    : AppColors.warning,
-                                orElse: () => AppColors.warning,
-                              ),
-                            ),
-                            const SizedBox(width: AppSpacing.xs),
-                            Text(
-                              connectionAsync.maybeWhen(
-                                data: (state) {
-                                  final s = state;
-                                  return switch (s) {
-                                    RelayConnectionState.ready =>
-                                      '已连接到 ZCode',
-                                    RelayConnectionState.connecting =>
-                                      '正在连接...',
-                                    RelayConnectionState.reconnecting =>
-                                      '正在重连...',
-                                    RelayConnectionState.disconnected =>
-                                      '未连接',
-                                    _ => '—',
-                                  };
-                                },
-                                orElse: () => '—',
-                              ),
-                              style: AppText.mono(
-                                context,
-                                size: AppTextSizes.monoXs,
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-            // GLM 用量已下线 (用量见聊天页顶部 UsagePill), 仅保留「通用 · GLM 配置」
-                    ],
-                  ),
+                    ),
+                    // GLM 用量已下线 (用量见聊天页顶部 UsagePill), 仅保留「通用 · GLM 配置」
+                  ],
                 ),
               ),
             ),
@@ -353,6 +345,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
 
             const SizedBox(height: AppSpacing.lg),
+            // 切换设备 — 底部独立操作卡 (账号下可绑多台桌面设备)
+            _SettingsCard(
+              child: _SettingsRow(
+                icon: Icons.swap_horiz_rounded,
+                title: '切换设备',
+                showChevron: false,
+                onTap: () => context.go(AppRoutes.devicePicker),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
             // 断开连接 — 底部独立操作卡 (对齐截图退出登录: 黑字 logout, 无箭头)
             _SettingsCard(
               child: _SettingsRow(
@@ -389,10 +391,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   /// 断开连接 — 乐观执行 + 5s 撤销 (hallmark: 可逆操作不弹确认框)。
-  /// 撤销用断开前的会话对象 loginWithSession 原样恢复。
+  /// 一并清账号凭据 + 上次设备 (否则下次启动会凭账号直达设备选择页);
+  /// 撤销时三样 (会话/账号/上次设备) 原样恢复。
   Future<void> _logout(BuildContext context, WidgetRef ref) async {
     final session = ref.read(sessionProvider).valueOrNull;
+    final authRepo = ref.read(authRepositoryProvider);
+    final storage = ref.read(secureStorageProvider);
+    // 先取快照再清理 (撤销恢复用)
+    final account = await authRepo.restoreAccount();
+    final lastDevice = await storage.getLastDevice();
+
     await ref.read(sessionProvider.notifier).logout();
+    await authRepo.clearAccount();
+    await storage.clearLastDevice();
+
     if (!context.mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -404,9 +416,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ? null
               : SnackBarAction(
                   label: '撤销',
-                  onPressed: () => ref
-                      .read(sessionProvider.notifier)
-                      .loginWithSession(session),
+                  onPressed: () async {
+                    if (account != null) await authRepo.saveAccount(account);
+                    if (lastDevice != null) {
+                      await storage.saveLastDevice(lastDevice);
+                    }
+                    await ref
+                        .read(sessionProvider.notifier)
+                        .loginWithSession(session);
+                  },
                 ),
         ),
       );
@@ -653,7 +671,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 /// 用 Material 而非 Container: 行内 InkWell 的水波纹才能透出。
 class _SettingsCard extends StatelessWidget {
   final Widget child;
-  const _SettingsCard({required this.child});
+
+  /// 整卡点击 (如用户卡 → 设备选择); null = 不可点
+  final VoidCallback? onTap;
+
+  const _SettingsCard({required this.child, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -662,7 +684,9 @@ class _SettingsCard extends StatelessWidget {
       color: dark ? AppColors.darkSurfaceElevated : Colors.white,
       borderRadius: BorderRadius.circular(AppRadius.xl),
       clipBehavior: Clip.antiAlias,
-      child: child,
+      child: onTap == null
+          ? child
+          : InkWell(onTap: onTap, child: child),
     );
   }
 }

@@ -6,23 +6,21 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:uuid/uuid.dart';
 
+import '../network/zcode_account_api.dart';
 import 'relay_events.dart';
 import 'relay_protocol.dart';
 import 'rpc_codec.dart';
 
-/// Relay 连接配置 (实测验证)
+/// Relay 连接配置 (账号链路, 桌面端 3.16+, 实测验证)
 class RelayConfig {
-  /// WebSocket URL: wss://zcode.z.ai/ws?mid={mid}
+  /// WebSocket URL: wss://zcode.z.ai/api/v1/remote/ws2 (连接时追加 token/mid)
   final String wsUrl;
 
   /// 设备 SID (URL sid 参数, 含 d_ 前缀)
   final String deviceSid;
 
-  /// 密码哈希 (URL hash 参数, URL decode 后)
-  final String passHash;
-
-  /// Cookie (会话认证, 至少含 acw_tc)
-  final String cookie;
+  /// 设备 mid — ws2 URL 参数
+  final String mid;
 
   /// 设备名
   final String deviceName;
@@ -30,37 +28,63 @@ class RelayConfig {
   /// 应用版本
   final String appVersion;
 
-  const RelayConfig({
+  /// 取已存储的账号 JWT (返回 null = 未登录)
+  final Future<String?> Function()? jwtProvider;
+
+  /// 用 JWT 换短时 terminal token (POST /api/v1/remote/token role=terminal)。
+  /// 由上层组装 (如包一层 ZcodeAccountApi.issueTerminalToken),
+  /// RelayClient 只管协议不碰 dio。401 时应抛 AccountAuthExpiredException。
+  final Future<String> Function(String jwt)? terminalTokenFetcher;
+
+  RelayConfig({
     required this.wsUrl,
     required this.deviceSid,
-    required this.passHash,
-    required this.cookie,
+    required this.mid,
     this.deviceName = 'mobile-browser',
-    this.appVersion = '3.7.7',
+    this.appVersion = '3.16.2',
+    this.jwtProvider,
+    this.terminalTokenFetcher,
   });
 
-  /// 从 URL 参数构建配置
-  factory RelayConfig.fromUrl({
-    required String mid,
+  /// 3.16+ 账号链路配置: 连 ws2, 认证走 JWT 换短时票
+  factory RelayConfig.forAccount({
     required String deviceSid,
-    required String passHash,
-    required String cookie,
+    required String mid,
     String deviceName = 'mobile-browser',
+    String appVersion = '3.16.2',
+    Future<String?> Function()? jwtProvider,
+    Future<String> Function(String jwt)? terminalTokenFetcher,
   }) {
     return RelayConfig(
-      wsUrl: 'wss://zcode.z.ai/ws?mid=$mid',
+      wsUrl: 'wss://zcode.z.ai/api/v1/remote/ws2',
       deviceSid: deviceSid,
-      passHash: passHash,
-      cookie: cookie,
+      mid: mid,
       deviceName: deviceName,
+      appVersion: appVersion,
+      jwtProvider: jwtProvider,
+      terminalTokenFetcher: terminalTokenFetcher,
     );
+  }
+
+  /// ws2 连接 URL 组装: 在 [wsUrl] 上追加 token/mid 查询参数
+  /// (已有查询参数时续接, 不重复覆盖 mid)
+  static String wsUrlWithToken(
+    String wsUrl, {
+    required String token,
+    String? mid,
+  }) {
+    final uri = Uri.parse(wsUrl);
+    final params = Map<String, String>.from(uri.queryParameters);
+    params['token'] = token;
+    if (mid != null && mid.isNotEmpty) params['mid'] = mid;
+    return uri.replace(queryParameters: params).toString();
   }
 }
 
 /// ZCode Relay 协议客户端
 ///
 /// 完整实现 (实测 2026-06-15):
-/// 1. WebSocket 连接 + 4 步 HMAC 认证
+/// 1. WebSocket 连接 + 账号短时票认证 (JWT 换票, ws2 无 HMAC)
 /// 2. Bootstrap (工作区/任务列表)
 /// 3. Workspace Bridge + RPC Init 握手
 /// 4. RPC 二进制协议 (varint+tag 编解码)
@@ -212,17 +236,19 @@ class RelayClient {
   Future<void> _doConnect() async {
     _intentionallyClosed = false;
     _setState(RelayConnectionState.connecting);
-    _log('info', 'Connecting to ${config.wsUrl}');
+
+    // 认证 (账号链路):
+    // JWT → 换短时 terminal token → URL 追加 ?token=&mid= →
+    // ws2 无 auth_challenge/HMAC, auth_init 不带 role
+    final connectUrl = await _accountConnectUrl();
+    final headers = {'Origin': 'https://zcode.z.ai', 'User-Agent': 'Mozilla/5.0'};
+    _log('info', 'Connecting to ${_logSafeUrl(connectUrl)}');
 
     // ★ 必须带超时: 后台挂起时网络被系统掐断, 无超时的 connect 会永久挂起,
     // _connectFuture 停在 pending, 前台恢复后也无法恢复 (一直"正在重连")
     _socket = await WebSocket.connect(
-      config.wsUrl,
-      headers: {
-        'Cookie': config.cookie,
-        'Origin': 'https://zcode.z.ai',
-        'User-Agent': 'Mozilla/5.0',
-      },
+      connectUrl,
+      headers: headers,
     ).timeout(const Duration(seconds: 20));
     // 协议级心跳: 探针实测无心跳 ~30s 会被服务端空闲关闭
     _socket!.pingInterval = const Duration(seconds: 20);
@@ -242,9 +268,9 @@ class RelayClient {
     _authCompleter = authCompleter;
 
     // Step 1: 发送 auth_init
+    // ★ 不带 role 字段 (web 3.16.2 实测形态, 带了可能被拒)
     _sendRaw({
       'type': 'auth_init',
-      'role': 'terminal',
       'device_sid': config.deviceSid,
       'meta': {
         'platform': 'web',
@@ -273,6 +299,40 @@ class RelayClient {
   }
 
   Completer<void>? _authCompleter;
+
+  /// 账号链路: 取 JWT → 换短时 terminal token → 拼 ws2 URL
+  ///
+  /// - jwtProvider 返回空 → [AccountAuthExpiredException] (未登录)
+  /// - terminalTokenFetcher 抛的 401/[AccountAuthExpiredException] 原样上抛
+  Future<String> _accountConnectUrl() async {
+    final jwt = await config.jwtProvider?.call();
+    if (jwt == null || jwt.isEmpty) {
+      throw AccountAuthExpiredException('未登录: jwtProvider 未返回 JWT');
+    }
+    final fetcher = config.terminalTokenFetcher;
+    if (fetcher == null) {
+      throw StateError('RelayConfig.terminalTokenFetcher 未配置 (账号链路必需)');
+    }
+    final token = await fetcher(jwt);
+    return RelayConfig.wsUrlWithToken(
+      config.wsUrl,
+      token: token,
+      mid: config.mid,
+    );
+  }
+
+  /// 日志安全 URL: token 是短时凭据, 不落日志
+  static String _logSafeUrl(String url) {
+    if (!url.contains('token=')) return url;
+    try {
+      final uri = Uri.parse(url);
+      final params = Map<String, String>.from(uri.queryParameters);
+      if (params.containsKey('token')) params['token'] = '***';
+      return uri.replace(queryParameters: params).toString();
+    } catch (_) {
+      return url;
+    }
+  }
 
   /// 最后收到任意 WS 帧的时间 (revive 探活参考: 近期有帧 = 连接活跃)
   DateTime? _lastFrameAt;
@@ -449,8 +509,6 @@ class RelayClient {
     final type = msg['type'] as String?;
 
     switch (type) {
-      case 'auth_challenge':
-        _handleAuthChallenge(msg);
       case 'auth_ack':
         _handleAuthAck(msg);
       case 'pair_status_ack':
@@ -468,25 +526,6 @@ class RelayClient {
       default:
         _log('debug', 'RECV [$type]');
     }
-  }
-
-  void _handleAuthChallenge(Map<String, dynamic> msg) {
-    final nonce = msg['nonce'] as String;
-    _log('info', 'Auth challenge received');
-
-    // proof = base64url(HMAC-SHA256(passHash, "nonce|terminal|deviceSid"))
-    final dataStr = '$nonce|terminal|${config.deviceSid}';
-    final hmac = crypto.Hmac(crypto.sha256, utf8.encode(config.passHash));
-    final proof = base64Url
-        .encode(hmac.convert(utf8.encode(dataStr)).bytes)
-        .replaceAll('=', '');
-
-    _sendRaw({
-      'type': 'auth_response',
-      'device_sid': config.deviceSid,
-      'proof': proof,
-      'client_ts': _ts(),
-    });
   }
 
   void _handleAuthAck(Map<String, dynamic> msg) {
@@ -990,6 +1029,40 @@ class RelayClient {
     return _requestResponse('workspace-list-request', {});
   }
 
+  /// 全局项目/任务树 — window-project.readTree (3.16 网页侧栏同源)
+  ///
+  /// bootstrap/workspace-list 自 3.16 起不再含 tasks; 网页端侧栏通过
+  /// window-project channel 的 readTree 读全局任务库 (active/pinned/archived
+  /// 全量, 每条带 workspacePath/hostId/projectId/pinned/archived)。
+  /// 变更通知走 zcode-task.onDynamicWorkspaceEvent(workspace_task_list_changed)。
+  ///
+  /// bridge 打开后 window-project 才存在; 旧桌面端回退 'project' channel。
+  Future<Map<String, dynamic>> projectReadTree({
+    bool includeDeleted = true,
+    bool includeDeletedTasks = true,
+  }) async {
+    final args = [
+      {
+        'includeDeleted': includeDeleted,
+        'includeDeletedTasks': includeDeletedTasks,
+      },
+    ];
+    try {
+      final resp = await _rpcCall(
+        'window-project',
+        'readTree',
+        args,
+        timeout: const Duration(seconds: 10),
+      );
+      if (resp.body is Map) return Map<String, dynamic>.from(resp.body as Map);
+      return {'raw': resp.body};
+    } on RpcException {
+      final resp = await _rpcCall('project', 'readTree', args);
+      if (resp.body is Map) return Map<String, dynamic>.from(resp.body as Map);
+      return {'raw': resp.body};
+    }
+  }
+
   // ================================================================
   // 公开 API — bridge 层
   // ================================================================
@@ -1439,17 +1512,49 @@ class RelayClient {
   }
 
   /// 热切换会话模型 — zcode-session.setModel
-  /// [model] 为完整 ID `<providerUuid>/<slug>` (来自 readWorkspaceState)。
+  ///
+  /// [model] 为完整 ID `<providerId>/<modelId>` (来自 model-selection.getView)。
+  /// ★ 3.16+ wire 形状 (桌面端 asar 实测): model 是对象 {providerId, modelId},
+  ///   传字符串会被服务端 zod 拒绝 (expected object, received string)。
+  ///   旧版桌面端只认字符串 — 对象被拒时回退字符串重试。
   Future<Map<String, dynamic>> setSessionModel({
     required String workspacePath,
+    String? workspaceIdentity,
     required String sessionId,
     required String model,
   }) async {
-    final resp = await _rpcCall('zcode-session', 'setModel', [
-      {'workspacePath': workspacePath, 'sessionId': sessionId, 'model': model},
-    ]);
-    if (resp.body is Map) return resp.body as Map<String, dynamic>;
-    return {'raw': resp.body};
+    // 拆 'provider/model': 取第一段作 providerId, 余段并回 modelId
+    // (防御 modelId 含斜杠的非预期形态)
+    final idx = model.indexOf('/');
+    final modelObj =
+        idx > 0
+            ? {
+              'providerId': model.substring(0, idx),
+              'modelId': model.substring(idx + 1),
+            }
+            : {'modelId': model};
+
+    Map<String, dynamic> args(bool asObject) => {
+      'workspacePath': workspacePath,
+      if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
+      'sessionId': sessionId,
+      'model': asObject ? modelObj : model,
+    };
+
+    try {
+      final resp = await _rpcCall('zcode-session', 'setModel', [
+        args(true),
+      ]);
+      if (resp.body is Map) return resp.body as Map<String, dynamic>;
+      return {'raw': resp.body};
+    } on RpcException {
+      // 旧版桌面端 (3.16 前) 只认字符串 model
+      final resp = await _rpcCall('zcode-session', 'setModel', [
+        args(false),
+      ]);
+      if (resp.body is Map) return resp.body as Map<String, dynamic>;
+      return {'raw': resp.body};
+    }
   }
 
   // ================================================================

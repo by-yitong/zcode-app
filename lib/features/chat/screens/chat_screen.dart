@@ -201,6 +201,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 '&task=${Uri.encodeComponent(selectedTaskId)}',
               );
             },
+            // 任务列表视图: 草稿对话任务在各自 draft 工作区, 跳转带任务自身工作区
+            onSelectedInWorkspace: (selectedTaskId, wsKey) {
+              context.replace(
+                '${AppRoutes.chat}?workspace=${Uri.encodeComponent(wsKey)}'
+                '&task=${Uri.encodeComponent(selectedTaskId)}',
+              );
+            },
             onNewChat: () {
               // 新对话: 跳回不带 task 的聊天页 (replace: 原地替换, 保持返回栈)。
               // 新会话自动聚焦输入框 (全应用唯一的自动取焦路径)

@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../data/models/saved_connection.dart';
+import '../../data/models/zcode_account.dart';
 import '../../data/models/zcode_session.dart';
 import '../logging/app_logger.dart';
 import '../services/glm_quota_service.dart';
@@ -15,7 +15,9 @@ class SecureStorageService {
   static const _keySession = 'zcode_session';
   static const _keyDeviceId = 'zcode_device_id';
   static const _keyGlmCredential = 'glm_credential';
-  static const _keyConnections = 'zcode_connections';
+  static const _keyAccountJwt = 'zcode_account_jwt';
+  static const _keyAccountUser = 'zcode_account_user';
+  static const _keyLastDevice = 'zcode_last_device';
 
   /// GLM 凭据默认 base URL (国内 bigmodel.cn)
   static const defaultGlmBaseUrl = 'https://open.bigmodel.cn/api/paas/v4';
@@ -51,30 +53,70 @@ class SecureStorageService {
     await _secure.delete(key: _keySession);
   }
 
-  // ── 多远程连接 ──────────────────────────────────────────
+  // ── 最近连接的设备 (账号链路, 设备选择页回填用) ──────────
 
-  /// 读取已保存的连接列表 (按 lastUsedAt 倒序)
-  Future<List<SavedConnection>> getConnections() async {
-    final json = await _secure.read(key: _keyConnections);
-    if (json == null) return [];
+  /// 读取最近连接的设备; 未存储或数据损坏返回 null
+  ///
+  /// 值形如 {deviceSid, deviceMid, deviceName, appVersion}
+  Future<Map<String, dynamic>?> getLastDevice() async {
+    final json = await _secure.read(key: _keyLastDevice);
+    if (json == null) return null;
     try {
-      final list = jsonDecode(json) as List;
-      final conns = list
-          .whereType<Map>()
-          .map((m) => SavedConnection.fromJson(Map<String, dynamic>.from(m)))
-          .toList();
-      conns.sort((a, b) => b.lastUsedAt.compareTo(a.lastUsedAt));
-      return conns;
+      final decoded = jsonDecode(json);
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+      return null;
     } catch (e) {
-      appLog.w('[Storage] 连接列表解析失败: $e');
-      return [];
+      appLog.w('[Storage] lastDevice 数据解析失败, 视为未存储: $e');
+      return null;
     }
   }
 
-  /// 保存连接列表
-  Future<void> saveConnections(List<SavedConnection> connections) async {
-    final json = jsonEncode([for (final c in connections) c.toJson()]);
-    await _secure.write(key: _keyConnections, value: json);
+  /// 保存最近连接的设备 (键约定: deviceSid/deviceMid/deviceName/appVersion)
+  Future<void> saveLastDevice(Map<String, dynamic> device) async {
+    await _secure.write(key: _keyLastDevice, value: jsonEncode(device));
+  }
+
+  /// 清除最近连接的设备记录
+  Future<void> clearLastDevice() async {
+    await _secure.delete(key: _keyLastDevice);
+  }
+
+  // ── 账号登录 (3.16+ OAuth) ──────────────────────────────
+  // JWT 与 session 同级保护 (不进 SharedPreferences)。
+
+  /// 读取账号凭据; 未登录或数据损坏返回 null
+  Future<ZcodeAccount?> getAccount() async {
+    final jwt = await _secure.read(key: _keyAccountJwt);
+    if (jwt == null || jwt.isEmpty) return null;
+    var userInfo = const <String, dynamic>{};
+    final userJson = await _secure.read(key: _keyAccountUser);
+    if (userJson != null) {
+      try {
+        final decoded = jsonDecode(userJson);
+        if (decoded is Map) {
+          userInfo = Map<String, dynamic>.from(decoded);
+        }
+      } catch (e) {
+        // userInfo 仅展示用, 损坏不清登录态
+        appLog.w('[Storage] 账号 userInfo 解析失败, 忽略: $e');
+      }
+    }
+    return ZcodeAccount(jwt: jwt, userInfo: userInfo);
+  }
+
+  /// 保存账号凭据
+  Future<void> saveAccount(ZcodeAccount account) async {
+    await _secure.write(key: _keyAccountJwt, value: account.jwt);
+    await _secure.write(
+      key: _keyAccountUser,
+      value: jsonEncode(account.userInfo),
+    );
+  }
+
+  /// 清除账号凭据 (退出账号登录)
+  Future<void> clearAccount() async {
+    await _secure.delete(key: _keyAccountJwt);
+    await _secure.delete(key: _keyAccountUser);
   }
 
   /// 获取或生成设备 ID

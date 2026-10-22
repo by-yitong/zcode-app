@@ -2564,6 +2564,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       try {
         await _relay.setSessionModel(
           workspacePath: _ref.workspacePath,
+          workspaceIdentity: _ref.workspaceIdentity,
           sessionId: _taskId!,
           model: desiredModel,
         );

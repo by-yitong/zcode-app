@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/logging/app_logger.dart';
+import '../../features/auth/screens/account_login_screen.dart';
+import '../../features/auth/screens/device_picker_screen.dart';
 import '../../features/auth/screens/login_screen.dart';
 import '../../features/auth/screens/splash_screen.dart';
 import '../../features/chat/screens/chat_screen.dart';
@@ -22,6 +24,12 @@ class AppRoutes {
   static const String chat = '/chat';
   static const String settings = '/settings';
   static const String filePreview = '/file-preview';
+
+  /// 账号登录 (桌面端 3.16+)
+  static const String accountLogin = '/account-login';
+
+  /// 设备选择 (账号登录成功后)
+  static const String devicePicker = '/device-picker';
 }
 
 /// GoRouter 配置
@@ -35,6 +43,14 @@ final goRouterProvider = GoRouter(
     GoRoute(
       path: AppRoutes.login,
       builder: (context, state) => const LoginScreen(),
+    ),
+    GoRoute(
+      path: AppRoutes.accountLogin,
+      builder: (context, state) => const AccountLoginScreen(),
+    ),
+    GoRoute(
+      path: AppRoutes.devicePicker,
+      builder: (context, state) => const DevicePickerScreen(),
     ),
     GoRoute(
       path: AppRoutes.home,

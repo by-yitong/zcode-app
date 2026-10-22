@@ -4,6 +4,27 @@
 > 抓取日期: 2026-07-31
 > 桌面端版本: app_version=3.5.3
 
+## ★ 3.16+ 账号认证 (2026-10-20 逆向, 3.16.2 bundle)
+
+桌面端 3.16 起 relay 强制账号认证, 旧免登录链路 (URL sid/hash → /ws HMAC) 对新桌面端失效。
+app 已双模适配 (`RelayAuthMode.legacyHash | accountJwt`), 设计契约见 `design-3.16-account-auth.md`。
+
+```
+① OAuth:   GET https://chat.z.ai/api/oauth/authorize?client_id=client_P8X5CMWmlaRO9gyO-KSqtg
+            &redirect_uri=https://zcode.z.ai/remote/v4&response_type=code&state=base64url({nonce})
+            回调 /remote/v4?code&state → POST /api/v1/oauth/token {provider:"zai",code,redirect_uri,state}
+            → {zcodeJwtToken, zaiAccessToken, userInfo}
+② 设备:    GET /api/v1/remote/device (Bearer zcodeJwtToken) → {code:0,msg,data:[{device_sid,device_mid,online,meta}]}
+③ 短时票:  POST /api/v1/remote/token {role:"terminal"} (Bearer JWT) → data:{token(22字符),expires_in}
+④ WS:      wss://zcode.z.ai/api/v1/remote/ws2?token=<③>&mid=<mid>
+            open 后 {"type":"auth_init","device_sid",...无role...} → auth_ack(matched)
+            无 HMAC challenge; token 过期→重换③再重连
+```
+
+zcode_type 消息层 (bootstrap/bridge/rpc-frame) 与旧链路相同。REST 响应统一 `{code,msg,data}` 包装, code≠0 即失败。
+
+---
+
 ## ★ v3 → v4 核心变化
 
 | v3 | v4 | 说明 |

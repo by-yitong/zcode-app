@@ -1,0 +1,21 @@
+HTTP/1.1 200 OK
+Server: ESA
+Content-Type: text/html
+Transfer-Encoding: chunked
+Connection: keep-alive
+Vary: Accept-Encoding
+Set-Cookie: acw_tc=6f06e7a017925034535367899e67ee5f6279dc845aa43109b7b36308af;path=/;HttpOnly;Max-Age=3600
+Set-Cookie: cdn_sec_tc=6f06e7a017925034535367899e67ee5f6279dc845aa43109b7b36308af;path=/;HttpOnly;Max-Age=3600
+cache-control: no-cache, no-store, must-revalidate
+date: Tue, 20 Oct 2026 13:37:33 GMT
+expires: 0
+last-modified: Mon, 19 Oct 2026 13:05:21 GMT
+set-cookie: acw_tc=0a43edee17925034535563305e311acbcfa809a705df86ef28ce3010d0af6c;path=/;HttpOnly;Max-Age=1800
+vary: Accept-Encoding
+vary: Accept-Encoding
+via: ens-cache50.l2nm125-7[339,0,DP], ens-cache26.cn9532[356,0,DP], ens-cache26.cn9532[358,0]
+x-site-cache-status: DYNAMIC
+pragma: no-cache
+Timing-Allow-Origin: *
+EagleId: 6f06e7a017925034535367899e
+

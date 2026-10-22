@@ -24,6 +24,11 @@ class HistoryDrawer extends ConsumerStatefulWidget {
   /// 切换工作区 (底部项目切换器)
   final ValueChanged<Workspace> onSwitchWorkspace;
 
+  /// 任务列表视图下选中任务 (跨工作区: 草稿对话任务在各自 draft 工作区,
+  /// 跳转必须带任务自身的 workspaceKey)。null 时回退 [onSelected]。
+  final void Function(String taskId, String workspaceKey)?
+  onSelectedInWorkspace;
+
   /// 打开搜索页 (跳转全屏搜索, 合并原顶栏搜索)
   final VoidCallback onOpenSearch;
 
@@ -43,6 +48,7 @@ class HistoryDrawer extends ConsumerStatefulWidget {
     required this.onSwitchWorkspace,
     required this.onOpenSearch,
     required this.onClose,
+    this.onSelectedInWorkspace,
     this.backgroundColor,
   });
 
@@ -52,6 +58,11 @@ class HistoryDrawer extends ConsumerStatefulWidget {
 
 class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
   bool _showArchived = false;
+
+  /// 「任务列表」聚合视图: 显示全部草稿对话任务 (projectId==null,
+  /// 对应网页侧栏「对话」分区)。false = 普通模式 (当前工作区任务)。
+  /// 切换真实项目时自动复位。
+  bool _conversationView = false;
 
   /// 默认工作区 = 网页端的"不在项目中工作" (路径以 .zcode/workspace/default 结尾)
   static bool _isDefaultWorkspace(Workspace w) =>
@@ -253,7 +264,12 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
       child: InkWell(
         onTap: () {
           widget.onClose(); // 关抽屉
-          widget.onSelected(task.id);
+          if (_conversationView && widget.onSelectedInWorkspace != null) {
+            // 任务列表视图: 任务在各自 draft 工作区, 跳转带任务自身工作区
+            widget.onSelectedInWorkspace!(task.id, task.workspaceKey);
+          } else {
+            widget.onSelected(task.id);
+          }
         },
         onLongPress: () => _showTaskActions(context, task),
         borderRadius: BorderRadius.circular(AppRadius.md),
@@ -381,13 +397,19 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
     final theme = Theme.of(context);
     final allTasks = ref.watch(allTasksProvider);
     // 根据 _showArchived 过滤任务 (标题搜索已移至全屏搜索页)
-    final tasks = allTasks
-        .where(
-          (t) =>
-              t.workspaceKey == widget.workspacePath &&
-              t.archived == _showArchived,
-        )
-        .toList();
+    // 任务列表视图: 聚合全部草稿对话任务 (按任务自身 workspaceKey 连接)
+    final tasks =
+        _conversationView
+            ? allTasks
+                .where((t) => t.isConversation && t.archived == _showArchived)
+                .toList()
+            : allTasks
+                .where(
+                  (t) =>
+                      t.workspaceKey == widget.workspacePath &&
+                      t.archived == _showArchived,
+                )
+                .toList();
     tasks.sort(
       (a, b) => (b.updatedAt?.millisecondsSinceEpoch ?? 0).compareTo(
         a.updatedAt?.millisecondsSinceEpoch ?? 0,
@@ -565,7 +587,9 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
         .where((w) => w.workspaceKey == widget.workspacePath)
         .firstOrNull;
     final isDefault = current != null && _isDefaultWorkspace(current);
-    final label = current == null
+    final label = _conversationView
+        ? '任务列表'
+        : current == null
         ? '选择项目'
         : (isDefault ? '不在项目中工作' : current.name);
 
@@ -666,6 +690,48 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                 ),
                 child: Text('切换项目', style: theme.textTheme.titleMedium),
               ),
+              // 任务列表 (聚合草稿对话, 对应网页侧栏「对话」分区)
+              ListTile(
+                dense: true,
+                leading: Icon(
+                  Icons.forum_outlined,
+                  size: 20,
+                  color: _conversationView
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.onSurfaceVariant,
+                ),
+                title: Text(
+                  '任务列表',
+                  style: TextStyle(
+                    fontSize: AppTextSizes.bodyMd,
+                    fontWeight: _conversationView
+                        ? FontWeight.w600
+                        : FontWeight.w400,
+                  ),
+                ),
+                subtitle: Text(
+                  '全部对话与后台任务',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: AppTextSizes.caption,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                trailing: _conversationView
+                    ? Icon(
+                        Icons.check_rounded,
+                        size: 20,
+                        color: theme.colorScheme.primary,
+                      )
+                    : null,
+                onTap: () {
+                  Navigator.pop(ctx);
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  // 切到任务列表聚合视图 (不切工作区, 聊天连接仍归各任务自身)
+                  setState(() => _conversationView = true);
+                },
+              ),
               for (final w in sorted)
                 ListTile(
                   dense: true,
@@ -724,7 +790,11 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                     // 切项目不关抽屉: 列表随新工作区自动刷新,
                     // 用户留在抽屉里继续选会话 (产品要求)
                     if (w.workspaceKey != widget.workspacePath) {
+                      setState(() => _conversationView = false);
                       widget.onSwitchWorkspace(w);
+                    } else if (_conversationView) {
+                      // 回到当前项目: 退出任务列表视图
+                      setState(() => _conversationView = false);
                     }
                   },
                 ),
