@@ -133,10 +133,33 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
+  /// 按路由 workspaceKey 解析工作区:
+  /// 1. 全局选中项同 key → 直接用 (bootstrap 带完整 identity);
+  /// 2. 工作区列表匹配 (tree 合并后的项目);
+  /// 3. 都没有 (draft 草稿对话工作区不进列表) → 用路径构造兜底,
+  ///    本地工作区 identity == path (3.7.7 实测), 服务端可按 path 解析。
+  Workspace _resolveRouteWorkspace(Workspace? selected) {
+    if (selected?.workspaceKey == widget.workspaceKey) return selected!;
+    final list =
+        ref.watch(workspaceListProvider).valueOrNull ?? const <Workspace>[];
+    final matched = list
+        .where((w) => w.workspaceKey == widget.workspaceKey)
+        .firstOrNull;
+    return matched ??
+        Workspace.fromJson({
+          'workspacePath': widget.workspaceKey,
+          'label': '对话',
+        });
+  }
+
   @override
   Widget build(BuildContext context) {
     final workspace = ref.watch(selectedWorkspaceProvider);
-    final title = workspace?.name ?? '对话';
+    // ★ identity 必须按路由 workspaceKey 解析: 任务列表/搜索等跨工作区跳转
+    // 不一定先更新全局选中项, 盲取选中项会得到「path 属 A、identity 属 B」的
+    // 错配组合, 服务端按 identity 找不到会话 → 历史内容加载不出来。
+    final routeWorkspace = _resolveRouteWorkspace(workspace);
+    final title = routeWorkspace.name;
     // 抽屉背景色: HistoryDrawer 与 RevealDrawer.backdropColor 共用同一色,
     // 页面推开后四周露出的底才与抽屉浑然一体 (不出现黑边)
     final drawerBg = Theme.of(context).brightness == Brightness.dark
@@ -151,7 +174,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final chatRef = ChatRef(
       taskId: widget.taskId,
       workspacePath: widget.workspaceKey,
-      workspaceIdentity: workspace?.workspaceIdentity,
+      workspaceIdentity: routeWorkspace.workspaceIdentity,
     );
     final chatState = ref.watch(chatProvider(chatRef));
 
