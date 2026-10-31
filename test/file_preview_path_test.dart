@@ -75,4 +75,31 @@ void main() {
       );
     });
   });
+
+  group('codeLangOf (代码高亮语言映射)', () {
+    test('常见扩展名', () {
+      expect(codeLangOf('/a/b.dart'), 'dart');
+      expect(codeLangOf('/a/b.py'), 'python');
+      expect(codeLangOf('/a/b.ts'), 'typescript');
+      expect(codeLangOf('/a/b.go'), 'go');
+      expect(codeLangOf('/a/b.rs'), 'rust');
+      expect(codeLangOf('/a/b.yaml'), 'yaml');
+      expect(codeLangOf('/a/b.yml'), 'yaml');
+      expect(codeLangOf('/a/b.json'), 'json');
+      expect(codeLangOf('/a/b.md'), 'markdown');
+      expect(codeLangOf('/a/b.sh'), 'bash');
+    });
+
+    test('文件名直配 (无扩展名或全名)', () {
+      expect(codeLangOf('/x/Dockerfile'), 'dockerfile');
+      expect(codeLangOf('/x/.gitignore'), 'bash');
+      expect(codeLangOf('/x/pubspec.yaml'), 'yaml');
+    });
+
+    test('大写扩展名与未知返回', () {
+      expect(codeLangOf('/a/B.DART'), 'dart');
+      expect(codeLangOf('/a/b.xyzunknown'), isNull);
+      expect(codeLangOf('/a/noext'), isNull);
+    });
+  });
 }

@@ -1,4 +1,6 @@
 // file 通道 typed 封装测试 (假 RPC 缝, 不连真 relay)。
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:zcode_app/core/relay/file_api.dart';
@@ -60,52 +62,69 @@ void main() {
     ]);
   });
 
-  test('probeWatcher: 第一候选(file-watcher)成功即命中, rootWatchId 取自 watch 响应', () async {
-    final api = FileApi.direct((c, m, a) async => ok({'id': 'w1'}));
-    final info = await api.probeWatcher(
-      rootPath: '/ws',
-      subscribeRaw: (channel, event, listenArgs) async {
-        expect(channel, 'file-watcher');
-        return const Stream.empty();
+  test('watchAndListen: 先 watch 拿 id 再 LISTEN(id 标量), 事件名实证 onDynamicChange', () async {
+    final order = <String>[];
+    String? listenArgs;
+    final api = FileApi.direct(
+      (c, m, a) async {
+        order.add('$c.$m');
+        return ok({'id': 'w1'});
+      },
+      listenRaw: (channel, event, args) {
+        order.add('LISTEN $channel.$event');
+        listenArgs = args;
+        return (stream: const Stream.empty(), dispose: () {});
       },
     );
-    expect(info, isNotNull);
-    expect(info!.channel, 'file-watcher');
-    expect(info.rootWatchId, 'w1');
-    expect(info.listenEvent, 'onDidChange');
+    final h = await api.watchAndListen('/ws');
+    expect(order, ['file-watcher.watch', 'LISTEN file-watcher.onDynamicChange']);
+    expect(h, isNotNull);
+    expect(h!.path, '/ws');
+    expect(h.watchId, 'w1');
+    expect(listenArgs, 'w1'); // 抓包实证: LISTEN 参数是 watchId 标量
   });
 
-  test('probeWatcher: 首候选抛异常降级到 file 通道; 全失败返回 null', () async {
+  test('watchAndListen: watch 抛异常或无 id 返回 null 不抛', () async {
+    final api = FileApi.direct((c, m, a) async => throw StateError('x'));
+    expect(await api.watchAndListen('/ws'), isNull);
+    final noId = FileApi.direct((c, m, a) async => ok({'foo': 1}));
+    expect(await noId.watchAndListen('/ws'), isNull);
+  });
+
+  test('watchAndListen: 事件流经 FileWatchEvent.fromBody (dirPath+changedPath)', () async {
+    late StreamController<Map<String, dynamic>> ctrl;
+    final api = FileApi.direct(
+      (c, m, a) async => ok({'id': 'w5'}),
+      listenRaw: (c, e, l) {
+        ctrl = StreamController<Map<String, dynamic>>();
+        return (stream: ctrl.stream, dispose: () {});
+      },
+    );
+    final h = await api.watchAndListen('/ws/lib');
+    final events = <FileWatchEvent>[];
+    h!.events.listen(events.add);
+    ctrl.add({'dirPath': '/ws/lib', 'changedPath': '/ws/lib/a.dart'});
+    await pumpEventQueue();
+    expect(events.single.dirPath, '/ws/lib');
+    expect(events.single.changedPath, '/ws/lib/a.dart');
+    await ctrl.close();
+  });
+
+  test('unwatch: 参数 [{id}] 上帧; 失败吞错', () async {
+    final seen = <dynamic>[];
     final api = FileApi.direct((c, m, a) async {
-      if (c == 'file-watcher') throw StateError('unknown channel');
-      return ok({'id': 'w2'});
+      seen.add('$c.$m $a');
+      return ok({});
     });
-    final info = await api.probeWatcher(
-      rootPath: '/ws',
-      subscribeRaw: (c, e, l) async => const Stream.empty(),
-    );
-    expect(info?.channel, 'file');
-    expect(info?.rootWatchId, 'w2');
-
-    final apiAllFail = FileApi.direct((c, m, a) async => throw StateError('x'));
-    expect(
-      await apiAllFail.probeWatcher(
-        rootPath: '/ws',
-        subscribeRaw: (c, e, l) async => const Stream.empty(),
-      ),
-      isNull,
-    );
-  });
-
-  test('watchDir 解析 {id}; 失败返回 null 不抛', () async {
-    final api = FileApi.direct((c, m, a) async => ok({'id': 'w9'}));
-    expect(await api.watchDir(channel: 'file-watcher', path: '/ws/lib'), 'w9');
+    await api.unwatch(watchId: 'w9');
+    expect(seen.single, 'file-watcher.unwatch [{id: w9}]');
     final bad = FileApi.direct((c, m, a) async => throw StateError('x'));
-    expect(await bad.watchDir(channel: 'file-watcher', path: '/ws/lib'), isNull);
+    await bad.unwatch(watchId: 'w9'); // 不抛
   });
 
-  test('FileWatchEvent.fromBody 兼容 changedPath 直挂与 raw 包裹', () {
+  test('FileWatchEvent.fromBody 兼容 dirPath/changedPath 直挂与 raw 包裹', () {
     expect(FileWatchEvent.fromBody({'changedPath': '/ws/a'}).changedPath, '/ws/a');
+    expect(FileWatchEvent.fromBody({'dirPath': '/ws/lib'}).dirPath, '/ws/lib');
     expect(
       FileWatchEvent.fromBody({'raw': {'changedPath': '/ws/b'}}).changedPath,
       '/ws/b',

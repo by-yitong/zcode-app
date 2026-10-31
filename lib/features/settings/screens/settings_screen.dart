@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../core/logging/app_logger.dart';
 import '../../../core/relay/relay_protocol.dart';
 import '../../../core/feedback/notification_sound.dart';
 import '../../../core/services/display_service.dart';
@@ -329,6 +332,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     onTap: () => _checkUpdate(context),
                   ),
                   _SettingsRow(
+                    icon: Icons.bug_report_outlined,
+                    title: '导出连接凭证 (调试)',
+                    value: '复制',
+                    onTap: () => _exportCredentials(context, ref),
+                  ),
+                  _SettingsRow(
+                    icon: Icons.article_outlined,
+                    title: '导出调试日志',
+                    value: '复制',
+                    onTap: () => _exportLogs(context),
+                  ),
+                  _SettingsRow(
                     icon: Icons.code_outlined,
                     title: 'GitHub',
                     onTap: () =>
@@ -438,6 +453,66 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     } catch (_) {
       // 无可处理的应用时静默忽略
     }
+  }
+
+  /// 导出连接凭证 (调试用): device_sid/mid/deviceName/appVersion + 账号 JWT。
+  /// 含敏感凭据, 仅本人调试自用, 不要分享给他人。
+  Future<void> _exportCredentials(BuildContext context, WidgetRef ref) async {
+    final storage = ref.read(secureStorageProvider);
+    final session = await storage.getSession();
+    final account = await storage.getAccount();
+    if (session == null || !session.isValid || account == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('未登录, 无可导出凭证')),
+      );
+      return;
+    }
+    final payload = jsonEncode({
+      'origin': 'https://zcode.z.ai',
+      'deviceSid': session.deviceSid,
+      'mid': session.mid,
+      'deviceName': session.deviceName,
+      'appVersion': session.appVersion,
+      'jwt': account.jwt,
+    });
+    await Clipboard.setData(ClipboardData(text: payload));
+    if (!context.mounted) return;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('连接凭证已复制'),
+        content: const Text(
+          '剪贴板里是 JSON (deviceSid/mid/jwt)。仅用于协议调试, '
+          '请勿转发他人; 调试完成后可重新登录使该 JWT 失效。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 导出调试日志: 复制进程内日志缓冲全文 (含 relay 协议日志), 便于排查。
+  /// 复制后清空缓冲, 下次导出只含新问题。
+  void _exportLogs(BuildContext context) {
+    final text = appLog.exportLog();
+    if (text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('暂无日志')),
+      );
+      return;
+    }
+    Clipboard.setData(ClipboardData(text: text));
+    appLog.clearLog();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('已复制 ${text.length} 字符日志 (缓冲已清空)'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   /// 手动检查更新 (GitHub Releases)

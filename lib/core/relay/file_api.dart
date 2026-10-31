@@ -11,21 +11,21 @@ export 'git_api.dart' show RpcCallFn;
 /// file 通道名 (桌面端共享协议枚举原文 File:"file", app 已实测)。
 const String kFileChannel = 'file';
 
-/// fileWatcher 通道候选 (spec §4.3 冻结探测顺序):
-/// 1. file-watcher (外围域 kebab 规律推断, 同 mcp-sync/model-provider)
-/// 2. file 通道上的 watch 方法 (兜底: FileWatcher 与 File 在桌面通道表相邻)
-const List<({String channel, String listenEvent})> kWatcherCandidates = [
-  (channel: 'file-watcher', listenEvent: 'onDidChange'),
-  (channel: 'file', listenEvent: 'watch'),
-];
+/// fileWatcher wire (2026-10-27 3.16.3 抓包 + 网页 bundle 实证):
+/// - channel: 'file-watcher'
+/// - watch [{path}] (递归加 recursive:true) → OK {id}
+/// - LISTEN 'onDynamicChange', 参数 = watchId 标量 (抓包 body:"115")
+/// - 事件 body: {dirPath, changedPath} (网页树按 dirPath 局部刷新)
+/// - unwatch [{id}]
+const String kWatcherChannel = 'file-watcher';
+const String kWatcherEvent = 'onDynamicChange';
 
-/// 原始帧订阅函数形 (测试注入缝; 生产 = RelayClient.subscribeRawFrames)。
-typedef RawSubscribeFn =
-    Future<Stream<Map<String, dynamic>>> Function(
-      String channel,
-      String event,
-      Map<String, dynamic> listenArgs,
-    );
+/// LISTEN 订阅产物形 (relay_client.listenRawFrames 同形; 测试注入缝)。
+typedef RawListen =
+    ({
+      Stream<Map<String, dynamic>> stream,
+      void Function() dispose,
+    }) Function(String channel, String event, dynamic listenArgs);
 
 /// 目录条目 (file.readdir; 网页端消费 name/path/type/isSymbolicLink)。
 class FileEntry {
@@ -53,11 +53,15 @@ class FileEntry {
   );
 }
 
-/// 目录变化事件 (fileWatcher 动态帧; 网页端 UNt 消费 changedPath)。
+/// 目录变化事件 (fileWatcher onDynamicChange; 网页消费 dirPath+changedPath)。
 class FileWatchEvent {
+  /// 变化所属目录 (网页 WorkspaceFileTree 按 dirPath 定位刷新)。
+  final String dirPath;
+
+  /// 具体变化文件 (PptxFileWatch 等按文件路径消费)。
   final String changedPath;
 
-  const FileWatchEvent({required this.changedPath});
+  const FileWatchEvent({required this.dirPath, required this.changedPath});
 
   factory FileWatchEvent.fromBody(dynamic body) {
     final m = body is Map
@@ -66,45 +70,39 @@ class FileWatchEvent {
               : Map<String, dynamic>.from(body))
         : const <String, dynamic>{};
     return FileWatchEvent(
+      dirPath: m['dirPath'] as String? ?? '',
       changedPath: (m['changedPath'] ?? m['path']) as String? ?? '',
     );
   }
 }
 
-/// probeWatcher 成功产物: 命中通道 + 事件流 + 根目录 watch 句柄 (探针复用)。
-typedef FileWatcherInfo =
+/// watch + 订阅句柄: 一个目录一组 (watchId 专属 LISTEN, 对齐网页)。
+typedef FileWatcherHandle =
     ({
-      String channel,
-      String listenEvent,
+      String path,
+      String watchId,
       Stream<FileWatchEvent> events,
-      String rootWatchId,
+      void Function() dispose,
     });
 
 class FileApi {
   final RpcCallFn _call;
-  final RawSubscribeFn _subscribeRaw;
+  final RawListen _listenRaw;
 
-  /// 生产构造: rpcCallMap + subscribeRawFrames。
-  ///
-  /// subscribeRawFrames 需具名 activate 参数, 与 RawSubscribeFn (3 位置参
-  /// 测试缝) 不同形, 故包一层空 activate: subscribeRawFrames 返回前 LISTEN
-  /// 已发出且路由表已注册 (controller 非广播, 先到的帧会缓冲), watch 由
-  /// [probeWatcher] 在订阅返回后再发, 时序仍满足「先 LISTEN 后 watch」。
+  /// 生产构造: rpcCallMap + listenRawFrames。
   FileApi(RelayClient relay)
     : _call = ((channel, method, args) =>
           relay.rpcCallMap(channel, method, args)),
-      _subscribeRaw =
-          ((channel, event, listenArgs) => relay.subscribeRawFrames(
-                channel,
-                event,
-                listenArgs,
-                activate: () async {},
-              ));
+      _listenRaw = relay.listenRawFrames;
 
-  /// 测试构造: 直接注入 RPC / 订阅函数。
-  FileApi.direct(this._call, {RawSubscribeFn? subscribeRaw})
-    : _subscribeRaw =
-          subscribeRaw ?? ((c, e, l) async => const Stream.empty());
+  /// 测试构造: 直接注入 RPC / LISTEN 函数。
+  FileApi.direct(this._call, {RawListen? listenRaw})
+    : _listenRaw =
+          listenRaw ??
+          ((c, e, l) => (
+                stream: const Stream<Never>.empty(),
+                dispose: () {},
+              ));
 
   /// 列目录 (includeHidden 恒 true, 忽略项由 getIgnoredPaths 过滤, 对齐网页端)。
   /// wire: 参数数组上帧; body 兼容 [裸数组 | {entries:[...]}]。
@@ -126,60 +124,36 @@ class FileApi {
     List<String> paths,
   ) => GitApi(_call).getIgnoredPaths(workspacePath, paths);
 
-  /// 探测 fileWatcher 通道 (spec §4.3): 依序试候选, 先挂 LISTEN 订阅再调
-  /// watch, 全成功即命中并返回句柄; 全失败返回 null (= 本会话降级手动刷新,
-  /// 不抛)。rootPath 的 watch 探针即根目录监听本体, 命中后不 unwatch
-  /// (controller 复用)。候选失败时 LISTEN 暂无独立退订口 (RawSubscribeFn 缝
-  /// 只出不进), 留待断线时 _indexFrameSubs 统一清理, 单次探测至多残留 1 条。
-  /// [subscribeRaw] 为逐次注入缝 (测试用; 生产省略, 落到构造注入的实现)。
-  Future<FileWatcherInfo?> probeWatcher({
-    required String rootPath,
-    RawSubscribeFn? subscribeRaw,
-  }) async {
-    final subscribe = subscribeRaw ?? _subscribeRaw;
-    for (final c in kWatcherCandidates) {
-      try {
-        final raw = await subscribe(c.channel, c.listenEvent, const {});
-        final b = await _call(c.channel, 'watch', [
-          {'path': rootPath},
-        ]);
-        final watchId =
-            (b['id'] ?? (b['raw'] is Map ? (b['raw'] as Map)['id'] : null))
-                as String?;
-        if (watchId == null || watchId.isEmpty) continue;
-        return (
-          channel: c.channel,
-          listenEvent: c.listenEvent,
-          events: raw.map(FileWatchEvent.fromBody),
-          rootWatchId: watchId,
-        );
-      } catch (_) {
-        continue; // 该候选不可用, 试下一个
-      }
-    }
-    return null;
-  }
-
-  /// 监听目录 (probeWatcher 命中后逐展开目录调; 失败返回 null 不抛)。
-  Future<String?> watchDir({required String channel, required String path}) async {
+  /// watch 一个目录并订阅其变更 (网页时序: 先 watch 拿 id, 再 LISTEN(id),
+  /// 2026-10-27 抓包 frame 839/846/848 实证)。失败返回 null = 本会话降级
+  /// 手动刷新, 不抛。
+  Future<FileWatcherHandle?> watchAndListen(String path) async {
+    String watchId;
     try {
-      final b = await _call(channel, 'watch', [
+      final b = await _call(kWatcherChannel, 'watch', [
         {'path': path},
       ]);
-      return (b['id'] ?? (b['raw'] is Map ? (b['raw'] as Map)['id'] : null))
-          as String?;
+      watchId =
+          (b['id'] ?? (b['raw'] is Map ? (b['raw'] as Map)['id'] : null))
+              as String? ??
+          '';
     } catch (_) {
       return null;
     }
+    if (watchId.isEmpty) return null;
+    final sub = _listenRaw(kWatcherChannel, kWatcherEvent, watchId);
+    return (
+      path: path,
+      watchId: watchId,
+      events: sub.stream.map(FileWatchEvent.fromBody),
+      dispose: sub.dispose,
+    );
   }
 
   /// 取消监听 (尽力而为, 吞错: 降级路径里 id 可能已失效)。
-  Future<void> unwatch({
-    required String channel,
-    required String watchId,
-  }) async {
+  Future<void> unwatch({required String watchId}) async {
     try {
-      await _call(channel, 'unwatch', [
+      await _call(kWatcherChannel, 'unwatch', [
         {'id': watchId},
       ]);
     } catch (_) {}

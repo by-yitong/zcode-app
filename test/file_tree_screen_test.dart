@@ -24,16 +24,10 @@ class FakeFileApi implements FileApi {
   ) async => const [];
 
   @override
-  Future<FileWatcherInfo?> probeWatcher({
-    required String rootPath,
-    RawSubscribeFn? subscribeRaw,
-  }) async => null;
+  Future<FileWatcherHandle?> watchAndListen(String path) async => null;
 
   @override
-  Future<String?> watchDir({required String channel, required String path}) async => null;
-
-  @override
-  Future<void> unwatch({required String channel, required String watchId}) async {}
+  Future<void> unwatch({required String watchId}) async {}
 }
 
 class FakeGitApi implements GitApi {
@@ -94,7 +88,7 @@ Future<void> pump(WidgetTester tester, FakeFileApi api, FakeGitApi git,
 }
 
 void main() {
-  testWidgets('变更过滤默认开: 未命中文件剪枝; 切「全部」后可见', (tester) async {
+  testWidgets('变更过滤默认关 (网页实证 useState(!1)); 切「仅变更」后未命中剪枝', (tester) async {
     await pump(tester, FakeFileApi({'/ws': rootEntries}), FakeGitApi(changes: [
       GitChange.fromJson({
         'path': '/ws/lib/a.dart', 'repoRelativePath': 'lib/a.dart',
@@ -102,13 +96,14 @@ void main() {
       }),
     ]));
     expect(find.text('文件树'), findsOneWidget);
-    // lib 目录按前缀命中保留; README.md 无变更被剪
+    // 默认显示全部 (网页 bundle useState(!1) 实证)
     expect(find.text('lib'), findsOneWidget);
-    expect(find.text('README.md'), findsNothing);
-
-    await tester.tap(find.byTooltip('显示全部文件'));
-    await tester.pumpAndSettle();
     expect(find.text('README.md'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('仅显示变更文件'));
+    await tester.pumpAndSettle();
+    expect(find.text('README.md'), findsNothing);
+    expect(find.text('lib'), findsOneWidget); // lib 目录按前缀命中保留
   });
 
   testWidgets('点目录展开懒加载, 子层 ignored 过滤', (tester) async {
@@ -123,9 +118,6 @@ void main() {
       }),
       FakeGitApi(ignored: ['/ws/lib/node_modules']),
     );
-    // 先切全部, 让目录可见
-    await tester.tap(find.byTooltip('显示全部文件'));
-    await tester.pumpAndSettle();
     await tester.tap(find.text('lib'));
     await tester.pumpAndSettle();
     expect(find.text('a.dart'), findsOneWidget);
@@ -134,8 +126,6 @@ void main() {
 
   testWidgets('长按文件弹 4 项菜单; 长按目录弹 2 项 (无加入对话/打开预览)', (tester) async {
     await pump(tester, FakeFileApi({'/ws': rootEntries}), FakeGitApi());
-    await tester.tap(find.byTooltip('显示全部文件'));
-    await tester.pumpAndSettle();
 
     await tester.longPress(find.text('README.md'));
     await tester.pumpAndSettle();
@@ -179,8 +169,6 @@ void main() {
       ),
     ));
     await tester.tap(find.text('OPEN'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('显示全部文件'));
     await tester.pumpAndSettle();
     await tester.longPress(find.text('README.md'));
     await tester.pumpAndSettle();
@@ -231,14 +219,8 @@ class _FailingFileApi implements FileApi {
   ) async => const [];
 
   @override
-  Future<FileWatcherInfo?> probeWatcher({
-    required String rootPath,
-    RawSubscribeFn? subscribeRaw,
-  }) async => null;
+  Future<FileWatcherHandle?> watchAndListen(String path) async => null;
 
   @override
-  Future<String?> watchDir({required String channel, required String path}) async => null;
-
-  @override
-  Future<void> unwatch({required String channel, required String watchId}) async {}
+  Future<void> unwatch({required String watchId}) async {}
 }

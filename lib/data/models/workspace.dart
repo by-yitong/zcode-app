@@ -28,6 +28,12 @@ class Workspace {
   final String? branch;
   final String? preferredTaskId;
 
+  /// readTree 项目库中的项目 ID + 所属 host (本地为 'local')。
+  /// bridge-open 带 project:{projectId, hostId} 时桌面端会为该项目
+  /// 自动开工作区标签 (prepareProjectWorkspace) — 跨工作区打开项目的关键。
+  final String? projectId;
+  final String? hostId;
+
   Workspace({
     required this.workspaceKey,
     required this.workspaceIdentity,
@@ -38,6 +44,8 @@ class Workspace {
     this.canBridge = true,
     this.branch,
     this.preferredTaskId,
+    this.projectId,
+    this.hostId,
   });
 
   factory Workspace.fromJson(Map<String, dynamic> json) {
@@ -58,6 +66,25 @@ class Workspace {
       branch: json['branch'] as String?,
       preferredTaskId:
           json['preferredTaskId'] as String? ?? json['taskId'] as String?,
+      projectId: json['projectId'] as String?,
+      hostId: json['hostId'] as String?,
+    );
+  }
+
+  /// 保留其余字段, 仅更新 readTree 项目信息
+  Workspace copyWithProject({String? projectId, String? hostId}) {
+    return Workspace(
+      workspaceKey: workspaceKey,
+      workspaceIdentity: workspaceIdentity,
+      workspacePath: workspacePath,
+      name: name,
+      kind: kind,
+      purpose: purpose,
+      canBridge: canBridge,
+      branch: branch,
+      preferredTaskId: preferredTaskId,
+      projectId: projectId ?? this.projectId,
+      hostId: hostId ?? this.hostId,
     );
   }
 
@@ -103,15 +130,24 @@ class Workspace {
           ? (roots.first as Map)['rootPath'] as String? ?? ''
           : '';
       if (path.isEmpty || !seen.add(path)) continue;
-      // bootstrap 同路径工作区优先 (带 purpose/kind 等完整信息)
+      final treeProjectId = p['id'] as String?;
+      final treeHostId = p['hostId'] as String? ?? 'local';
+      // bootstrap 同路径工作区优先 (带 purpose/kind 等完整信息),
+      // 并补上 readTree 的项目导航信息 (projectId/hostId)
       final active = activeFallback
           .where((w) => w.workspacePath == path)
           .firstOrNull;
       result.add(
-        active ?? Workspace.fromJson({
-          'workspacePath': path,
-          'label': p['name'],
-        }),
+        active?.copyWithProject(
+          projectId: treeProjectId,
+          hostId: treeHostId,
+        ) ??
+            Workspace.fromJson({
+              'workspacePath': path,
+              'label': p['name'],
+              'projectId': treeProjectId,
+              'hostId': treeHostId,
+            }),
       );
     }
     // bootstrap 活跃但 readTree 没有的 (如 conversation 工作区) 追加
@@ -149,6 +185,10 @@ class Task {
   /// null = 无项目归属 — 即草稿对话 (draft 工作区) 任务,
   /// 对应网页侧栏「对话」分区 / app「任务列表」聚合视图。
   final String? projectId;
+
+  /// 任务所属 host (readTree 行自带; 本地任务为 'local', 远程为 host id)。
+  /// bridge-open 带 taskId+hostId 时桌面端会自动切窗到该任务的工作区。
+  final String? hostId;
   final DateTime? updatedAt;
   final DateTime? createdAt;
 
@@ -160,6 +200,7 @@ class Task {
     this.archived = false,
     this.pinned = false,
     this.projectId,
+    this.hostId,
     this.updatedAt,
     this.createdAt,
   });
@@ -183,6 +224,7 @@ class Task {
       archived: json['archived'] as bool? ?? false,
       pinned: json['pinned'] as bool? ?? false,
       projectId: json['projectId'] as String?,
+      hostId: json['hostId'] as String?,
       // 时间戳: 实测为 int 毫秒, 兼容 ISO 字符串
       updatedAt: _parseTime(json['updatedAt']),
       createdAt: _parseTime(json['createdAt']),
@@ -215,6 +257,8 @@ class Task {
     TaskStatus? status,
     bool? archived,
     bool? pinned,
+    String? hostId,
+    String? projectId,
     DateTime? updatedAt,
   }) {
     return Task(
@@ -224,6 +268,8 @@ class Task {
       status: status ?? this.status,
       archived: archived ?? this.archived,
       pinned: pinned ?? this.pinned,
+      hostId: hostId ?? this.hostId,
+      projectId: projectId ?? this.projectId,
       updatedAt: updatedAt ?? this.updatedAt,
       createdAt: createdAt,
     );

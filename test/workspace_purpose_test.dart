@@ -57,4 +57,37 @@ void main() {
       expect(w.isConversation, isFalse);
     });
   });
+
+  group('Task.hostId (readTree 行自带, bridge-open 切窗用)', () {
+    test('fromJson 解析 hostId (本地任务为 local)', () {
+      final t = Task.fromJson({
+        'taskId': 't1',
+        'workspacePath': '/home/u/proj-a',
+        'hostId': 'local',
+        'projectId': 'p1',
+      });
+      expect(t.hostId, 'local');
+      expect(t.projectId, 'p1');
+    });
+
+    test('hostId 缺省 → null (旧链路 bootstrap 任务)', () {
+      final t = Task.fromJson({'taskId': 't2', 'workspacePath': '/a'});
+      expect(t.hostId, isNull);
+    });
+
+    test('parseTreeTasks 保留每行 hostId, copyWith 透传', () {
+      final tasks = Task.parseTreeTasks({
+        'tasks': [
+          {'taskId': 'a', 'workspacePath': '/p1', 'hostId': 'local'},
+          {
+            'taskId': 'b',
+            'workspacePath': '/remote/p2',
+            'hostId': 'host-uuid-1',
+          },
+        ],
+      });
+      expect(tasks.map((t) => t.hostId).toList(), ['local', 'host-uuid-1']);
+      expect(tasks.last.copyWith(title: '新标题').hostId, 'host-uuid-1');
+    });
+  });
 }

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../providers/app_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/theme/app_router.dart';
+import '../../../shared/widgets/code_highlight.dart';
 
 // ================================================================
 // 路径解析纯函数 (供单测 / message_bubble / plan_card 复用)
@@ -103,31 +104,40 @@ class _FilePreviewScreenState extends ConsumerState<FilePreviewScreen> {
   /// 超过 256KB 只显示前 256KB
   static const int _maxBytes = 256 * 1024;
 
-  /// 行号跳转估算: 20px/行 (mono 13px × height 1.5 ≈ 19.5, 取整)
-  static const double _lineHeightPx = 20;
+  /// 超过此长度不做语法高亮 (highlight 分词 + 巨量 TextSpan 会卡帧),
+  /// 回退纯等宽文本; readTextFile 首读上限即 [_maxBytes]。
+  static const int _highlightMaxBytes = 96 * 1024;
 
   late Future<String> _future = _load();
   final ScrollController _scroll = ScrollController();
+
+  /// 服务端截断标志 (readTextFile 响应 truncated:true = 文件超 [_maxBytes],
+  /// 网页 bundle vIn 同语义; 内容端续读走 file/readFileRange, App 暂只提示)。
+  bool _truncatedByServer = false;
 
   /// 解析后的目标路径
   FileLinkTarget get _target =>
       parseFileLinkTarget(widget.path, workspace: widget.workspace);
 
-  /// 经 relay RPC 读远端文件全文 (契约: channel 'file' / readTextFile)
+  /// 经 relay RPC 读远端文件 (契约: channel 'file' / readTextFile, 首读
+  /// 256KB 分页 — 对齐网页 wire {path, offset:0, length:256*1024})
   Future<String> _load() async {
+    _truncatedByServer = false;
     final client = ref.read(relayClientProvider);
     if (client == null) {
       throw Exception('未连接桌面端, 无法读取文件');
     }
     final resp = await client.rpcCall('file', 'readTextFile', [
-      {'path': _target.path},
+      {'path': _target.path, 'offset': 0, 'length': _maxBytes},
     ]);
     if (!resp.isOk) {
       throw Exception(resp.errorMessage ?? '未知错误');
     }
     final body = resp.body;
     if (body is Map && body['content'] is String) {
-      return body['content'] as String;
+      if (body['truncated'] == true) _truncatedByServer = true;
+      _content = body['content'] as String;
+      return _content!;
     }
     throw Exception('响应格式异常');
   }
@@ -136,14 +146,18 @@ class _FilePreviewScreenState extends ConsumerState<FilePreviewScreen> {
     setState(() => _future = _load());
   }
 
-  /// 按初始行号跳转 (20px/行 估算, 简单实现)
+  /// 按初始行号跳转: 高亮视图无固定行高, 用比例估算 (line/总行数)
   void _jumpToLine() {
     final line = widget.line;
     if (line == null || line <= 1 || !_scroll.hasClients) return;
     final max = _scroll.position.maxScrollExtent;
-    final offset = (line - 1) * _lineHeightPx;
-    _scroll.jumpTo(offset > max ? max : offset);
+    final total = (_content?.split('\n').length ?? 0);
+    if (total <= 0 || max <= 0) return;
+    final offset = (line - 1) / total * max;
+    _scroll.jumpTo(offset.clamp(0.0, max));
   }
+
+  String? _content;
 
   @override
   void dispose() {
@@ -191,21 +205,21 @@ class _FilePreviewScreenState extends ConsumerState<FilePreviewScreen> {
     );
   }
 
-  /// 正文: 行号 (4 位右对齐) + 全文, mono 等宽
+  /// 正文: 语法高亮 (扩展名映射语言) + 横向滚动; 超长回退纯文本。
   Widget _contentView(ThemeData theme, String content) {
     var text = content;
-    var truncated = false;
+    var truncated = _truncatedByServer;
     if (text.length > _maxBytes) {
       text = text.substring(0, _maxBytes);
       truncated = true;
     }
-    final buf = StringBuffer();
-    final lines = text.split('\n');
-    for (var i = 0; i < lines.length; i++) {
-      buf.writeln('${(i + 1).toString().padLeft(4)}  ${lines[i]}');
-    }
     // 内容落地后跳初始行 (每帧调度幂等, 无副作用)
     WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToLine());
+
+    final isDark = theme.brightness == Brightness.dark;
+    final lang = text.length <= _highlightMaxBytes
+        ? codeLangOf(_target.path)
+        : null;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -227,14 +241,28 @@ class _FilePreviewScreenState extends ConsumerState<FilePreviewScreen> {
             ),
           ),
         Expanded(
-          child: SingleChildScrollView(
-            controller: _scroll,
-            padding: const EdgeInsets.all(AppSpacing.md),
-            child: SelectableText(
-              buf.toString(),
-              style: AppText.mono(context, size: AppTextSizes.mono),
-            ),
-          ),
+          child: lang != null
+              ? SingleChildScrollView(
+                  controller: _scroll,
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  // 内层横向: 长行不折行, 对齐聊天气泡代码块交互
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: CodeHighlightView(
+                      code: text,
+                      language: lang,
+                      isDark: isDark,
+                    ),
+                  ),
+                )
+              : SingleChildScrollView(
+                  controller: _scroll,
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  child: SelectableText(
+                    text,
+                    style: AppText.mono(context, size: AppTextSizes.mono),
+                  ),
+                ),
         ),
       ],
     );
@@ -308,4 +336,75 @@ class _FilePreviewScreenState extends ConsumerState<FilePreviewScreen> {
       ),
     );
   }
+}
+
+/// 扩展名/文件名 → highlight 语言 id; 未知返回 null (回退纯文本,
+/// CodeHighlightView 内部亦会二次校验注册表)。
+String? codeLangOf(String path) {
+  final name = path.split('/').last.toLowerCase();
+  const byName = {
+    'dockerfile': 'dockerfile',
+    'makefile': 'makefile',
+    '.gitignore': 'bash',
+    '.zshrc': 'bash',
+    '.bashrc': 'bash',
+    'pubspec.yaml': 'yaml',
+    'analysis_options.yaml': 'yaml',
+  };
+  if (byName.containsKey(name)) return byName[name];
+  final ext = name.contains('.') ? name.split('.').last : '';
+  const byExt = {
+    'dart': 'dart',
+    'py': 'python',
+    'js': 'javascript',
+    'mjs': 'javascript',
+    'cjs': 'javascript',
+    'jsx': 'javascript',
+    'ts': 'typescript',
+    'tsx': 'typescript',
+    'java': 'java',
+    'kt': 'kotlin',
+    'kts': 'kotlin',
+    'go': 'go',
+    'rs': 'rust',
+    'c': 'c',
+    'h': 'c',
+    'cpp': 'cpp',
+    'cc': 'cpp',
+    'cxx': 'cpp',
+    'hpp': 'cpp',
+    'cs': 'csharp',
+    'swift': 'swift',
+    'rb': 'ruby',
+    'php': 'php',
+    'json': 'json',
+    'yaml': 'yaml',
+    'yml': 'yaml',
+    'toml': 'ini',
+    'ini': 'ini',
+    'cfg': 'ini',
+    'conf': 'ini',
+    'xml': 'xml',
+    'html': 'xml',
+    'htm': 'xml',
+    'vue': 'xml',
+    'svg': 'xml',
+    'css': 'css',
+    'scss': 'scss',
+    'md': 'markdown',
+    'sql': 'sql',
+    'sh': 'bash',
+    'bash': 'bash',
+    'zsh': 'bash',
+    'gradle': 'groovy',
+    'lua': 'lua',
+    'pl': 'perl',
+    'proto': 'protobuf',
+    'cmake': 'cmake',
+    'diff': 'diff',
+    'patch': 'diff',
+    'log': 'plaintext',
+    'txt': 'plaintext',
+  };
+  return byExt[ext];
 }

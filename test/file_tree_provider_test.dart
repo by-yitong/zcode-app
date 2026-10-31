@@ -10,9 +10,14 @@ import 'package:zcode_app/providers/file_tree_provider.dart';
 import 'package:zcode_app/providers/git_provider.dart';
 
 class FakeFileApi implements FileApi {
-  FakeFileApi({this.dirs = const {}, this.watcher});
+  FakeFileApi({
+    this.dirs = const {},
+    Stream<FileWatchEvent>? rootEvents,
+    this.watchOk = true,
+  }) : _rootEvents = rootEvents;
   final Map<String, List<FileEntry>> dirs;
-  final FileWatcherInfo? watcher;
+  final Stream<FileWatchEvent>? _rootEvents;
+  final bool watchOk;
   final reloaded = <String>[];
 
   @override
@@ -30,18 +35,22 @@ class FakeFileApi implements FileApi {
   ) async =>
       const [];
 
+  // root 目录挂注入事件流; 子目录 watch 成功但无事件 (足够覆盖展开/收起)。
   @override
-  Future<FileWatcherInfo?> probeWatcher({
-    required String rootPath,
-    RawSubscribeFn? subscribeRaw,
-  }) =>
-      Future.value(watcher);
+  Future<FileWatcherHandle?> watchAndListen(String path) async {
+    if (!watchOk) return null;
+    return (
+      path: path,
+      watchId: 'w-${path.hashCode}',
+      events: path == '/ws'
+          ? (_rootEvents ?? const Stream<FileWatchEvent>.empty())
+          : const Stream<FileWatchEvent>.empty(),
+      dispose: () {},
+    );
+  }
 
   @override
-  Future<String?> watchDir({required String channel, required String path}) async => 'w-${path.hashCode}';
-
-  @override
-  Future<void> unwatch({required String channel, required String watchId}) async {}
+  Future<void> unwatch({required String watchId}) async {}
 }
 
 class FakeGitApi implements GitApi {
@@ -136,7 +145,10 @@ void main() {
   });
 
   test('watcher 探测失败 → watcherAvailable=false, 其余功能不受损', () async {
-    final c = await makeContainer(FakeFileApi(dirs: {'/ws': const []}), FakeGitApi());
+    final c = await makeContainer(
+      FakeFileApi(dirs: {'/ws': const []}, watchOk: false),
+      FakeGitApi(),
+    );
     c.read(fileTreeProvider(ref1));
     await Future<void>.delayed(Duration.zero);
     final s = c.read(fileTreeProvider(ref1));
@@ -144,20 +156,14 @@ void main() {
     expect(s.phase, FileTreePhase.ready);
   });
 
-  test('watcher 事件: changedPath 父目录已展开 → 防抖后自动重载该目录', () async {
+  test('watcher 事件: dirPath 定位已展开目录 → 防抖后自动重载; changedPath 亦可兜底', () async {
     final events = StreamController<FileWatchEvent>();
-    final info = (
-      channel: 'file-watcher',
-      listenEvent: 'onDidChange',
-      events: events.stream,
-      rootWatchId: 'w1',
-    );
     final api = FakeFileApi(
       dirs: {
         '/ws': [FileEntry(name: 'lib', path: '/ws/lib', type: 'directory', isSymbolicLink: false)],
         '/ws/lib': [FileEntry(name: 'a.dart', path: '/ws/lib/a.dart', type: 'file', isSymbolicLink: false)],
       },
-      watcher: info,
+      rootEvents: events.stream,
     );
     final c = await makeContainer(api, FakeGitApi());
     final ctrl = c.read(fileTreeProvider(ref1).notifier);
@@ -165,9 +171,15 @@ void main() {
     expect(c.read(fileTreeProvider(ref1)).watcherAvailable, true);
 
     await ctrl.toggleDir('/ws/lib');
-    final before = api.reloaded.length;
-    events.add(const FileWatchEvent(changedPath: '/ws/lib/a.dart'));
+    var before = api.reloaded.length;
+    events.add(const FileWatchEvent(dirPath: '/ws/lib', changedPath: '/ws/lib/a.dart'));
     await Future<void>.delayed(const Duration(milliseconds: 400)); // 越过 300ms 防抖
+    expect(api.reloaded.length, greaterThan(before));
+
+    // 老形状事件 (无 dirPath): 由 changedPath 父目录推导
+    before = api.reloaded.length;
+    events.add(const FileWatchEvent(dirPath: '', changedPath: '/ws/lib/b.dart'));
+    await Future<void>.delayed(const Duration(milliseconds: 400));
     expect(api.reloaded.length, greaterThan(before));
     await events.close();
   });
@@ -186,6 +198,28 @@ void main() {
     await Future<void>.delayed(Duration.zero); // 先让回收落盘 (notifier.dispose)
     gate.complete(); // 放行 → _init 异步恢复; 有守卫则静默返回, 无守卫抛 StateError
     await Future<void>.delayed(Duration.zero);
+  });
+
+  test('showIgnored 开关: 默认隐藏忽略项, 切换后可见 (build 等)', () async {
+    final api = FakeFileApi(dirs: {
+      '/ws': [
+        FileEntry(name: 'lib', path: '/ws/lib', type: 'directory', isSymbolicLink: false),
+        FileEntry(name: 'build', path: '/ws/build', type: 'directory', isSymbolicLink: false),
+        FileEntry(name: 'a.dart', path: '/ws/a.dart', type: 'file', isSymbolicLink: false),
+      ],
+    });
+    final git = FakeGitApi(ignored: ['/ws/build']);
+    final c = await makeContainer(api, git);
+    c.read(fileTreeProvider(ref1));
+    await Future<void>.delayed(Duration.zero);
+    var s = c.read(fileTreeProvider(ref1));
+    expect(s.roots.keys.toList(), isNot(contains('/ws/build'))); // 默认隐藏
+    expect(s.roots.keys.toSet(), containsAll(['/ws/lib', '/ws/a.dart']));
+
+    await c.read(fileTreeProvider(ref1).notifier).toggleShowIgnored();
+    await Future<void>.delayed(Duration.zero);
+    s = c.read(fileTreeProvider(ref1));
+    expect(s.roots.keys.toSet(), containsAll(['/ws/build', '/ws/lib', '/ws/a.dart']));
   });
 
   test('refresh 重拉根 + 已展开目录 + git 状态', () async {

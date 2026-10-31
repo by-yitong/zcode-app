@@ -797,6 +797,15 @@ class ChatNotifier extends StateNotifier<ChatState> {
   final ChatRef _ref;
   final void Function(Task task)? _onSessionCreated;
   final void Function(String taskId, String newTitle)? _onTitleUpdated;
+
+  /// 按taskId查任务所属 host (readTree hostId)。bridge-open 带 hostId 时
+  /// 桌面端才会自动切窗到任务工作区 (跨工作区打开会话的关键)。
+  final String? Function(String taskId)? _taskHostIdReader;
+
+  /// 按工作区路径查 readTree 项目信息 (projectId/hostId)。无 taskId 的
+  /// bridge-open 带 project 时桌面端为项目自动开工作区标签 (网页端
+  /// openProjectDraft 同源) — 打开未在桌面窗口的项目必须。
+  final Workspace? Function(String workspacePath)? _workspaceProjectReader;
   final String? Function() _preferredModelReader;
   final void Function(String?) _preferredModelSetter;
   final void Function(Set<String>) _mergeDiscovered;
@@ -930,11 +939,15 @@ class ChatNotifier extends StateNotifier<ChatState> {
     required String? Function() preferredModelReader,
     required void Function(String?) preferredModelSetter,
     required void Function(Set<String>) mergeDiscovered,
+    String? Function(String taskId)? taskHostIdReader,
+    Workspace? Function(String workspacePath)? workspaceProjectReader,
     this._onSessionCreated,
     this._onTitleUpdated,
   }) : _preferredModelReader = preferredModelReader,
        _preferredModelSetter = preferredModelSetter,
        _mergeDiscovered = mergeDiscovered,
+       _taskHostIdReader = taskHostIdReader,
+       _workspaceProjectReader = workspaceProjectReader,
        super(const ChatState()) {
     _taskId = _ref.taskId;
     // 已有 taskId: 立即加载历史+订阅; 新会话: 等首发消息
@@ -959,6 +972,42 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   String _newMsgId() =>
       'local_${DateTime.now().millisecondsSinceEpoch}_${_msgCounter++}';
+
+  /// bridge-open 导航意图 (3.16 桌面端协议):
+  /// - 任务: taskId + taskHostId → 桌面端切窗聚焦该任务;
+  /// - 项目: project:{projectId, hostId} (仅无 taskId 时) → 桌面端为项目
+  ///   自动开工作区标签 (网页端 openProjectDraft 同源);
+  /// - 都没有 → 裸 workspaceKey, 仅当工作区已在桌面窗口时成功 (兜底)。
+  /// 返回 (project, taskHostId), 二者互斥。
+  (Map<String, dynamic>?, String?) _bridgeNavigation() {
+    if (_taskId != null) {
+      final hostId = _taskHostIdReader?.call(_taskId!);
+      if (hostId != null) {
+        appLog.i(
+          '[Chat] bridge 导航: 任务路径 (taskId+hostId=$hostId)',
+        );
+        return (null, hostId);
+      }
+      appLog.w('[Chat] bridge 导航: 任务库无 hostId (任务未入库?), 试项目回退');
+    }
+    final ws = _workspaceProjectReader?.call(_ref.workspacePath);
+    final pid = ws?.projectId;
+    if (pid == null || ws == null) {
+      appLog.w(
+        '[Chat] bridge 导航: 无任务也无项目信息 → 裸 workspaceKey '
+        '(仅当工作区已在桌面窗口时成功)',
+      );
+      return (null, null);
+    }
+    appLog.i('[Chat] bridge 导航: 项目路径 (projectId=$pid host=${ws.hostId})');
+    return (
+      {
+        'projectId': pid,
+        if (ws.hostId != null) 'hostId': ws.hostId,
+      },
+      null,
+    );
+  }
 
   /// 是否是新会话 (还没创建)
   bool get isNewChat => _taskId == null;
@@ -1152,8 +1201,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
     try {
       // bridge 复用 (网页端模式): 全局一个 bridge, 已开则零开销返回
       final bridgeKey = _ref.workspaceIdentity ?? _ref.workspacePath;
+      final (project, taskHostId) = _bridgeNavigation();
       try {
-        await _relay.ensureBridgeOpen(bridgeKey, taskId: _taskId);
+        await _relay.ensureBridgeOpen(
+          bridgeKey,
+          taskId: _taskId,
+          taskHostId: taskHostId,
+          project: project,
+        );
       } catch (e) {
         appLog.w('[Chat] _init: bridge open error: $e, trying waitRpcReady...');
         await _relay.waitRpcReady(const Duration(seconds: 10));
@@ -2545,8 +2600,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
   Future<void> _ensureSessionReady({required String taskTitle}) async {
     if (_taskId != null) return;
     _creating = true;
-    // bridge 复用 (打开工作区时已开) + 幂等握手
-    await _relay.ensureBridgeOpen(_ref.workspaceIdentity ?? _ref.workspacePath);
+    // bridge 复用 (打开工作区时已开) + 项目导航 (跨工作区新会话必须) + 幂等握手
+    final (project, _) = _bridgeNavigation();
+    await _relay.ensureBridgeOpen(
+      _ref.workspaceIdentity ?? _ref.workspacePath,
+      project: project,
+    );
     // V4 命令前必须先握手 (3.7.7 实测顺序: hello → initialize → createSession,
     // 否则服务端报 fault.connection.handshakeRequired)
     await _relay.v4Handshake();
@@ -3114,6 +3173,24 @@ final chatProvider = StateNotifierProvider.autoDispose
             ref.read(preferredModelProvider.notifier).state = m,
         mergeDiscovered: (ids) =>
             ref.read(modelListProvider.notifier).mergeDiscoveredIds(ids),
+        // hostId 从全局任务库查 (readTree 行自带); 查不到 (冷启动任务库未拉)
+        // 则不带, bridge-open 退化为仅当前窗口工作区可用
+        taskHostIdReader: (taskId) {
+          for (final t in ref.read(allTasksProvider)) {
+            if (t.id == taskId) return t.hostId;
+          }
+          return null;
+        },
+        // 项目导航信息从工作区列表查 (readTree 合并后的 projectId/hostId)
+        workspaceProjectReader: (workspacePath) {
+          final list =
+              ref.read(workspaceListProvider).valueOrNull ??
+              const <Workspace>[];
+          for (final w in list) {
+            if (w.workspacePath == workspacePath) return w;
+          }
+          return null;
+        },
         onSessionCreated: (task) {
           // 新会话加到 allTasksProvider 头部, 历史抽屉即时显示
           appLog.i(

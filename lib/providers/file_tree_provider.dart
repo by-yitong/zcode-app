@@ -75,8 +75,13 @@ class FileTreeState {
   final Map<String, FileTreeNode> roots;
   final Object? rootError;
 
-  /// true = 仅变更文件 (对齐网页端默认); 非 git 项目 UI 直接隐藏切换。
+  /// true = 仅变更文件; 默认 false (网页 bundle 实证 useState(!1),
+  /// 且 09-47 抓包中网页可浏览未变更的 main.dart)。
   final bool filterChangedOnly;
+
+  /// true = 显示 git 忽略项 (build/.dart_tool 等); 默认 false 对齐网页
+  /// (网页同样按 getIgnoredPaths 过滤), 需要看构建产物时切换。
+  final bool showIgnored;
   final String searchQuery;
 
   /// 相对路径 → 状态字母 (M/A/D/R/C/U)。
@@ -91,6 +96,7 @@ class FileTreeState {
     required this.roots,
     required this.rootError,
     required this.filterChangedOnly,
+    required this.showIgnored,
     required this.searchQuery,
     required this.statusByPath,
     required this.ignoredPaths,
@@ -101,7 +107,8 @@ class FileTreeState {
     : phase = FileTreePhase.loading,
       roots = const {},
       rootError = null,
-      filterChangedOnly = true,
+      filterChangedOnly = false,
+      showIgnored = false,
       searchQuery = '',
       statusByPath = const {},
       ignoredPaths = const {},
@@ -113,6 +120,7 @@ class FileTreeState {
     Map<String, FileTreeNode>? roots,
     Object? rootError,
     bool? filterChangedOnly,
+    bool? showIgnored,
     String? searchQuery,
     Map<String, String>? statusByPath,
     Set<String>? ignoredPaths,
@@ -122,6 +130,7 @@ class FileTreeState {
     roots: roots ?? this.roots,
     rootError: rootError,
     filterChangedOnly: filterChangedOnly ?? this.filterChangedOnly,
+    showIgnored: showIgnored ?? this.showIgnored,
     searchQuery: searchQuery ?? this.searchQuery,
     statusByPath: statusByPath ?? this.statusByPath,
     ignoredPaths: ignoredPaths ?? this.ignoredPaths,
@@ -286,10 +295,9 @@ class FileTreeController extends StateNotifier<FileTreeState> {
   final GitApi _git;
 
   String get _ws => treeRef.workspacePath;
-  FileWatcherInfo? _watcher;
-  final Map<String, String> _watchIds = {}; // dirPath → watchId
+  final Map<String, FileWatcherHandle> _watchHandles = {}; // dirPath → 句柄
   Timer? _reloadDebounce;
-  StreamSubscription<FileWatchEvent>? _eventSub;
+  final List<StreamSubscription<FileWatchEvent>> _eventSubs = [];
 
   /// 快速进出页面时 notifier 会被 autoDispose 回收; 所有 await 恢复点
   /// 写 state 前查此标志, 避免 "after dispose" 断言崩。
@@ -324,10 +332,12 @@ class FileTreeController extends StateNotifier<FileTreeState> {
       } catch (_) {// 过滤是增强, 失败不挡浏览
       }
       if (_disposed) return; // 内层 await 抛错时恢复点落在本 catch, 同样要挡
+      bool visibleInit(FileEntry e) =>
+          state.showIgnored || !ignoredSet.contains(e.path);
       state = state.copyWith(
         phase: FileTreePhase.ready,
         roots: {
-          for (final e in entries.where((e) => !ignoredSet.contains(e.path)))
+          for (final e in entries.where(visibleInit))
             e.path: FileTreeNode(entry: e),
         },
         statusByPath: buildStatusByPath(changes),
@@ -339,26 +349,27 @@ class FileTreeController extends StateNotifier<FileTreeState> {
       return;
     }
     if (_disposed) return;
-    await _probeWatcher();
+    await _startRootWatch();
   }
 
-  Future<void> _probeWatcher() async {
-    try {
-      final w = await _files.probeWatcher(rootPath: _ws);
-      if (_disposed || w == null) return; // 全候选失败 = 本会话手动刷新
-      _watcher = w;
-      _watchIds[_ws] = w.rootWatchId;
-      state = state.copyWith(watcherAvailable: true);
-      _eventSub = w.events.listen(_onWatchEvent);
-    } catch (_) {
-      // 不报错 (spec §4.3)
-    }
+  /// 根目录 watch + LISTEN (对齐网页: 先 watch 拿 id 再 LISTEN(id));
+  /// 失败 = 本会话降级手动刷新, 不报错。
+  Future<void> _startRootWatch() async {
+    final h = await _files.watchAndListen(_ws);
+    if (_disposed || h == null) return;
+    _watchHandles[_ws] = h;
+    state = state.copyWith(watcherAvailable: true);
+    _eventSubs.add(h.events.listen(_onWatchEvent));
   }
 
   void _onWatchEvent(FileWatchEvent e) {
-    if (e.changedPath.isEmpty) return;
-    final i = e.changedPath.lastIndexOf('/');
-    final dir = i > 0 ? e.changedPath.substring(0, i) : _ws;
+    // 网页树按 dirPath 定位刷新; 老事件缺 dirPath 时从 changedPath 推导。
+    var dir = e.dirPath;
+    if (dir.isEmpty) {
+      if (e.changedPath.isEmpty) return;
+      final i = e.changedPath.lastIndexOf('/');
+      dir = i > 0 ? e.changedPath.substring(0, i) : _ws;
+    }
     if (!_isLoaded(dir)) return;
     _reloadDebounce?.cancel();
     _reloadDebounce = Timer(const Duration(milliseconds: 300), () {
@@ -389,12 +400,11 @@ class FileTreeController extends StateNotifier<FileTreeState> {
 
   /// 已加载子节点重建: 保留既有子树展开态, 过滤 ignored, 移除已消失项。
   FileTreeNode _nodeWithChildren(FileTreeNode node, List<FileEntry> entries) {
-    final ignored = state.ignoredPaths;
     return FileTreeNode(
       entry: node.entry,
       expanded: true,
       children: {
-        for (final e in entries.where((e) => !ignored.contains(e.path)))
+        for (final e in entries.where(_visible))
           e.path: node.children[e.path] ?? FileTreeNode(entry: e),
       },
     );
@@ -442,22 +452,29 @@ class FileTreeController extends StateNotifier<FileTreeState> {
     }
   }
 
+  /// 展开目录的独立 watch+LISTEN (每目录一组句柄, 对齐网页); RPC 在途时
+  /// dispose 已发生则不再入表 (避免泄漏服务端 watch)。
   void _watchDir(String path) {
-    final w = _watcher;
-    if (w == null || _watchIds.containsKey(path)) return;
+    if (_watchHandles.containsKey(path)) return;
     () async {
-      final id = await _files.watchDir(channel: w.channel, path: path);
-      // dispose 落在 RPC 在途时 _watchIds 已清空且 stopAll 已发, 再写入会泄漏服务端 watch
-      if (_disposed) return;
-      if (id != null && id.isNotEmpty) _watchIds[path] = id;
+      final h = await _files.watchAndListen(path);
+      if (_disposed || h == null) return;
+      if (_watchHandles.containsKey(path)) {
+        // 竞态双发: 后到的整组释放
+        h.dispose();
+        await _files.unwatch(watchId: h.watchId);
+        return;
+      }
+      _watchHandles[path] = h;
+      _eventSubs.add(h.events.listen(_onWatchEvent));
     }();
   }
 
   void _unwatchDir(String path) {
-    final w = _watcher;
-    final id = _watchIds.remove(path);
-    if (w == null || id == null) return;
-    _files.unwatch(channel: w.channel, watchId: id).ignore();
+    final h = _watchHandles.remove(path);
+    if (h == null) return;
+    _files.unwatch(watchId: h.watchId).ignore();
+    h.dispose();
   }
 
   /// 递归收集任意深度已展开目录路径 (refresh 整树刷新用)。
@@ -480,8 +497,10 @@ class FileTreeController extends StateNotifier<FileTreeState> {
       if (_disposed) return;
       final entries = results[0] as List<FileEntry>;
       final ignoredSet = state.ignoredPaths;
+      final showIgnored = state.showIgnored;
+      bool visible(FileEntry e) => showIgnored || !ignoredSet.contains(e.path);
       var roots = {
-        for (final e in entries.where((e) => !ignoredSet.contains(e.path)))
+        for (final e in entries.where(visible))
           e.path: state.roots[e.path] ?? FileTreeNode(entry: e),
       };
       for (final dir in expanded) {
@@ -513,6 +532,16 @@ class FileTreeController extends StateNotifier<FileTreeState> {
   void toggleFilter() =>
       state = state.copyWith(filterChangedOnly: !state.filterChangedOnly);
 
+  /// 切换显示 git 忽略项 (build/.dart_tool 等); 随后整树重载重算过滤。
+  Future<void> toggleShowIgnored() async {
+    state = state.copyWith(showIgnored: !state.showIgnored);
+    await refresh();
+  }
+
+  /// 条目可见 = 显示忽略项开启, 或未被 git 忽略。
+  bool _visible(FileEntry e) =>
+      state.showIgnored || !state.ignoredPaths.contains(e.path);
+
   /// 整树按路径替换节点 (children 空的叶子不再深入)。
   static Map<String, FileTreeNode> _patchMap(
     Map<String, FileTreeNode> roots,
@@ -535,14 +564,15 @@ class FileTreeController extends StateNotifier<FileTreeState> {
   /// 释放 watcher (provider autoDispose 时经 ref.onDispose 调)。
   void disposeWatcher() {
     _reloadDebounce?.cancel();
-    _eventSub?.cancel();
-    final channel = _watcher?.channel;
-    for (final id in _watchIds.values) {
-      if (channel != null) {
-        _files.unwatch(channel: channel, watchId: id).ignore();
-      }
+    for (final s in _eventSubs) {
+      s.cancel();
     }
-    _watchIds.clear();
+    _eventSubs.clear();
+    for (final h in _watchHandles.values) {
+      _files.unwatch(watchId: h.watchId).ignore();
+      h.dispose();
+    }
+    _watchHandles.clear();
   }
 }
 

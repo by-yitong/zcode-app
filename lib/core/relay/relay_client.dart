@@ -117,6 +117,16 @@ class RelayClient {
   String? _activeBridgeSession;
   String? _currentWorkspaceKey;
   String? _currentTaskId;
+
+  /// 当前任务所属 host (readTree 行的 hostId, 本地为 'local')。
+  /// bridge-open 携带 taskId+taskHostId 时桌面端会先把窗口切到该任务的
+  /// 工作区再建桥 (prepareProjectWorkspace); 只带 workspaceKey 则仅当
+  /// 该工作区已在当前桌面窗口时才成功。
+  String? _currentTaskHostId;
+
+  /// 当前项目导航意图 (project:{projectId, hostId}, 无 taskId 时用)。
+  /// 桌面端硬规则: project 与 taskId 互斥, 同时带直接报错。
+  Map<String, dynamic>? _currentProject;
   bool _rpcReady = false;
   Completer<void>? _rpcReadyCompleter;
 
@@ -563,12 +573,29 @@ class RelayClient {
     }
 
     // 其他 data 层消息
-    if (zt == 'bridge-degraded') {
-      _log('warn', '★ bridge-degraded! payload=$payload');
-      _log(
-        'warn',
-        '  pending RPC: ${_pendingRpc.length}, rpcReady=$_rpcReady, bridgeGen=$_bridgeGeneration',
-      );
+    if (zt == 'bridge-degraded' || zt == 'workspace-bridge-error') {
+      // ★ 必须按 bridgeSessionId 过滤: 切换工作区/他端被顶时, 桌面会给
+      // 「旧桥」推作废通知。不分青红皂白当当前桥死了 → 拆掉健康的桥
+      // → 快照中断 → 表现为"加载超时" (06:20 实测回归)。
+      final frameSession = payload['bridgeSessionId'] as String?;
+      if (frameSession == null || frameSession != _activeBridgeSession) {
+        _log('debug', '忽略旧桥/他端通知 [$zt]: session=$frameSession');
+        return;
+      }
+      if (zt == 'workspace-bridge-error') {
+        // 稳态收到 (非打开期间的拒绝): 桥已不可用, 按降级处理重开。
+        // 打开期间的拒绝带 requestId, 已被上方 pending 匹配消费并快速失败。
+        _log(
+          'warn',
+          'workspace-bridge-error: reason=${payload['reason']} error=${payload['error']}',
+        );
+      } else {
+        _log('warn', '★ bridge-degraded! payload=$payload');
+        _log(
+          'warn',
+          '  pending RPC: ${_pendingRpc.length}, rpcReady=$_rpcReady, bridgeGen=$_bridgeGeneration',
+        );
+      }
       _onBridgeDegraded();
       return;
     }
@@ -660,8 +687,21 @@ class RelayClient {
         'bridgeGeneration': _bridgeGeneration,
         if (_currentRecoveryId != null) 'recoveryId': _currentRecoveryId,
         'workspaceKey': key,
-        if (_currentTaskId != null) 'taskId': _currentTaskId!,
+        if (_currentTaskId != null &&
+            _currentTaskHostId != null &&
+            _currentProject == null)
+          'taskId': _currentTaskId!,
+        if (_currentTaskId != null && _currentTaskHostId != null)
+          'taskHostId': _currentTaskHostId!,
+        if ((_currentTaskId == null || _currentTaskHostId == null) &&
+            _currentProject != null)
+          'project': _currentProject,
       });
+      if (resp['zcode_type'] == 'workspace-bridge-error') {
+        throw Exception(
+          'bridge-error [${resp['reason'] ?? ''}]: ${resp['error'] ?? 'unknown'}',
+        );
+      }
       // 更新 recoveryId
       final bridgeData = resp['bridge'] as Map<String, dynamic>?;
       final newRid =
@@ -684,18 +724,26 @@ class RelayClient {
 
   void _handleRpcFrame(Map<String, dynamic> frame) {
     // V4: 收到服务端 rpc-frame 后必须发 rpc-frame-ack 回去
+    // ★ ack 必须带帧自身的 bridgeSessionId/bridgeGeneration: 重连换代后
+    // 旧桥在途帧若用"当前"身份确认, 服务端对不上号 → 重放缓冲 45s 宽限
+    // 到期 → remote.rpcFrame.replayGraceExceeded 终端降级拆桥。
     final messageSeq = frame['messageSeq'];
-    if (messageSeq != null && _activeBridgeSession != null) {
-      _sendRaw({
-        'type': 'data',
-        'payload': {
-          'zcode_type': 'rpc-frame-ack',
-          'bridgeSessionId': _activeBridgeSession,
-          'bridgeGeneration': _bridgeGeneration,
-          'ackMessageSeq': messageSeq,
-        },
-        'client_ts': _ts(),
-      });
+    if (messageSeq != null) {
+      final frameSession =
+          frame['bridgeSessionId'] as String? ?? _activeBridgeSession;
+      if (frameSession != null) {
+        _sendRaw({
+          'type': 'data',
+          'payload': {
+            'zcode_type': 'rpc-frame-ack',
+            'bridgeSessionId': frameSession,
+            'bridgeGeneration':
+                frame['bridgeGeneration'] as int? ?? _bridgeGeneration,
+            'ackMessageSeq': messageSeq,
+          },
+          'client_ts': _ts(),
+        });
+      }
     }
 
     final dataBase64 = frame['dataBase64'] as String?;
@@ -1076,13 +1124,33 @@ class RelayClient {
   ///
   /// 网页端模式: bridge 全局只开一次, 切换/打开会话仅重新订阅 (零开销返回)。
   /// 只有 RPC 未就绪或目标工作区不同才完整 (重) 开。
-  Future<void> ensureBridgeOpen(String workspaceKey, {String? taskId}) async {
+  ///
+  /// [taskHostId]: 任务所属 host (readTree hostId)。携带它 + taskId 时,
+  /// 桌面端会自动切换窗口到任务工作区 (跨工作区会话必须, 否则报
+  /// 「目标工作区不在当前桌面窗口中」)。
+  ///
+  /// [project]: 项目导航 {projectId, hostId} (无 taskId 时用, 与 taskId
+  /// 互斥)。携带时桌面端为项目自动开工作区标签 — 打开未在桌面窗口的
+  /// 项目 (网页端 openProjectDraft 同源)。
+  Future<void> ensureBridgeOpen(
+    String workspaceKey, {
+    String? taskId,
+    String? taskHostId,
+    Map<String, dynamic>? project,
+  }) async {
     if (_rpcReady && _currentWorkspaceKey == workspaceKey) {
       // 已有可用 bridge: 只更新恢复上下文 (degraded 时带回 taskId)
       _currentTaskId = taskId;
+      if (taskHostId != null) _currentTaskHostId = taskHostId;
+      if (project != null) _currentProject = project;
       return;
     }
-    await openWorkspaceBridge(workspaceKey, taskId: taskId);
+    await openWorkspaceBridge(
+      workspaceKey,
+      taskId: taskId,
+      taskHostId: taskHostId,
+      project: project,
+    );
   }
 
   /// 打开工作区桥接, 等待 RPC Init
@@ -1096,6 +1164,8 @@ class RelayClient {
   Future<Map<String, dynamic>> openWorkspaceBridge(
     String workspaceKey, {
     String? taskId,
+    String? taskHostId,
+    Map<String, dynamic>? project,
   }) {
     final pending = _bridgeOpenFuture;
     if (pending != null) {
@@ -1104,18 +1174,45 @@ class RelayClient {
         (_) => {'bridgeSessionId': _activeBridgeSession, 'rpcReady': true},
       );
     }
-    final future = _doOpenWorkspaceBridge(workspaceKey, taskId: taskId);
+    final future = _doOpenWorkspaceBridge(
+      workspaceKey,
+      taskId: taskId,
+      taskHostId: taskHostId,
+      project: project,
+    );
     _bridgeOpenFuture = future;
     return future.whenComplete(() => _bridgeOpenFuture = null);
+  }
+
+  /// 重连远程工作区 (workspace-reconnect-request)。
+  /// 远程工作区连接掉线后 bridge-open 会报「请先重连」, 先调这个再开桥。
+  Future<void> reconnectWorkspace(String workspaceKey) async {
+    _log('info', 'Reconnecting workspace: $workspaceKey');
+    final resp = await _requestResponse(
+      'workspace-reconnect-request',
+      {'workspaceKey': workspaceKey},
+      timeout: const Duration(seconds: 45),
+    );
+    if (resp['success'] != true) {
+      throw Exception(
+        'workspace reconnect failed: ${resp['error'] ?? resp['success']}',
+      );
+    }
+    _log('info', 'Workspace reconnected ✓: $workspaceKey');
   }
 
   Future<Map<String, dynamic>> _doOpenWorkspaceBridge(
     String workspaceKey, {
     String? taskId,
+    String? taskHostId,
+    Map<String, dynamic>? project,
+    bool allowReconnectRetry = true,
   }) async {
     final sw = Stopwatch()..start();
     _currentWorkspaceKey = workspaceKey;
     _currentTaskId = taskId;
+    _currentTaskHostId = taskHostId;
+    _currentProject = project;
     _bridgeGeneration++;
     _seqCounter = 0;
     _rpcReqId = 0;
@@ -1129,17 +1226,56 @@ class RelayClient {
       'Opening bridge: workspace=$workspaceKey taskId=${taskId ?? "none"}',
     );
 
+    // ★ 桌面端硬规则: project 与 taskId 互斥; taskId 必须配 taskHostId 才有
+    // 切窗能力。任务缺 hostId 但有项目信息 → 走项目导航 (省略 taskId,
+    // 会话靠订阅定位, 不影响打开)。
+    final navByProject = taskId != null && taskHostId == null && project != null;
+    final effTaskId = navByProject ? null : taskId;
     final resp = _requestResponse('workspace-bridge-open', {
       'bridgeSessionId': bridgeSessionId,
       'bridgeGeneration': _bridgeGeneration,
       'workspaceKey': workspaceKey,
-      if (taskId != null) 'taskId': taskId,
+      if (effTaskId != null) 'taskId': effTaskId,
+      if (effTaskId != null && taskHostId != null) 'taskHostId': taskHostId,
+      if (effTaskId == null && project != null) 'project': project,
     });
+    _log(
+      'info',
+      'bridge-open 帧: ws=$workspaceKey '
+      'taskId=${effTaskId ?? "无"} taskHostId=${effTaskId != null ? (taskHostId ?? "无") : "无"} '
+      'project=${effTaskId == null ? (project ?? "无") : "无"}'
+      '${navByProject ? " (任务缺 hostId, 改走项目导航)" : ""}',
+    );
     _v4HandshakeDone = false;
     _v4HandshakeFuture = null;
 
     // 同时等 bridge-ready + RPC Init
     final bridgeReady = await resp;
+    // ★ bridge-error 快速失败: 桌面端拒绝开桥时回 workspace-bridge-error
+    // (同 requestId)。不检查会干等 RPC Init 15s 超时, 报错误导。
+    if (bridgeReady['zcode_type'] == 'workspace-bridge-error') {
+      final err = bridgeReady['error'] as String? ?? 'unknown';
+      final reason = bridgeReady['reason'] as String? ?? '';
+      // 远程工作区连接掉线: 先重连, 再用新 bridge 身份重试一次
+      // (桌面端拒绝同 bridgeSessionId+generation 的重复意图)
+      if (allowReconnectRetry && err.contains('请先重连')) {
+        _log('warn', 'bridge-error: 远程工作区未连接, 重连后重试: $err');
+        try {
+          await reconnectWorkspace(workspaceKey);
+          return _doOpenWorkspaceBridge(
+            workspaceKey,
+            taskId: taskId,
+            taskHostId: taskHostId,
+            project: project,
+            allowReconnectRetry: false,
+          );
+        } catch (e) {
+          throw Exception('Bridge error [$reason] (重连失败: $e): $err');
+        }
+      }
+      _log('error', 'bridge-error [$reason]: $err');
+      throw Exception('Bridge error [$reason]: $err');
+    }
     // ★ V4: 从 bridge-ready 响应提取 recoveryId
     final bridgeData = bridgeReady['bridge'] as Map<String, dynamic>?;
     _currentRecoveryId =
@@ -2167,6 +2303,32 @@ class RelayClient {
       _sendRpcFrameData(RpcCodec.encodeUnlisten(id));
       rethrow;
     }
+  }
+
+  /// 原始帧 LISTEN (标量参数版, 带 dispose 退订口)。
+  ///
+  /// 与 [subscribeRawFrames] 的差异: listenArgs 可为任意标量 (2026-10-27
+  /// 抓包实证: file-watcher/onDynamicChange 的 LISTEN 参数是 watchId 字符串,
+  /// 如 body:"115"); 不做激活动作 — 调用方需自行先发激活调用 (对齐网页
+  /// 时序: watch 拿 id → LISTEN(id)); 返回 dispose 主动退订。
+  ({Stream<Map<String, dynamic>> stream, void Function() dispose})
+  listenRawFrames(String channel, String event, dynamic listenArgs) {
+    _rpcReqId++;
+    final id = _rpcReqId;
+    final controller = StreamController<Map<String, dynamic>>();
+    _indexFrameSubs[id] = controller;
+    _log('info', '→ LISTEN #$id: $channel.$event args=${_trunc(listenArgs, 200)}');
+    _sendRpcFrameData(RpcCodec.encodeListen(id, channel, event, listenArgs));
+    return (
+      stream: controller.stream,
+      dispose: () {
+        _indexFrameSubs.remove(id);
+        if (!controller.isClosed) unawaited(controller.close());
+        if (!_rpcReady) return;
+        _log('info', '→ UNLISTEN #$id');
+        _sendRpcFrameData(RpcCodec.encodeUnlisten(id));
+      },
+    );
   }
 
   /// 通用 RPC 调用 (兜底, 用于尚未封装的方法)

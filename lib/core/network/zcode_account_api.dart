@@ -94,8 +94,7 @@ class TerminalToken {
     this.expiresAt,
   });
 
-  bool get isExpired =>
-      expiresAt != null && DateTime.now().isAfter(expiresAt!);
+  bool get isExpired => expiresAt != null && DateTime.now().isAfter(expiresAt!);
 }
 
 /// OAuth 供应商 (web 3.16.2 bundle: provider 字段二值)
@@ -186,24 +185,23 @@ class ZcodeAccountApi {
     required String state,
     OAuthProvider provider = OAuthProvider.zai,
   }) async {
-    final resp = await _guard(
-      () => dio.post(
-        '/api/v1/oauth/token',
-        data: {
-          'provider': provider.wireName,
-          'code': code,
-          'redirect_uri': redirectUri,
-          'state': state,
-        },
-      ),
+    final resp = await _post(
+      '/api/v1/oauth/token',
+      data: {
+        'provider': provider.wireName,
+        'code': code,
+        'redirect_uri': redirectUri,
+        'state': state,
+      },
     );
     return _parseTokenSet(_unwrap(resp));
   }
 
   /// 已配对设备列表 (GET /api/v1/remote/device)
   Future<List<RemoteDevice>> listDevices({String? jwtOverride}) async {
-    final resp = await _guard(
-      () => dio.get('/api/v1/remote/device', options: _auth(jwtOverride)),
+    final resp = await _get(
+      '/api/v1/remote/device',
+      options: _auth(jwtOverride),
     );
     final data = _unwrap(resp);
     final List<dynamic>? list;
@@ -229,29 +227,29 @@ class ZcodeAccountApi {
   /// 宽松兼容两种 wire 键名: {token, expires_in, expires_at} 与
   /// 3.16.2 bundle zod 形状 {accessToken, expiresIn, expiresAt}。
   Future<TerminalToken> issueTerminalToken({String? jwtOverride}) async {
-    final resp = await _guard(
-      () => dio.post(
-        '/api/v1/remote/token',
-        data: {'role': 'terminal'},
-        options: _auth(jwtOverride),
-      ),
+    final resp = await _post(
+      '/api/v1/remote/token',
+      data: {'role': 'terminal'},
+      options: _auth(jwtOverride),
     );
     final data = _unwrap(resp);
     if (data is! Map) {
       throw Exception('issueTerminalToken 响应格式异常: ${data.runtimeType}');
     }
-    final token =
-        data['token'] as String? ?? data['accessToken'] as String?;
+    final token = data['token'] as String? ?? data['accessToken'] as String?;
     if (token == null || token.isEmpty) {
       throw Exception('issueTerminalToken 响应缺 token: $data');
     }
     final expiresInRaw = data['expires_in'] ?? data['expiresIn'];
-    final expiresIn =
-        expiresInRaw is num ? expiresInRaw.toInt() : int.tryParse('$expiresInRaw') ?? 0;
+    final expiresIn = expiresInRaw is num
+        ? expiresInRaw.toInt()
+        : int.tryParse('$expiresInRaw') ?? 0;
     return TerminalToken(
       token: token,
       expiresIn: expiresIn,
-      expiresAt: RemoteDevice._parseDate(data['expires_at'] ?? data['expiresAt']),
+      expiresAt: RemoteDevice._parseDate(
+        data['expires_at'] ?? data['expiresAt'],
+      ),
     );
   }
 
@@ -264,8 +262,12 @@ class ZcodeAccountApi {
     return Options(headers: {'Authorization': 'Bearer $jwtOverride'});
   }
 
-  /// 统一错误闸门: HTTP 401 (dio 抛 DioException) → [AccountAuthExpiredException]
-  Future<Response<dynamic>> _guard(
+  /// 统一 HTTP 出口: HTTP 401 → [AccountAuthExpiredException], 其余原样上抛。
+  ///
+  /// 转译不放 dio 拦截器: dio 5 的错误链会把拦截器抛出的异常一律包成
+  /// DioException, 自定义异常类型透传不出去, 只能在 dio 返回之后转。
+  /// 新增请求方法一律走 [_get]/[_post], 不要绕过它们直接调 dio。
+  Future<Response<dynamic>> _send(
     Future<Response<dynamic>> Function() fn,
   ) async {
     try {
@@ -277,6 +279,15 @@ class ZcodeAccountApi {
       rethrow;
     }
   }
+
+  Future<Response<dynamic>> _get(String path, {Options? options}) =>
+      _send(() => dio.get(path, options: options));
+
+  Future<Response<dynamic>> _post(
+    String path, {
+    Object? data,
+    Options? options,
+  }) => _send(() => dio.post(path, data: data, options: options));
 
   /// 解包 `{code, msg, data}` / 裸对象 (design §2.1)
   dynamic _unwrap(Response<dynamic> resp) {
@@ -321,16 +332,18 @@ class ZcodeAccountApi {
             : null;
         return ZcodeTokenSet(
           zcodeJwtToken: jwt,
-          zaiAccessToken:
-              accessToken is String && accessToken.isNotEmpty
-                  ? accessToken
-                  : null,
+          zaiAccessToken: accessToken is String && accessToken.isNotEmpty
+              ? accessToken
+              : null,
           userInfo: user ?? const {},
         );
       }
     }
     // 兜底宽松解析: 递归找 zcodeJwtToken 键 (兼容未知形状)
-    final jwtHolder = _findFirstMap(node, (m) => m.containsKey('zcodeJwtToken'));
+    final jwtHolder = _findFirstMap(
+      node,
+      (m) => m.containsKey('zcodeJwtToken'),
+    );
     if (jwtHolder == null) {
       throw Exception(
         'exchangeToken 响应缺 zcodeJwtToken (data.token): ${_brief(node)}',

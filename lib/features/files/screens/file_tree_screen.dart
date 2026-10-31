@@ -51,6 +51,8 @@ class _FileTreeScreenState extends ConsumerState<FileTreeScreen> {
               showFilter: gitOk,
               filterChangedOnly: state.filterChangedOnly,
               onToggleFilter: ctrl.toggleFilter,
+              showIgnored: state.showIgnored,
+              onToggleShowIgnored: ctrl.toggleShowIgnored,
               onRefresh: ctrl.refresh,
             ),
             const Divider(height: 1),
@@ -139,7 +141,7 @@ class _FileTreeScreenState extends ConsumerState<FileTreeScreen> {
   }
 }
 
-/// 工具行: 搜索框 + (git 可用时) 变更/全部切换 + 刷新。
+/// 工具行: 搜索框 + (git 可用时) 变更/全部切换 + 忽略项切换 + 刷新。
 /// 搜索框自带 controller (State 持有), 外部清空 (clear 按钮) 走 onSearch('')。
 class _ToolRow extends StatefulWidget {
   final String searchQuery;
@@ -147,6 +149,8 @@ class _ToolRow extends StatefulWidget {
   final bool showFilter;
   final bool filterChangedOnly;
   final VoidCallback onToggleFilter;
+  final bool showIgnored;
+  final VoidCallback onToggleShowIgnored;
   final VoidCallback onRefresh;
 
   const _ToolRow({
@@ -155,6 +159,8 @@ class _ToolRow extends StatefulWidget {
     required this.showFilter,
     required this.filterChangedOnly,
     required this.onToggleFilter,
+    required this.showIgnored,
+    required this.onToggleShowIgnored,
     required this.onRefresh,
   });
 
@@ -222,6 +228,16 @@ class _ToolRowState extends State<_ToolRow> {
                 size: 20,
               ),
             ),
+          IconButton(
+            tooltip: widget.showIgnored ? '隐藏被忽略项' : '显示被忽略项 (build 等)',
+            onPressed: widget.onToggleShowIgnored,
+            icon: Icon(
+              widget.showIgnored
+                  ? Icons.visibility_rounded
+                  : Icons.visibility_off_rounded,
+              size: 20,
+            ),
+          ),
           IconButton(
             tooltip: '刷新',
             onPressed: widget.onRefresh,

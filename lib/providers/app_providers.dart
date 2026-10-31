@@ -615,9 +615,13 @@ void _upsertIndexSessions(
   var tasks = [...notifier.state];
   var changed = false;
   for (final s in sessions) {
-    final task = _taskFromIndexSession(ws, s);
+    var task = _taskFromIndexSession(ws, s);
     final i = tasks.indexWhere((t) => t.id == task.id);
     if (i >= 0) {
+      // ★ sessions-index 行不带 hostId/projectId, 直接整条替换会把
+      // readTree 带来的导航信息冲掉 (跨工作区开桥必需), 从旧条目保留。
+      final old = tasks[i];
+      task = task.copyWith(hostId: old.hostId, projectId: old.projectId);
       tasks[i] = task;
     } else {
       tasks.insert(0, task);
