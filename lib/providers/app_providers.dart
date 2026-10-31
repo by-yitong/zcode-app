@@ -3,6 +3,7 @@ import 'package:connectivity_plus/connectivity_plus.dart' as connectivity_plus;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:logger/logger.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/logging/app_logger.dart';
 import '../core/network/zcode_api_client.dart';
@@ -942,9 +943,11 @@ class GlmCredentialNotifier extends StateNotifier<GlmCredential?> {
 
 /// GLM 余量查询状态。无凭据且无会话时不自动查询 (state 保持 null, 不显示 loading)。
 ///
-/// 查询优先级: 会话 RPC (SessionUsageService, 无需 API key, 数据含套餐名/到期)
-/// → API key 直调 (GlmQuotaService, 行为不变)。会话变化时 relayClientProvider
-/// 重建会触发本 provider 重建重查。
+/// 来源三层规则 (手动 > 自动 > 失败回落)，见 [GlmQuotaNotifier.load]：
+/// - 手动：SharedPreferences 'glm_quota_source'（'remote' / 'api'），用户切过后一直生效；
+/// - 自动：无手动选择时，有有效 API key → API key 直调，否则会话 RPC（远程 API）；
+/// - 回落：生效来源查不到数据/抛异常时自动改查另一方，两方都失败才置 error/null。
+/// 会话变化时 relayClientProvider 重建会触发本 provider 重建重查。
 final glmQuotaProvider =
     StateNotifierProvider<GlmQuotaNotifier, AsyncValue<GlmQuota?>>((ref) {
       final cred = ref.watch(glmCredentialProvider);
@@ -956,10 +959,18 @@ final glmQuotaProvider =
       );
     });
 
+/// 用量来源手动偏好 (SharedPreferences 持久化)。
+/// 'remote' = 会话 RPC（远程 API），'api' = API key 直调；无此 key = 自动。
+const _glmQuotaSourcePrefKey = 'glm_quota_source';
+
 class GlmQuotaNotifier extends StateNotifier<AsyncValue<GlmQuota?>> {
   final GlmCredential? _cred;
   final GlmQuotaService _service;
   final RelayClient? _relayClient;
+
+  /// 最近一次 load() 解析出的生效来源（'remote' / 'api'），供 UI 显示。
+  /// load() 未跑过时由 [effectiveSource] 按自动规则现算。
+  String? _effectiveSource;
 
   GlmQuotaNotifier(this._cred, this._service, this._relayClient)
     : super(const AsyncValue.data(null)) {
@@ -967,6 +978,31 @@ class GlmQuotaNotifier extends StateNotifier<AsyncValue<GlmQuota?>> {
     if ((_cred != null && _cred.isValid) || _relayClient != null) {
       Future.microtask(load);
     }
+  }
+
+  /// 会话 RPC（远程 API）是否可用：relay 已连接。
+  bool get relayAvailable => _relayClient != null;
+
+  /// API key 直调是否可用：凭据有效。
+  bool get apiKeyAvailable => _cred != null && _cred.isValid;
+
+  /// 当前生效来源（'remote' / 'api'）。load() 未跑过时按自动规则现算。
+  String get effectiveSource =>
+      _effectiveSource ?? (apiKeyAvailable ? 'api' : 'remote');
+
+  /// 手动设置来源并持久化，随后按新来源重查。
+  /// source: 'remote'（远程 API）/ 'api'（API key 直调）/ null（恢复自动）。
+  Future<void> setManualSource(String? source) async {
+    // 持久化失败也不阻断本次切换：仅影响下次启动的默认来源。
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (source == null) {
+        await prefs.remove(_glmQuotaSourcePrefKey);
+      } else {
+        await prefs.setString(_glmQuotaSourcePrefKey, source);
+      }
+    } catch (_) {}
+    await load();
   }
 
   Future<void> load() async {
@@ -980,38 +1016,78 @@ class GlmQuotaNotifier extends StateNotifier<AsyncValue<GlmQuota?>> {
     }
     state = const AsyncValue.loading();
 
-    // 1. 会话 RPC 优先 (不主动开桥, RPC 未就绪/失败 → null 走兜底)
-    if (relay != null) {
-      try {
-        final sessionQuota = await SessionUsageService(relay).fetch();
-        if (sessionQuota != null) {
-          state = AsyncValue.data(sessionQuota);
-          appLog.d('[GLM] 会话 RPC 配额查询成功: ${sessionQuota.tiers.length} 个 tier');
-          return;
+    // 手动偏好优先；无手动选择时自动规则：有有效 API key → 直调，否则远程 API。
+    // 非法偏好值按自动处理；偏好读不到时也按自动处理。
+    String? manual;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      manual = prefs.getString(_glmQuotaSourcePrefKey);
+    } catch (_) {
+      manual = null;
+    }
+    final resolved = (manual == 'remote' || manual == 'api')
+        ? manual
+        : (credValid ? 'api' : 'remote');
+    _effectiveSource = resolved;
+
+    // 尝试顺序：生效来源优先，另一方作回退；不可用的来源直接跳过。
+    final attempts = <String>[
+      resolved,
+      resolved == 'remote' ? 'api' : 'remote',
+    ];
+    GlmQuota? apiFailure;
+    Object? apiError;
+    StackTrace? apiErrorSt;
+
+    for (final attempt in attempts) {
+      if (attempt == 'remote') {
+        // 会话 RPC（不主动开桥，RPC 未就绪/失败 → null 走回退）
+        if (relay == null) continue;
+        try {
+          final sessionQuota = await SessionUsageService(relay).fetch();
+          if (sessionQuota != null) {
+            // 会话路径已标记 source 'session'；缺失时补标，保证 UI 来源真实。
+            state = AsyncValue.data(
+              sessionQuota.source == null
+                  ? sessionQuota.copyWith(source: 'session')
+                  : sessionQuota,
+            );
+            appLog.d('[GLM] 会话 RPC 配额查询成功: ${sessionQuota.tiers.length} 个 tier');
+            return;
+          }
+          appLog.d('[GLM] 会话 RPC 不可用, 回退另一来源');
+        } catch (e, st) {
+          appLog.e('[GLM] 会话 RPC 查询异常, 回退另一来源', e, st);
         }
-        appLog.d('[GLM] 会话 RPC 不可用, 回退 API key 直调');
-      } catch (e, st) {
-        appLog.e('[GLM] 会话 RPC 查询异常, 回退 API key 直调', e, st);
+      } else {
+        // API key 直调
+        if (!credValid) continue;
+        try {
+          final quota = await _service.fetch(cred);
+          if (quota.success) {
+            // 成功结果标记来源 (service 本身不感知来源, 保持直调行为不变)
+            state = AsyncValue.data(quota.copyWith(source: 'api'));
+            appLog.d('[GLM] 配额查询成功: ${quota.tiers.length} 个 tier');
+            return;
+          }
+          // success=false 也算本来源失败，留给回退；两方都失败时再展示它。
+          apiFailure ??= quota;
+          appLog.w('[GLM] 配额查询返回失败: ${quota.error}');
+        } catch (e, st) {
+          apiError ??= e;
+          apiErrorSt ??= st;
+          appLog.e('[GLM] 配额查询异常', e, st);
+        }
       }
     }
 
-    // 2. 回退 API key 直调 (行为不变)
-    if (!credValid) {
+    // 两方都失败：按原有方式展示（API 失败对象优先，其次异常，最后空态）。
+    if (apiFailure != null) {
+      state = AsyncValue.data(apiFailure);
+    } else if (apiError != null) {
+      state = AsyncValue.error(apiError, apiErrorSt ?? StackTrace.empty);
+    } else {
       state = const AsyncValue.data(null);
-      return;
-    }
-    try {
-      final quota = await _service.fetch(cred);
-      // 成功结果标记来源 (service 本身不感知来源, 保持直调行为不变)
-      state = AsyncValue.data(quota.success ? quota.copyWith(source: 'api') : quota);
-      if (quota.success) {
-        appLog.d('[GLM] 配额查询成功: ${quota.tiers.length} 个 tier');
-      } else {
-        appLog.w('[GLM] 配额查询返回失败: ${quota.error}');
-      }
-    } catch (e, st) {
-      appLog.e('[GLM] 配额查询异常', e, st);
-      state = AsyncValue.error(e, st);
     }
   }
 

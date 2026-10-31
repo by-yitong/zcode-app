@@ -79,49 +79,61 @@ class CommandPalette extends StatelessWidget {
     final matches = slashCommands
         .where((c) => c.name.startsWith(query))
         .toList();
-    if (matches.isEmpty) return const SizedBox.shrink();
-    return Container(
-      constraints: const BoxConstraints(maxHeight: 240),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
-      child: ListView.separated(
-        shrinkWrap: true,
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        itemCount: matches.length,
-        separatorBuilder: (_, __) => Divider(
-          height: 1,
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-        ),
-        itemBuilder: (context, i) {
-          final c = matches[i];
-          return ListTile(
-            dense: true,
-            leading: Icon(
-              Icons.chevron_right,
-              size: 18,
-              color: theme.colorScheme.primary,
-            ),
-            title: Text(
-              c.name,
-              style: const TextStyle(
-                fontSize: AppTextSizes.bodySm,
-                fontWeight: FontWeight.w600,
+    // 高度动画: 出现/消失与筛选结果数变化时平滑伸缩 (200ms ease),
+    // 而不是硬跳; 底对齐, 使列表贴着输入框向上展开。
+    // 注意: 本组件目前未被实例化 (/ 命令走 _showCommandPicker 底部表),
+    // 这里是为将来 inline 接入时已带动画; 当前可见效果来自 MentionOverlay。
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.ease,
+      alignment: Alignment.bottomCenter,
+      child: matches.isEmpty
+          ? const SizedBox.shrink()
+          : Container(
+              constraints: const BoxConstraints(maxHeight: 240),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                border: Border.all(color: theme.colorScheme.outlineVariant),
+              ),
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                itemCount: matches.length,
+                separatorBuilder: (_, __) => Divider(
+                  height: 1,
+                  color: theme.colorScheme.outlineVariant.withValues(
+                    alpha: 0.5,
+                  ),
+                ),
+                itemBuilder: (context, i) {
+                  final c = matches[i];
+                  return ListTile(
+                    dense: true,
+                    leading: Icon(
+                      Icons.chevron_right,
+                      size: 18,
+                      color: theme.colorScheme.primary,
+                    ),
+                    title: Text(
+                      c.name,
+                      style: const TextStyle(
+                        fontSize: AppTextSizes.bodySm,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      c.desc,
+                      style: TextStyle(
+                        fontSize: AppTextSizes.caption,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    onTap: () => onSelected(c),
+                  );
+                },
               ),
             ),
-            subtitle: Text(
-              c.desc,
-              style: TextStyle(
-                fontSize: AppTextSizes.caption,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            onTap: () => onSelected(c),
-          );
-        },
-      ),
     );
   }
 }
@@ -149,83 +161,94 @@ class MentionOverlay extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final items = _buildItems(ref);
-    if (items.isEmpty) return const SizedBox.shrink();
 
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxHeight: 220),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 分类标签
-          Padding(
-            padding: const EdgeInsets.only(left: 4, bottom: 2),
-            child: Text(
-              _triggerLabel(),
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
-                color: theme.colorScheme.onSurfaceVariant,
-                letterSpacing: 0.5,
-              ),
-            ),
-          ),
-          Flexible(
-            child: ListView.builder(
-              shrinkWrap: true,
-              padding: EdgeInsets.zero,
-              itemCount: items.length,
-              itemBuilder: (context, i) {
-                final item = items[i];
-                return InkWell(
-                  borderRadius: BorderRadius.circular(AppRadius.sm),
-                  onTap: () => onSelected(item.insertText),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 7,
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(item.icon, size: 16, color: item.color),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                item.label,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: AppTextSizes.bodySm,
-                                  fontWeight: FontWeight.w500,
-                                  color: theme.colorScheme.onSurface,
-                                ),
-                              ),
-                              if (item.subtitle.isNotEmpty)
-                                Text(
-                                  item.subtitle,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: AppTextSizes.caption,
-                                    color: theme.colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ],
+    // 高度动画: 筛选结果数变化时平滑伸缩 (200ms ease), 而不是硬跳;
+    // 底对齐, 使列表贴着输入框向上展开。注意: 父级在无提及触发时
+    // 直接返回 SizedBox.shrink (不挂载本组件), 那种出现/消失仍需
+    // 父级包 AnimatedSize 才能动画; 这里覆盖组件内的高度变化
+    // (包括有结果 ↔ 无结果时的缩到 0)。
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.ease,
+      alignment: Alignment.bottomCenter,
+      child: items.isEmpty
+          ? const SizedBox.shrink()
+          : ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 220),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 分类标签
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4, bottom: 2),
+                    child: Text(
+                      _triggerLabel(),
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.onSurfaceVariant,
+                        letterSpacing: 0.5,
+                      ),
                     ),
                   ),
-                );
-              },
+                  Flexible(
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      padding: EdgeInsets.zero,
+                      itemCount: items.length,
+                      itemBuilder: (context, i) {
+                        final item = items[i];
+                        return InkWell(
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                          onTap: () => onSelected(item.insertText),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 7,
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(item.icon, size: 16, color: item.color),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        item.label,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: AppTextSizes.bodySm,
+                                          fontWeight: FontWeight.w500,
+                                          color: theme.colorScheme.onSurface,
+                                        ),
+                                      ),
+                                      if (item.subtitle.isNotEmpty)
+                                        Text(
+                                          item.subtitle,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: AppTextSizes.caption,
+                                            color: theme.colorScheme.onSurfaceVariant,
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
-      ),
     );
   }
 

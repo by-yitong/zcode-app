@@ -10,7 +10,6 @@ import '../../../providers/app_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/theme/app_router.dart';
 import '../../../shared/widgets/app_empty_state.dart';
-import '../../../shared/widgets/app_section_header.dart';
 import '../../agent/screens/plugins_browser_page.dart';
 import 'thought_block.dart';
 import '../../search/screens/search_screen.dart';
@@ -67,6 +66,17 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
   /// 默认工作区 = 网页端的"不在项目中工作" (路径以 .zcode/workspace/default 结尾)
   static bool _isDefaultWorkspace(Workspace w) =>
       w.workspacePath.endsWith('.zcode/workspace/default');
+
+  /// 切换弹窗路径短显: 含 .zcode/workspace/default 显示"默认工作区",
+  /// 其余只留后两段 (如 …/projects/GoStudio), 避免绝对路径截断在半个词上。
+  static String _shortWorkspacePath(String path) {
+    if (path.contains('.zcode/workspace/default')) return '默认工作区';
+    final trimmed =
+        path.endsWith('/') ? path.substring(0, path.length - 1) : path;
+    final parts = trimmed.split('/').where((s) => s.isNotEmpty).toList();
+    if (parts.length <= 2) return trimmed;
+    return '…/${parts[parts.length - 2]}/${parts.last}';
+  }
 
   /// 该项目下是否存在"正在运行且未归档"的任务 (项目切换弹窗运行中标记用)
   static bool _hasRunningTask(List<Task> tasks, String workspaceKey) =>
@@ -230,6 +240,38 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
     return '${time.month}/${time.day}';
   }
 
+  /// 抽屉内部分组标题: 与 AppSectionHeader 同款式 (mono + 字间距 +
+  /// onSurfaceVariant 次要色), 但字号再小 2 (caption-2), 让任务标题
+  /// 视觉最突出。注: AppSectionHeader 不接受字号参数, 且任务要求
+  /// 只改本文件, 故此处本地复刻一份, 不改共享组件。
+  Widget _buildGroupHeader(String title) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.xs,
+        AppSpacing.lg,
+        AppSpacing.xs,
+        AppSpacing.sm,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              title.toUpperCase(),
+              style: TextStyle(
+                fontFamily: kMonoFont,
+                fontSize: AppTextSizes.caption - 2,
+                fontWeight: FontWeight.w600,
+                color: theme.colorScheme.onSurfaceVariant,
+                letterSpacing: 0.06,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// 分组渲染历史列表
   Widget _buildGroupedHistory(ThemeData theme, List<Task> tasks) {
     // 按时间分组 (保持已排序顺序, 分桶)
@@ -246,18 +288,23 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
       padding: const EdgeInsets.only(bottom: AppSpacing.lg),
       children: [
         for (final g in ordered) ...[
-          AppSectionHeader(title: g),
-          for (final task in groups[g]!) _buildHistoryItem(theme, task),
+          _buildGroupHeader(g),
+          for (final task in groups[g]!)
+            _buildHistoryItem(theme, task, g),
         ],
       ],
     );
   }
 
   /// 单个对话项 (圆角图标块 + 标题 + mono 时间/状态)
-  Widget _buildHistoryItem(ThemeData theme, Task task) {
+  Widget _buildHistoryItem(ThemeData theme, Task task, String groupLabel) {
     final isActive = task.id == widget.currentTaskId;
     final isRunning = task.status == TaskStatus.running;
     final isArchived = task.archived;
+    // 昨天组: 第二行日期与分组标题完全重复, 隐藏 (运行中标记仍保留)。
+    // 今天组 (14:32) / 本周组 (周二等) / 更早组 (7/20) 的第二行信息
+    // 与分组标题不重复, 保留。
+    final hideDate = groupLabel == '昨天';
 
     return Opacity(
       opacity: isArchived ? 0.5 : 1.0,
@@ -307,42 +354,48 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                         height: 1.35,
                       ),
                     ),
-                    const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        if (isRunning) ...[
-                          RunningDot(),
-                          const SizedBox(width: AppSpacing.xs),
-                          Text(
-                            '运行中',
-                            style: AppText.mono(
-                              context,
-                              size: AppTextSizes.monoXs,
-                              color: AppColors.warning,
+                    // 第二行: 昨天组隐藏日期 (运行中任务仍保留运行标记)
+                    if (!hideDate || isRunning) ...[
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          if (isRunning) ...[
+                            RunningDot(),
+                            const SizedBox(width: AppSpacing.xs),
+                            Text(
+                              '运行中',
+                              style: AppText.mono(
+                                context,
+                                size: AppTextSizes.monoXs,
+                                color: AppColors.warning,
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: AppSpacing.sm),
-                          Text(
-                            '·',
-                            style: AppText.mono(
-                              context,
-                              size: AppTextSizes.monoXs,
-                              color: theme.colorScheme.onSurfaceVariant
-                                  .withValues(alpha: 0.4),
+                            if (!hideDate) ...[
+                              const SizedBox(width: AppSpacing.sm),
+                              Text(
+                                '·',
+                                style: AppText.mono(
+                                  context,
+                                  size: AppTextSizes.monoXs,
+                                  color: theme.colorScheme.onSurfaceVariant
+                                      .withValues(alpha: 0.4),
+                                ),
+                              ),
+                              const SizedBox(width: AppSpacing.sm),
+                            ],
+                          ],
+                          if (!hideDate)
+                            Text(
+                              _formatHistTime(task.updatedAt),
+                              style: AppText.mono(
+                                context,
+                                size: AppTextSizes.monoXs,
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: AppSpacing.sm),
                         ],
-                        Text(
-                          _formatHistTime(task.updatedAt),
-                          style: AppText.mono(
-                            context,
-                            size: AppTextSizes.monoXs,
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -593,15 +646,24 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
         ? '选择项目'
         : (isDefault ? '不在项目中工作' : current.name);
 
-    // 圆角卡片 (填充色, 无边框), 独立于列表的浮动切换器
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.md,
-        AppSpacing.xs,
-        AppSpacing.md,
-        AppSpacing.sm,
-      ),
-      child: Material(
+    // 圆角卡片 (填充色, 无边框), 上方加分隔线接地, 不再悬空
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Divider(
+          height: 1,
+          indent: AppSpacing.md,
+          endIndent: AppSpacing.md,
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            AppSpacing.xs,
+            AppSpacing.md,
+            AppSpacing.sm,
+          ),
+          child: Material(
         color: theme.colorScheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(AppRadius.md),
         clipBehavior: Clip.antiAlias,
@@ -645,6 +707,8 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
           ),
         ),
       ),
+        ),
+      ],
     );
   }
 
@@ -735,6 +799,11 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
               for (final w in sorted)
                 ListTile(
                   dense: true,
+                  // 当前项目行底色高亮 (对勾/主色图标/加粗标题已存在,
+                  // 再加底色让当前项一眼可见)
+                  tileColor: w.workspaceKey == widget.workspacePath
+                      ? AppColors.accentContainer
+                      : null,
                   leading: Icon(
                     _isDefaultWorkspace(w)
                         ? Icons.home_work_outlined
@@ -766,7 +835,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                     ],
                   ),
                   subtitle: Text(
-                    w.workspacePath,
+                    _shortWorkspacePath(w.workspacePath),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(

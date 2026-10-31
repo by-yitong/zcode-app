@@ -250,6 +250,8 @@ class _ReadyView extends StatelessWidget {
 
   /// 更改 Tab: 未暂存/已暂存两段列表 (「提交」入口已并入头部卡片)。
   Widget _changesTab(BuildContext context) {
+    // 批量暂存进行中时禁用「全部暂存」 (stage 逐路径占 busy 键)。
+    final stagingAny = state.busyOps.any((k) => k.startsWith('stage:'));
     return ListView(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.md,
@@ -263,6 +265,17 @@ class _ReadyView extends StatelessWidget {
           changes: state.unstaged,
           emptyHint: '没有未暂存的更改',
           busyOps: state.busyOps,
+          // 空段不显示按钮; 语义与逐行「暂存」一致 (含 untracked 行)。
+          headerAction: state.unstaged.isEmpty
+              ? null
+              : TextButton(
+                  onPressed: stagingAny
+                      ? null
+                      : () => controller.stage(
+                            state.unstaged.map((c) => c.path).toList(),
+                          ),
+                  child: const Text('全部暂存'),
+                ),
           onStage: (c) => controller.stage([c.path]),
           onDiscard: (c) => onDiscardConfirm(
             context,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../data/models/glm_quota.dart' as glm;
+import '../../../providers/app_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 
 /// 用量详情底部弹窗 — 顶栏 UsagePill / 上下文环统一入口
@@ -12,8 +13,13 @@ import '../../../shared/theme/app_design_tokens.dart';
 /// 3. MCP 月度用量: 已用/总量 + 各 MCP 次数明细
 ///
 /// 底部提供刷新入口 (回调到 glmQuotaProvider.refresh)。
+/// 编码套餐区块直接订阅 glmQuotaProvider，来源切换后即时更新。
 class UsageDetailSheet extends StatelessWidget {
   final ({int input, int output, int max})? tokenUsage;
+
+  /// GLM 配额快照（调用方传入，即打开时的 ref.watch(glmQuotaProvider)）。
+  /// 注意：编码套餐区块直接订阅 glmQuotaProvider 以便切换来源/刷新后即时更新，
+  /// 本字段仅保留调用方兼容，不再驱动区块渲染。
   final AsyncValue<glm.GlmQuota?> quotaAsync;
   final VoidCallback? onRefresh;
 
@@ -219,14 +225,35 @@ class UsageDetailSheet extends StatelessWidget {
 
   // ── 区块 2: GLM Coding Plan ─────────────────────────────────
 
+  /// GLM 区块直接订阅 glmQuotaProvider：调用方传入的 quotaAsync 与之同源
+  /// （调用方传的就是 ref.watch(glmQuotaProvider)，打开时一致）；订阅后
+  /// 切换来源/刷新可即时反映在已打开的弹窗里。
   Widget _buildGlmSection(BuildContext context) {
+    return Consumer(
+      builder: (context, ref, _) {
+        return _buildGlmSectionContent(context, ref.watch(glmQuotaProvider));
+      },
+    );
+  }
+
+  Widget _buildGlmSectionContent(
+    BuildContext context,
+    AsyncValue<glm.GlmQuota?> quotaAsync,
+  ) {
     final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _SectionHeader(
-          icon: Icons.local_fire_department_outlined,
-          label: '编码套餐',
+        Row(
+          children: [
+            const Expanded(
+              child: _SectionHeader(
+                icon: Icons.local_fire_department_outlined,
+                label: '编码套餐',
+              ),
+            ),
+            _QuotaSourceSwitch(quotaAsync: quotaAsync),
+          ],
         ),
         const SizedBox(height: 8),
         quotaAsync.when(
@@ -352,6 +379,64 @@ class UsageDetailSheet extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+/// 编码套餐来源切换：远程 API / API Key。
+///
+/// 仅当两个来源都可用（relay 已连接且 API key 有效）时显示可切换的
+/// dropdown；否则只显示当前来源的小字标签，不给切。切换后调用
+/// [GlmQuotaNotifier.setManualSource] 持久化手动选择并按新来源重查。
+class _QuotaSourceSwitch extends ConsumerWidget {
+  final AsyncValue<glm.GlmQuota?> quotaAsync;
+
+  const _QuotaSourceSwitch({required this.quotaAsync});
+
+  /// quota.source → 中文：'session' → 远程 API，'api' → API Key。
+  static String _sourceLabel(String source) =>
+      source == 'api' ? 'API Key' : '远程 API';
+
+  /// quota.source → 偏好值：'session' → 'remote'，'api' → 'api'。
+  static String _sourcePref(String source) =>
+      source == 'api' ? 'api' : 'remote';
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final notifier = ref.watch(glmQuotaProvider.notifier);
+    final labelStyle = TextStyle(
+      fontSize: AppTextSizes.label,
+      color: theme.colorScheme.onSurfaceVariant,
+    );
+
+    // 当前来源：有数据时以数据标记为准，否则以 notifier 解析的生效来源为准。
+    final source = quotaAsync.valueOrNull?.source ??
+        (notifier.effectiveSource == 'api' ? 'api' : 'session');
+
+    // 两个来源都可用才给切；否则只显示当前来源小字。
+    if (!notifier.relayAvailable || !notifier.apiKeyAvailable) {
+      return Text(_sourceLabel(source), style: labelStyle);
+    }
+
+    final value = _sourcePref(source);
+    return DropdownButtonHideUnderline(
+      child: DropdownButton<String>(
+        value: value,
+        isDense: true,
+        iconSize: 14,
+        style: labelStyle,
+        dropdownColor: theme.colorScheme.surfaceContainerHigh,
+        items: const [
+          DropdownMenuItem(value: 'remote', child: Text('远程 API')),
+          DropdownMenuItem(value: 'api', child: Text('API Key')),
+        ],
+        onChanged: (v) {
+          if (v != null && v != value) {
+            ref.read(glmQuotaProvider.notifier).setManualSource(v);
+          }
+        },
+      ),
     );
   }
 }

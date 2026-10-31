@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/logging/app_logger.dart';
+import '../../../../core/network/zcode_account_api.dart';
 import '../../../../shared/entry_workspace.dart';
 import '../../../../shared/theme/app_design_tokens.dart';
 import '../../../../shared/theme/app_router.dart';
@@ -44,7 +45,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     session.when(
       data: (s) {
         if (s != null && s.isValid) {
-          _connectRelay();
+          _connectRelayWithDevicePrecheck(s.deviceSid);
         } else {
           _routeWithoutSession();
         }
@@ -75,6 +76,46 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     }
     if (!mounted) return;
     context.go(AppRoutes.login);
+  }
+
+  /// 账号会话的设备在线预判 (启动时):
+  /// - 只有恢复到账号凭据 (jwt 非空) 才检查; 无账号的直连会话跳过, 走现有流程。
+  /// - listDevices 短超时 (5 秒) 按当前 session.deviceSid 匹配:
+  ///   - 匹配到且 online == false → 不再尝试连接, 直接回设备列表页
+  ///     (列表自带在线绿点, 用户选在线设备), 避免"连接中"挂到超时。
+  ///   - 匹配到且 online == true → 走现有 _connectRelay。
+  ///   - 超时 / 接口异常 / 没匹配到 → 全部 fail-open, 走现有 _connectRelay
+  ///     (预判本身绝不能卡住启动)。
+  Future<void> _connectRelayWithDevicePrecheck(String deviceSid) async {
+    if (!mounted) return;
+    try {
+      final account = await ref.read(authRepositoryProvider).restoreAccount();
+      if (!mounted) return;
+      if (account != null && account.jwt.isNotEmpty) {
+        setState(() => _status = '正在连接服务器...');
+        final devices = await ZcodeAccountApi()
+            .listDevices(jwtOverride: account.jwt)
+            .timeout(const Duration(seconds: 5));
+        if (!mounted) return;
+        RemoteDevice? target;
+        for (final device in devices) {
+          if (device.deviceSid == deviceSid) {
+            target = device;
+            break;
+          }
+        }
+        if (target != null && !target.online) {
+          appLog.w('[Splash] 设备离线 (deviceSid=$deviceSid), 回设备列表页');
+          context.go(AppRoutes.devicePicker);
+          return;
+        }
+      }
+    } catch (e) {
+      // 预判失败不阻塞: 超时 / 接口异常 / 账号读取失败都 fail-open
+      appLog.w('[Splash] 设备在线预判失败, 按现有流程继续: $e');
+    }
+    if (!mounted) return;
+    _connectRelay();
   }
 
   /// 连接 relay + 开 bridge + 加载数据, 完成后直达聊天页
