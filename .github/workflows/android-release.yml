@@ -30,9 +30,9 @@ jobs:
 
       - run: flutter pub get
 
-      # 静态检查只报告、不阻塞打包（存量警告不应挡住发布）
+      # 静态检查：error 会直接阻断（fail fast），warning 不影响通过。
+      # 之前 continue-on-error 让类型错误亮绿灯、拖到构建才炸，改掉。
       - run: flutter analyze --no-pub
-        continue-on-error: true
 
       - name: Build arm64-only release APK
         run: >

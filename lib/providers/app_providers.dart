@@ -1026,7 +1026,7 @@ class GlmQuotaNotifier extends StateNotifier<AsyncValue<GlmQuota?>> {
       manual = null;
     }
     final resolved = (manual == 'remote' || manual == 'api')
-        ? manual
+        ? manual!
         : (credValid ? 'api' : 'remote');
     _effectiveSource = resolved;
 
