@@ -52,6 +52,10 @@ jobs:
           fi
 
       - name: Build arm64-only release APK
+        # 别名不是密钥 (只是 keystore 里的条目名), 直接写死, 不占一个 Secret。
+        # 与 key.properties 通道互补: env 优先, 故 keyAlias 取此值。
+        env:
+          ANDROID_KEY_ALIAS: upload
         run: >
           flutter build apk --release
           --target-platform android-arm64
