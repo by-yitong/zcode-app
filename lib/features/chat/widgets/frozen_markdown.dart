@@ -38,6 +38,7 @@ class FrozenTailMarkdown extends StatefulWidget {
   final Color ink;
   final Color codeBg;
   final void Function(String url, String title)? onLinkTap;
+  final ImageBuilder? imageBuilder;
 
   /// 尾段长度上限 (字符), 超过才推进冻结。测试可调小强制走切分路径。
   final int maxTail;
@@ -49,6 +50,7 @@ class FrozenTailMarkdown extends StatefulWidget {
     required this.ink,
     required this.codeBg,
     this.onLinkTap,
+    this.imageBuilder,
     this.maxTail = 3200,
   });
 
@@ -106,6 +108,7 @@ class _FrozenTailMarkdownState extends State<FrozenTailMarkdown> {
     codeBg: widget.codeBg,
     isStreaming: streaming,
     onLinkTap: widget.onLinkTap,
+    imageBuilder: widget.imageBuilder,
   );
 
   @override

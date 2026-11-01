@@ -1158,14 +1158,31 @@ class ModelPickerSheetState extends State<ModelPickerSheet> {
       if (!order.contains(pid)) order.add(pid);
     }
 
+    // 当前行解析: 精确匹配优先; Host 历史里的 model 是裸 modelId
+    // (无 provider 前缀), 列表 ID 是 pid/mid — 裸名相等时取首条
+    // (同名多套餐时分组标题已区分, 点行可显式纠正)。
+    String? currentRowId;
+    if (widget.current != null) {
+      for (final m in filtered) {
+        if (m == widget.current ||
+            m.split('/').last == widget.current!.split('/').last) {
+          currentRowId = m;
+          break;
+        }
+      }
+    }
+
     return SafeArea(
       child: Padding(
         padding: EdgeInsets.only(
           bottom: MediaQuery.of(context).viewInsets.bottom,
         ),
-        child: SizedBox(
-          height: MediaQuery.of(context).size.height * 0.65,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.65,
+          ),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
               // 标题栏
               Padding(
@@ -1231,8 +1248,8 @@ class ModelPickerSheetState extends State<ModelPickerSheet> {
                     ),
                   ),
                 ),
-              // 模型列表
-              Expanded(
+              // 模型列表 (内容短时贴合高度, 长表封顶 65% 后内部滚动)
+              Flexible(
                 child: filtered.isEmpty
                     ? Center(
                         child: Text(
@@ -1244,53 +1261,41 @@ class ModelPickerSheetState extends State<ModelPickerSheet> {
                         ),
                       )
                     : ListView(
+                        shrinkWrap: true,
                         padding: const EdgeInsets.only(bottom: 8),
                         children: [
                           for (final pid in order) ...[
+                            // 分组标题: 小字淡色, 不可点样式 (不再用蓝色)
                             Padding(
                               padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.dns_outlined,
-                                    size: 13,
-                                    color: theme.colorScheme.primary,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    providerLabel(pid),
-                                    style: theme.textTheme.labelMedium
-                                        ?.copyWith(
-                                          color: theme.colorScheme.primary,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    '${groups[pid]!.length}',
-                                    style: TextStyle(
-                                      fontSize: AppTextSizes.caption,
-                                      color: theme.colorScheme.onSurfaceVariant,
-                                    ),
-                                  ),
-                                ],
+                              child: Text(
+                                providerLabel(pid),
+                                style: TextStyle(
+                                  fontSize: AppTextSizes.caption,
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                  fontWeight: FontWeight.w500,
+                                ),
                               ),
                             ),
                             for (final m in groups[pid]!)
                               ListTile(
-                                key: m == widget.current ? _currentKey : null,
+                                key: m == currentRowId ? _currentKey : null,
                                 dense: true,
+                                // 选中行底色高亮 (同切换项目弹窗)
+                                tileColor: m == currentRowId
+                                    ? AppColors.accentContainer
+                                    : null,
                                 title: Text(
                                   slug(m),
                                   style: TextStyle(
                                     fontSize: AppTextSizes.bodyMd,
-                                    fontWeight: m == widget.current
+                                    fontWeight: m == currentRowId
                                         ? FontWeight.w600
                                         : FontWeight.w400,
                                   ),
                                 ),
                                 // 选中项: 右侧对勾 (替代单选框)
-                                trailing: m == widget.current
+                                trailing: m == currentRowId
                                     ? Icon(
                                         Icons.check_rounded,
                                         size: 20,

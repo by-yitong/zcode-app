@@ -61,12 +61,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     final user = session.valueOrNull;
     final userName = user?.deviceName ?? '未登录';
-    final deviceId = user?.deviceSid ?? '—';
+    final connectionLabel = connectionAsync.maybeWhen(
+      data: (state) => switch (state) {
+        RelayConnectionState.ready => '已连接到 ZCode',
+        RelayConnectionState.connecting => '正在连接...',
+        RelayConnectionState.reconnecting => '正在重连...',
+        RelayConnectionState.disconnected => '未连接',
+        _ => '—',
+      },
+      orElse: () => '—',
+    );
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: CapsPageHeader.overlayStyle(context),
       child: Scaffold(
-        appBar: const CapsPageHeader(title: '设置', plain: true),
+        appBar: const CapsPageHeader(title: '设置'),
         body: ListView(
           padding: const EdgeInsets.fromLTRB(
             AppSpacing.lg,
@@ -75,110 +84,82 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             AppSpacing.xxl,
           ),
           children: [
-            // 用户卡 — 头像 + 设备名/SID + 连接状态 (点击切换设备)
+            _sectionLabel(context, '账户'),
             _SettingsCard(
-              onTap: () => context.go(AppRoutes.devicePicker),
-              child: Padding(
-                padding: const EdgeInsets.all(AppSpacing.md),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 44,
-                          height: 44,
-                          decoration: const BoxDecoration(
-                            color: AppColors.accent,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.person_outline,
-                            color: Colors.white,
-                            size: 22,
-                          ),
-                        ),
-                        const SizedBox(width: AppSpacing.md),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                userName,
-                                style: theme.textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              Text(
-                                'SID · $deviceId',
-                                style: AppText.mono(
-                                  context,
-                                  size: AppTextSizes.monoXs,
-                                  color: theme.colorScheme.onSurfaceVariant,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: AppSpacing.md),
-                    // 连接状态 pill (mono)
-                    Container(
+              child: Column(
+                children: [
+                  // 个人账号信息行: 头像 + 账号名 + 连接状态 (点进设备选择)
+                  InkWell(
+                    onTap: () => context.go(AppRoutes.devicePicker),
+                    child: Padding(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: AppSpacing.sm,
-                        vertical: AppSpacing.xs,
-                      ),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(AppRadius.sm),
+                        horizontal: AppSpacing.lg,
+                        vertical: 12,
                       ),
                       child: Row(
-                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(
-                            Icons.cloud_done_outlined,
-                            size: 14,
-                            color: connectionAsync.maybeWhen(
-                              data: (s) => s == RelayConnectionState.ready
-                                  ? AppColors.success
-                                  : AppColors.warning,
-                              orElse: () => AppColors.warning,
+                          Container(
+                            width: 40,
+                            height: 40,
+                            decoration: const BoxDecoration(
+                              color: AppColors.accent,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.person_outline,
+                              color: Colors.white,
+                              size: 20,
                             ),
                           ),
-                          const SizedBox(width: AppSpacing.xs),
-                          Text(
-                            connectionAsync.maybeWhen(
-                              data: (state) {
-                                final s = state;
-                                return switch (s) {
-                                  RelayConnectionState.ready =>
-                                    '已连接到 ZCode',
-                                  RelayConnectionState.connecting =>
-                                    '正在连接...',
-                                  RelayConnectionState.reconnecting =>
-                                    '正在重连...',
-                                  RelayConnectionState.disconnected =>
-                                    '未连接',
-                                  _ => '—',
-                                };
-                              },
-                              orElse: () => '—',
+                          const SizedBox(width: AppSpacing.md),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  userName,
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  connectionLabel,
+                                  style: TextStyle(
+                                    fontSize: AppTextSizes.label,
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
                             ),
-                            style: AppText.mono(
-                              context,
-                              size: AppTextSizes.monoXs,
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
+                          ),
+                          const SizedBox(width: AppSpacing.sm),
+                          Icon(
+                            Icons.chevron_right,
+                            size: 18,
+                            color:
+                                Theme.of(context).brightness == Brightness.dark
+                                ? AppColors.darkInkLabel
+                                : AppColors.lightInkLabel,
                           ),
                         ],
                       ),
                     ),
-                    // GLM 用量已下线 (用量见聊天页顶部 UsagePill), 仅保留「通用 · GLM 配置」
-                  ],
-                ),
+                  ),
+                  _SettingsRow(
+                    icon: Icons.swap_horiz_rounded,
+                    title: '切换设备',
+                    onTap: () => context.go(AppRoutes.devicePicker),
+                  ),
+                  _SettingsRow(
+                    icon: Icons.key_outlined,
+                    title: 'GLM 配置',
+                    value: (ref.watch(glmCredentialProvider)?.isValid ?? false)
+                        ? '已配置'
+                        : '未配置',
+                    onTap: () => _showGlmCredentialEditor(context, ref),
+                  ),
+                ],
               ),
             ),
 
@@ -240,7 +221,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             ),
 
-            _sectionLabel(context, '通用'),
+            _sectionLabel(context, '应用'),
             _SettingsCard(
               child: Column(
                 children: [
@@ -302,14 +283,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       );
                     },
                   ),
-                  _SettingsRow(
-                    icon: Icons.key_outlined,
-                    title: 'GLM 配置',
-                    value: (ref.watch(glmCredentialProvider)?.isValid ?? false)
-                        ? '已配置'
-                        : '未配置',
-                    onTap: () => _showGlmCredentialEditor(context, ref),
-                  ),
+
                 ],
               ),
             ),
@@ -332,6 +306,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     onTap: () => _checkUpdate(context),
                   ),
                   _SettingsRow(
+                    icon: Icons.description_outlined,
+                    title: '开源协议',
+                    value: 'MIT',
+                    onTap: () => _showLicenseDialog(context),
+                  ),
+                  _SettingsRow(
+                    icon: Icons.code_outlined,
+                    title: 'GitHub',
+                    onTap: () =>
+                        _openUrl('https://github.com/by-yitong/zcode-app'),
+                  ),
+                  _SettingsRow(
                     icon: Icons.bug_report_outlined,
                     title: '导出连接凭证 (调试)',
                     value: '复制',
@@ -344,41 +330,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     onTap: () => _exportLogs(context),
                   ),
                   _SettingsRow(
-                    icon: Icons.code_outlined,
-                    title: 'GitHub',
-                    onTap: () =>
-                        _openUrl('https://github.com/by-yitong/zcode-app'),
-                  ),
-                  _SettingsRow(
-                    icon: Icons.description_outlined,
-                    title: '开源协议',
-                    value: 'MIT',
-                    onTap: () => _showLicenseDialog(context),
+                    icon: Icons.logout,
+                    title: '断开连接',
+                    showChevron: false,
+                    onTap: () => _logout(context, ref),
                   ),
                 ],
               ),
             ),
 
-            const SizedBox(height: AppSpacing.lg),
-            // 切换设备 — 底部独立操作卡 (账号下可绑多台桌面设备)
-            _SettingsCard(
-              child: _SettingsRow(
-                icon: Icons.swap_horiz_rounded,
-                title: '切换设备',
-                showChevron: false,
-                onTap: () => context.go(AppRoutes.devicePicker),
-              ),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            // 断开连接 — 底部独立操作卡 (对齐截图退出登录: 黑字 logout, 无箭头)
-            _SettingsCard(
-              child: _SettingsRow(
-                icon: Icons.logout,
-                title: '断开连接',
-                showChevron: false,
-                onTap: () => _logout(context, ref),
-              ),
-            ),
           ],
         ),
       ),
@@ -747,10 +707,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 class _SettingsCard extends StatelessWidget {
   final Widget child;
 
-  /// 整卡点击 (如用户卡 → 设备选择); null = 不可点
-  final VoidCallback? onTap;
-
-  const _SettingsCard({required this.child, this.onTap});
+  const _SettingsCard({required this.child});
 
   @override
   Widget build(BuildContext context) {
@@ -759,9 +716,7 @@ class _SettingsCard extends StatelessWidget {
       color: dark ? AppColors.darkSurfaceElevated : Colors.white,
       borderRadius: BorderRadius.circular(AppRadius.xl),
       clipBehavior: Clip.antiAlias,
-      child: onTap == null
-          ? child
-          : InkWell(onTap: onTap, child: child),
+      child: child,
     );
   }
 }

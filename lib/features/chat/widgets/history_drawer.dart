@@ -67,6 +67,18 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
   static bool _isDefaultWorkspace(Workspace w) =>
       w.workspacePath.endsWith('.zcode/workspace/default');
 
+  /// 真实项目 (切换弹窗只列这些): 排除 conversation 草稿工作区
+  /// (purpose=='conversation')、旧协议下路径为 draft- 的工作区，
+  /// 以及默认工作区 (已合并进「任务列表」)。
+  static bool _isRealProject(Workspace w) {
+    if (w.purpose == 'conversation') return false;
+    if (_isDefaultWorkspace(w)) return false;
+    if (w.purpose == null && w.workspacePath.contains('/workspace/draft-')) {
+      return false;
+    }
+    return true;
+  }
+
   /// 切换弹窗路径短显: 含 .zcode/workspace/default 显示"默认工作区",
   /// 其余只留后两段 (如 …/projects/GoStudio), 避免绝对路径截断在半个词上。
   static String _shortWorkspacePath(String path) {
@@ -640,22 +652,17 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
         .where((w) => w.workspaceKey == widget.workspacePath)
         .firstOrNull;
     final isDefault = current != null && _isDefaultWorkspace(current);
-    final label = _conversationView
+    final label = (_conversationView || isDefault)
         ? '任务列表'
         : current == null
         ? '选择项目'
-        : (isDefault ? '不在项目中工作' : current.name);
+        : current.name;
 
-    // 圆角卡片 (填充色, 无边框), 上方加分隔线接地, 不再悬空
+    // 圆角卡片 (填充色区分, 无边框, 无分隔线)
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Divider(
-          height: 1,
-          indent: AppSpacing.md,
-          endIndent: AppSpacing.md,
-        ),
         Padding(
           padding: const EdgeInsets.fromLTRB(
             AppSpacing.md,
@@ -718,15 +725,17 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
     // 打开时读一次任务快照, 用于标记"有任务正在运行"的项目
     // (弹窗展示期间不实时刷新, 不加定时器)
     final tasks = ref.read(allTasksProvider);
-    // 默认工作区固定最上, 其余按名称排序
-    final sorted = [...workspaces]
-      ..sort((a, b) {
-        final d = (_isDefaultWorkspace(b) ? 1 : 0).compareTo(
-          _isDefaultWorkspace(a) ? 1 : 0,
-        );
-        if (d != 0) return d;
-        return a.name.compareTo(b.name);
-      });
+    // 切换弹窗只列真实项目 (草稿工作区与默认工作区不进列表):
+    // 草稿只在任务列表聚合视图出现, 默认工作区已合并进任务列表。
+    final projects = workspaces.where(_isRealProject).toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
+    // 任务列表行选中态: 显式聚合视图, 或当前就在默认工作区
+    // (网页端两者同为「任务列表」, 算一个)。
+    final current = workspaces
+        .where((w) => w.workspaceKey == widget.workspacePath)
+        .firstOrNull;
+    final taskListSelected = _conversationView ||
+        (current != null && _isDefaultWorkspace(current));
 
     showModalBottomSheet<void>(
       context: context,
@@ -754,13 +763,15 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                 ),
                 child: Text('切换项目', style: theme.textTheme.titleMedium),
               ),
-              // 任务列表 (聚合草稿对话, 对应网页侧栏「对话」分区)
+              // 任务列表 (聚合草稿对话, 对应网页侧栏「对话」分区;
+              // 默认工作区已合并进此行, 两者算一个)
               ListTile(
                 dense: true,
+                tileColor: taskListSelected ? AppColors.accentContainer : null,
                 leading: Icon(
                   Icons.forum_outlined,
                   size: 20,
-                  color: _conversationView
+                  color: taskListSelected
                       ? theme.colorScheme.primary
                       : theme.colorScheme.onSurfaceVariant,
                 ),
@@ -768,7 +779,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                   '任务列表',
                   style: TextStyle(
                     fontSize: AppTextSizes.bodyMd,
-                    fontWeight: _conversationView
+                    fontWeight: taskListSelected
                         ? FontWeight.w600
                         : FontWeight.w400,
                   ),
@@ -782,7 +793,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
-                trailing: _conversationView
+                trailing: taskListSelected
                     ? Icon(
                         Icons.check_rounded,
                         size: 20,
@@ -796,7 +807,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                   setState(() => _conversationView = true);
                 },
               ),
-              for (final w in sorted)
+              for (final w in projects)
                 ListTile(
                   dense: true,
                   // 当前项目行底色高亮 (对勾/主色图标/加粗标题已存在,
@@ -805,9 +816,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                       ? AppColors.accentContainer
                       : null,
                   leading: Icon(
-                    _isDefaultWorkspace(w)
-                        ? Icons.home_work_outlined
-                        : Icons.folder_outlined,
+                    Icons.folder_outlined,
                     size: 20,
                     color: w.workspaceKey == widget.workspacePath
                         ? theme.colorScheme.primary
@@ -818,7 +827,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                     children: [
                       Flexible(
                         child: Text(
-                          _isDefaultWorkspace(w) ? '不在项目中工作' : w.name,
+                          w.name,
                           style: TextStyle(
                             fontSize: AppTextSizes.bodyMd,
                             fontWeight: w.workspaceKey == widget.workspacePath

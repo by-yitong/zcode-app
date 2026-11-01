@@ -12,6 +12,7 @@ import '../../../core/relay/relay_events.dart';
 import '../../../providers/chat_provider.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/widgets/ai_markdown.dart';
+import '../../../shared/widgets/image_viewer.dart';
 import '../screens/file_preview_screen.dart';
 import 'agent_card.dart';
 import 'chat_helpers.dart';
@@ -172,7 +173,7 @@ class MessageBubbleState extends State<MessageBubble> {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // V4 附件缩略图网格 (≤3 张一行; 点击不放大, 本期无查看器)
+                      // V4 附件缩略图网格 (≤3 张一行; 点图进全屏预览)
                       if (message.attachments.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(bottom: AppSpacing.xs),
@@ -198,15 +199,25 @@ class MessageBubbleState extends State<MessageBubble> {
                           ),
                         ),
                       // 旧路径: markdown data-URI 图片 (历史消息兼容, 保持不动)
+                      // 点图进全屏预览
                       for (final dataUri in images)
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(AppRadius.sm),
-                          child: ConstrainedBox(
-                            constraints: BoxConstraints(
-                              maxWidth: MediaQuery.sizeOf(context).width * 0.6,
-                              maxHeight: 200,
+                        GestureDetector(
+                          onTap: () {
+                            final bytes = DataImage.tryDecode(dataUri);
+                            if (bytes != null) {
+                              showImageViewer(context, MemoryImage(bytes));
+                            }
+                          },
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(AppRadius.sm),
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxWidth:
+                                    MediaQuery.sizeOf(context).width * 0.6,
+                                maxHeight: 200,
+                              ),
+                              child: DataImage(dataUri: dataUri),
                             ),
-                            child: DataImage(dataUri: dataUri),
                           ),
                         ),
                       // 文本 (有图片或有文字时才显示)
@@ -216,6 +227,15 @@ class MessageBubbleState extends State<MessageBubble> {
                           ink: Colors.white,
                           codeBg: Colors.black26,
                           minimal: true,
+                          // 蓝底白字: 链接改白色下划线 (默认品牌蓝在蓝底上不可见),
+                          // 并接通点按 (与助手气泡同一处理)。
+                          linkStyle: const LinkStyle(
+                            color: Colors.white,
+                            decoration: TextDecoration.underline,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          onLinkTap: _onMarkdownLink,
+                          imageBuilder: _markdownImageBuilder,
                           bodyStyle: const TextStyle(
                             color: Colors.white,
                             fontSize: AppTextSizes.bodyMd,
@@ -339,6 +359,93 @@ class MessageBubbleState extends State<MessageBubble> {
     );
   }
 
+  /// Markdown 图片渲染 (聊天页): http 直显且点图预览; Host 本地/相对路径
+  /// 暂无二进制取图通道, 显示文件 tile (点开走文件预览; 文本文件可看,
+  /// 二进制图片预览页目前只读文本)。
+  Widget _markdownImageBuilder(
+    BuildContext context,
+    String url,
+    double? width,
+    double? height,
+  ) {
+    final trimmed = url.trim();
+    final lower = trimmed.toLowerCase();
+    if (lower.startsWith('http://') || lower.startsWith('https://')) {
+      return GestureDetector(
+        onTap: () => showImageViewer(context, NetworkImage(trimmed)),
+        child: Image(
+          image: NetworkImage(trimmed),
+          fit: BoxFit.cover,
+          loadingBuilder: (context, child, progress) {
+            if (progress == null) return child;
+            return const SizedBox(
+              width: 120,
+              height: 90,
+              child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+            );
+          },
+          errorBuilder: (context, error, stackTrace) => Container(
+            width: 120,
+            height: 90,
+            alignment: Alignment.center,
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            child: const Icon(Icons.broken_image_outlined),
+          ),
+        ),
+      );
+    }
+    if (lower.startsWith('data:image/')) {
+      final bytes = DataImage.tryDecode(trimmed);
+      if (bytes == null) return const SizedBox.shrink();
+      return GestureDetector(
+        onTap: () => showImageViewer(context, MemoryImage(bytes)),
+        child: Image.memory(bytes, fit: BoxFit.cover),
+      );
+    }
+    // Host 本地/相对路径: 文件 tile (点开走文件预览)
+    final name = trimmed.split('/').last.split('?').first.split('#').first;
+    return GestureDetector(
+      onTap: () => _onMarkdownLink(trimmed, ''),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm,
+          vertical: AppSpacing.xs,
+        ),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.image_outlined, size: 18),
+            const SizedBox(width: AppSpacing.xs),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 200),
+              child: Text(
+                name.isEmpty ? trimmed : name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: AppTextSizes.bodySm,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.xs),
+            Text(
+              '点击打开文件预览',
+              style: TextStyle(
+                fontSize: AppTextSizes.caption,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// AI 气泡的 Markdown 正文块 (统一样式见 AiMarkdown)。
   /// 提取并独立渲染 data URI 图片 (gpt_markdown 对 data: URI 的支持未验证,
   /// 保持既有提取流程)。整段文本一次渲染, 表格横向滚动由包内建视口承担。
@@ -351,16 +458,24 @@ class MessageBubbleState extends State<MessageBubble> {
     final (images, cleanText) = _extractImages(data);
 
     final allChildren = <Widget>[];
-    // 前置图片
+    // 前置图片 (点图进全屏预览)
     for (final dataUri in images) {
       allChildren.add(
-        Padding(
-          padding: const EdgeInsets.only(bottom: AppSpacing.xs),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(AppRadius.sm),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 200),
-              child: DataImage(dataUri: dataUri),
+        GestureDetector(
+          onTap: () {
+            final bytes = DataImage.tryDecode(dataUri);
+            if (bytes != null) {
+              showImageViewer(context, MemoryImage(bytes));
+            }
+          },
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.sm),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 200),
+                child: DataImage(dataUri: dataUri),
+              ),
             ),
           ),
         ),
@@ -376,6 +491,7 @@ class MessageBubbleState extends State<MessageBubble> {
           ink: aiInk,
           codeBg: aiCodeBg,
           onLinkTap: _onMarkdownLink,
+          imageBuilder: _markdownImageBuilder,
         ),
       );
     }
@@ -892,7 +1008,10 @@ class _AttachmentThumbState extends State<_AttachmentThumb> {
   Widget build(BuildContext context) {
     final bytes = _bytes;
     if (bytes != null) {
-      return Image.memory(bytes, fit: BoxFit.cover, gaplessPlayback: true);
+      return GestureDetector(
+        onTap: () => showImageViewer(context, MemoryImage(bytes)),
+        child: Image.memory(bytes, fit: BoxFit.cover, gaplessPlayback: true),
+      );
     }
     // 加载中/读回失败占位 (纯图片消息时撑起 88px 方块)
     final theme = Theme.of(context);
