@@ -65,3 +65,7 @@ linux/
 
 # golden 测试失败产物
 test/failures/
+
+# 正式签名 (密钥与密码, 切勿提交; CI 通过环境变量注入)
+android/key.properties
+android/app/upload-keystore.jks

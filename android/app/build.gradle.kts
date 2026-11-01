@@ -1,8 +1,23 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+// 正式签名: CI 环境变量优先, 其次 android/key.properties (本地, 已 gitignore)。
+// 两者都没有时回退 debug 签名, 保证 flutter run --release 依然可用。
+val keystoreProperties = Properties().apply {
+    val f = rootProject.file("key.properties")
+    if (f.exists()) load(FileInputStream(f))
+}
+val ksStoreFile = System.getenv("ANDROID_KEYSTORE_FILE") ?: keystoreProperties.getProperty("storeFile")
+val ksStorePassword = System.getenv("ANDROID_STORE_PASSWORD") ?: keystoreProperties.getProperty("storePassword")
+val ksKeyAlias = System.getenv("ANDROID_KEY_ALIAS") ?: keystoreProperties.getProperty("keyAlias")
+val ksKeyPassword = System.getenv("ANDROID_KEY_PASSWORD") ?: keystoreProperties.getProperty("keyPassword")
+val hasReleaseSigning = listOf(ksStoreFile, ksStorePassword, ksKeyAlias, ksKeyPassword).all { !it.isNullOrBlank() }
 
 android {
     namespace = "com.zcode.zcode_app"
@@ -27,6 +42,17 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(ksStoreFile!!)
+                storePassword = ksStorePassword
+                keyAlias = ksKeyAlias
+                keyPassword = ksKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         debug {
             // Debug 变体装成独立包 (com.zcode.zcode_app.debug), 与 release
@@ -35,9 +61,12 @@ android {
             manifestPlaceholders["launcherLabel"] = "ZCode 调试"
         }
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // 有正式签名 (key.properties 或环境变量) 时用之, 否则回退 debug 以便本地 --release 试跑。
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             manifestPlaceholders["launcherLabel"] = "ZCode"
         }
     }
