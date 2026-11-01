@@ -39,16 +39,22 @@ jobs:
       # 走 main 签名提交的 key.properties 通道；没配 Secrets 时跳过，
       # 构建按 build.gradle.kts 回落 debug 签名（能出包，但签名会变）。
       # 密码/别名两种命名都认 (优先 build.gradle.kts 环境变量通道的命名)。
+      # 固定签名：Secrets 有 keystore 时恢复 key.properties + keystore 文件，
+      # 走 main 签名提交的 key.properties 通道；没配 Secrets 时跳过，
+      # 构建按 build.gradle.kts 回落 debug 签名（能出包，但签名会变）。
+      # 密码/别名两种命名都认 (优先 build.gradle.kts 环境变量通道的命名)。
+      # 注意: heredoc 内容与结束符必须与 if 同缩进 (YAML 剥离后顶格),
+      # 否则 bash 认不到结束符、整段脚本解析失败 (41364209318 即因此挂)。
       - name: Restore release keystore
         run: |
           if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
             echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/upload-keystore.jks
             cat > android/key.properties << 'EOF'
-            storeFile=upload-keystore.jks
-            storePassword=${{ secrets.ANDROID_STORE_PASSWORD || secrets.KEY_STORE_PASSWORD }}
-            keyAlias=${{ secrets.ANDROID_KEY_ALIAS || secrets.KEY_ALIAS }}
-            keyPassword=${{ secrets.ANDROID_KEY_PASSWORD || secrets.KEY_PASSWORD }}
-            EOF
+          storeFile=upload-keystore.jks
+          storePassword=${{ secrets.ANDROID_STORE_PASSWORD || secrets.KEY_STORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS || secrets.KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD || secrets.KEY_PASSWORD }}
+          EOF
           fi
 
       - name: Build arm64-only release APK
