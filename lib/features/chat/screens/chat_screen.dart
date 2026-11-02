@@ -1748,6 +1748,10 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
     final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+      ),
       showDragHandle: true,
       backgroundColor: Color.alphaBlend(
         theme.colorScheme.surfaceContainerHigh,
@@ -2123,6 +2127,10 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
     final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+      ),
       showDragHandle: true,
       backgroundColor: Color.alphaBlend(
         theme.colorScheme.surfaceContainerHigh,
@@ -2199,6 +2207,10 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
 
     showModalBottomSheet(
       context: context,
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+      ),
       showDragHandle: true,
       backgroundColor: Color.alphaBlend(
         theme.colorScheme.surfaceContainerHigh,
@@ -2286,6 +2298,10 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
     final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+      ),
       showDragHandle: true,
       backgroundColor: Color.alphaBlend(
         theme.colorScheme.surfaceContainerHigh,

@@ -781,6 +781,10 @@ class MessageBubbleState extends State<MessageBubble> {
     final controller = TextEditingController(text: widget.message.content);
     showModalBottomSheet(
       context: context,
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+      ),
       isScrollControlled: true,
       builder: (ctx) => Padding(
         padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
@@ -883,6 +887,10 @@ class MessageBubbleState extends State<MessageBubble> {
     final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+      ),
       showDragHandle: true,
       backgroundColor: Color.alphaBlend(
         theme.colorScheme.surfaceContainerHigh,

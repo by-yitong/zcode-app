@@ -867,6 +867,10 @@ class ModeSelector extends StatelessWidget {
     final cur = _selectedIndex;
     showModalBottomSheet(
       context: context,
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+      ),
       showDragHandle: true,
       backgroundColor: Color.alphaBlend(
         theme.colorScheme.surfaceContainerHigh,
@@ -994,6 +998,10 @@ class ThoughtLevelSelector extends StatelessWidget {
     final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+      ),
       showDragHandle: true,
       backgroundColor: Color.alphaBlend(
         theme.colorScheme.surfaceContainerHigh,
@@ -1201,10 +1209,14 @@ class ModelPickerSheetState extends State<ModelPickerSheet> {
         ),
         child: ConstrainedBox(
           constraints: BoxConstraints(
+            minHeight:
+                MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
             maxHeight: MediaQuery.of(context).size.height * 0.65,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            // 窄子项 (胶囊行) 默认会被 Column 居中, 显式左对齐
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // 标题栏
               Padding(

@@ -365,6 +365,10 @@ class _RemoteSettingsScreenState extends ConsumerState<RemoteSettingsScreen> {
         final theme = Theme.of(context);
         showModalBottomSheet(
           context: context,
+          constraints: BoxConstraints(
+            maxWidth: 640,
+            minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+          ),
           showDragHandle: true,
           builder: (ctx) => SafeArea(
             top: false,

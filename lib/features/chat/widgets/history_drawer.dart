@@ -107,6 +107,10 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
     final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+      ),
       showDragHandle: true,
       // surfaceContainerHigh 是半透明白叠加 (设计为叠在实色 bg 上),
       // 单独做弹窗背景会透出底层; 叠到 surfaceContainerLowest(=bg 实色) 上得到不透明等价色。
@@ -752,6 +756,8 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
+            minHeight:
+                MediaQuery.of(ctx).size.height * AppSheet.minHeightFactor,
             maxHeight: MediaQuery.of(ctx).size.height * 0.6,
           ),
           child: ListView(

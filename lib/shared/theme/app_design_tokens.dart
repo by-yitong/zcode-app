@@ -35,6 +35,13 @@ class AppTouch {
   static const double comfortable = 48;
 }
 
+/// 底部弹窗统一尺寸: 最低半屏 (内容短时也撑到半屏, 点击区域宽裕、
+/// 各弹窗高度一致); 内容高时可继续长到各弹窗自己的上限。
+class AppSheet {
+  AppSheet._();
+  static const double minHeightFactor = 0.5;
+}
+
 /// ZCode 品牌色板
 ///
 /// 不用 Material 默认 fromSeed 的 muddy 色, 手调一套精确的深色优先配色。

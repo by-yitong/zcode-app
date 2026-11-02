@@ -527,6 +527,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   void _showThemePicker(BuildContext context, WidgetRef ref) {
     showModalBottomSheet<void>(
       context: context,
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+      ),
       showDragHandle: true,
       // ⚠️ 不透明背景, 避免深色主题的半透明 surface 透出底层卡片重叠。
       backgroundColor: Theme.of(context).brightness == Brightness.dark
