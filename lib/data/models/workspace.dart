@@ -111,7 +111,8 @@ class Workspace {
   static String? _parsePurpose(dynamic v) =>
       v == 'project' || v == 'conversation' ? v as String : null;
 
-  /// 是否草稿对话工作区 (不进项目列表, 与网页端「对话」分区对齐)
+  /// 是否 conversation 工作区 (purpose=='conversation', 不进项目列表;
+  /// 注意: 网页侧栏没有对话分区, 排除仅因它不是项目)
   bool get isConversation => purpose == 'conversation';
 
   /// 从 bootstrap 响应解析工作区列表 (项目区: 过滤 conversation 工作区)

@@ -23,7 +23,7 @@ class HistoryDrawer extends ConsumerStatefulWidget {
   /// 切换工作区 (底部项目切换器)
   final ValueChanged<Workspace> onSwitchWorkspace;
 
-  /// 任务列表视图下选中任务 (跨工作区: 草稿对话任务在各自 draft 工作区,
+  /// 任务列表分组视图下选中任务 (跨工作区: 任务可能在任意项目/任务区,
   /// 跳转必须带任务自身的 workspaceKey)。null 时回退 [onSelected]。
   final void Function(String taskId, String workspaceKey)?
   onSelectedInWorkspace;
@@ -58,13 +58,16 @@ class HistoryDrawer extends ConsumerStatefulWidget {
 class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
   bool _showArchived = false;
 
-  /// 「任务列表」聚合视图: 显示全部草稿对话任务 (projectId==null,
-  /// 对应网页侧栏「对话」分区)。false = 普通模式 (当前工作区任务)。
-  /// 切换真实项目时自动复位。
-  bool _conversationView = false;
+  /// 「任务列表」分组视图 (对应网页侧栏: 项目分组 + 任务区)。
+  /// false = 普通模式 (当前工作区任务)。切换真实项目时自动复位。
+  bool _taskListView = false;
 
-  /// 默认工作区 = 网页端的"不在项目中工作" (路径以 .zcode/workspace/default 结尾,
-  /// 归一化后比较, 带斜杠的变体也算)。
+  /// 任务列表分组视图已展开的组 (显示更多后显示全部):
+  /// 项目组 key = 'project:<归一化路径>', 任务区 key = 'tasks'。
+  final Set<String> _expandedTaskGroups = {};
+
+  /// 默认工作区 (路径以 .zcode/workspace/default 结尾,
+  /// 归一化后比较, 带斜杠的变体也算; 网页侧栏不列出它)。
   static bool _isDefaultWorkspace(Workspace w) =>
       Workspace.normalizePath(
         w.workspacePath,
@@ -263,7 +266,8 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
   /// onSurfaceVariant 次要色), 但字号再小 2 (caption-2), 让任务标题
   /// 视觉最突出。注: AppSectionHeader 不接受字号参数, 且任务要求
   /// 只改本文件, 故此处本地复刻一份, 不改共享组件。
-  Widget _buildGroupHeader(String title) {
+  /// upper=false 时不做大写 (项目名原样显示, 如 GoStudio 不变 GOSTUDIO)。
+  Widget _buildGroupHeader(String title, {bool upper = true}) {
     final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(
@@ -276,7 +280,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
         children: [
           Expanded(
             child: Text(
-              title.toUpperCase(),
+              upper ? title.toUpperCase() : title,
               style: TextStyle(
                 fontFamily: kMonoFont,
                 fontSize: AppTextSizes.caption - 2,
@@ -315,6 +319,153 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
     );
   }
 
+  /// 真实项目按网页端 position 排序 (无 position 排最后, 名称兜底)。
+  /// 切换弹窗与任务列表分组视图共用, 避免两处排序规则漂移。
+  static List<Workspace> _sortedRealProjects(List<Workspace> workspaces) {
+    final projects = workspaces.where(_isRealProject).toList()
+      ..sort((a, b) {
+        final pa = a.position ?? double.infinity;
+        final pb = b.position ?? double.infinity;
+        final c = pa.compareTo(pb);
+        return c != 0 ? c : a.name.compareTo(b.name);
+      });
+    return projects;
+  }
+
+  /// 显示更多/收起行 (网页端每组先显示 5 条 + 显示更多)。
+  Widget _buildShowMoreRow(ThemeData theme, String groupKey, bool expanded) {
+    return InkWell(
+      onTap: () => setState(() {
+        if (expanded) {
+          _expandedTaskGroups.remove(groupKey);
+        } else {
+          _expandedTaskGroups.add(groupKey);
+        }
+      }),
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.sm,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              expanded
+                  ? Icons.keyboard_arrow_up_rounded
+                  : Icons.keyboard_arrow_down_rounded,
+              size: 16,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: AppSpacing.xs),
+            Text(
+              expanded ? '收起' : '显示更多',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 任务列表分组视图 (对应网页侧栏): 项目分组 + 任务区。
+  /// 项目组 = 真实项目 (position 顺序), 组内任务按时间倒序, 先显示 5 条;
+  /// 任务区 = 未归入项目的任务 (所在工作区不是真实项目, 含默认工作区/
+  /// 移动盘/未注册目录/草稿), 同样先显示 5 条。任务区不是"草稿专区":
+  /// 网页侧栏没有草稿/会话分区, 任务区只是"未归入项目"的任务
+  /// (抓包对照: 任务区可见任务全在 draft- 工作区, 只是因为最新
+  /// 的未归入项目任务恰好都是草稿, 不能反推该区只收草稿)。
+  Widget _buildTaskListView(
+    ThemeData theme,
+    List<Task> allTasks,
+    List<Workspace> workspaces,
+  ) {
+    final projects = _sortedRealProjects(workspaces);
+    final projectPaths = projects
+        .map((w) => Workspace.normalizePath(w.workspacePath))
+        .toSet();
+    // 归档过滤 + 时间倒序 (与普通视图一致)
+    final visible = allTasks.where((t) => t.archived == _showArchived).toList()
+      ..sort(
+        (a, b) => (b.updatedAt?.millisecondsSinceEpoch ?? 0).compareTo(
+          a.updatedAt?.millisecondsSinceEpoch ?? 0,
+        ),
+      );
+    // 按工作区分桶: 项目组 vs 任务区 (分桶保持时间倒序)
+    final projectTasks = <String, List<Task>>{};
+    final unassigned = <Task>[];
+    for (final t in visible) {
+      final key = Workspace.normalizePath(t.workspaceKey);
+      if (projectPaths.contains(key)) {
+        (projectTasks[key] ??= []).add(t);
+      } else {
+        unassigned.add(t);
+      }
+    }
+    const pageSize = 5;
+    final children = <Widget>[];
+    // 项目区 (有真实项目时才出现; 空项目显示"暂无任务", 与网页一致)
+    if (projects.isNotEmpty) {
+      children.add(_buildGroupHeader('项目', upper: false));
+      for (final w in projects) {
+        final key = Workspace.normalizePath(w.workspacePath);
+        final groupKey = 'project:$key';
+        final groupTasks = projectTasks[key] ?? const <Task>[];
+        final expanded = _expandedTaskGroups.contains(groupKey);
+        final shown = expanded ? groupTasks : groupTasks.take(pageSize).toList();
+        children.add(_buildGroupHeader(w.name, upper: false));
+        if (groupTasks.isEmpty) {
+          children.add(
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md,
+                vertical: AppSpacing.sm,
+              ),
+              child: Text(
+                '暂无任务',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          );
+        } else {
+          for (final task in shown) {
+            children.add(_buildHistoryItem(theme, task, w.name));
+          }
+          if (groupTasks.length > pageSize) {
+            children.add(_buildShowMoreRow(theme, groupKey, expanded));
+          }
+        }
+      }
+    }
+    // 任务区
+    if (unassigned.isNotEmpty) {
+      children.add(_buildGroupHeader('任务', upper: false));
+      const groupKey = 'tasks';
+      final expanded = _expandedTaskGroups.contains(groupKey);
+      final shown = expanded ? unassigned : unassigned.take(pageSize).toList();
+      for (final task in shown) {
+        children.add(_buildHistoryItem(theme, task, '任务'));
+      }
+      if (unassigned.length > pageSize) {
+        children.add(_buildShowMoreRow(theme, groupKey, expanded));
+      }
+    }
+    if (children.isEmpty) {
+      return AppEmptyState(
+        icon: Icons.chat_bubble_outline_rounded,
+        title: _showArchived ? '暂无已归档对话' : '暂无历史对话',
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.only(bottom: AppSpacing.lg),
+      children: children,
+    );
+  }
+
   /// 单个对话项 (圆角图标块 + 标题 + mono 时间/状态)
   Widget _buildHistoryItem(ThemeData theme, Task task, String groupLabel) {
     final isActive = task.id == widget.currentTaskId;
@@ -330,8 +481,8 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
       child: InkWell(
         onTap: () {
           widget.onClose(); // 关抽屉
-          if (_conversationView && widget.onSelectedInWorkspace != null) {
-            // 任务列表视图: 任务在各自 draft 工作区, 跳转带任务自身工作区
+          if (_taskListView && widget.onSelectedInWorkspace != null) {
+            // 任务列表视图: 任务在各自工作区, 跳转带任务自身工作区
             widget.onSelectedInWorkspace!(task.id, task.workspaceKey);
           } else {
             widget.onSelected(task.id);
@@ -468,25 +619,24 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final allTasks = ref.watch(allTasksProvider);
-    // 根据 _showArchived 过滤任务 (标题搜索已移至全屏搜索页)
-    // 任务列表视图: 聚合全部任务 (与网页端全局任务列表一致, 不再按
-    // projectId==null 过滤——null 只是无项目归属, 不是草稿)。
-    // 普通视图: 当前工作区的任务 (路径归一化比较, 斜杠变体算同一个)。
-    final tasks =
-        _conversationView
-            ? allTasks.where((t) => t.archived == _showArchived).toList()
-            : allTasks
+    final workspaces =
+        ref.watch(workspaceListProvider).valueOrNull ?? const <Workspace>[];
+    // 普通视图: 当前工作区的任务 (路径归一化比较, 斜杠变体算同一个),
+    // 按时间倒序; 任务列表视图走分组 (项目分组 + 任务区, 见 _buildTaskListView)。
+    final tasks = _taskListView
+        ? const <Task>[]
+        : (allTasks
                 .where(
                   (t) =>
                       Workspace.samePath(t.workspaceKey, widget.workspacePath) &&
                       t.archived == _showArchived,
                 )
-                .toList();
-    tasks.sort(
-      (a, b) => (b.updatedAt?.millisecondsSinceEpoch ?? 0).compareTo(
-        a.updatedAt?.millisecondsSinceEpoch ?? 0,
-      ),
-    );
+                .toList()
+              ..sort(
+                (a, b) => (b.updatedAt?.millisecondsSinceEpoch ?? 0).compareTo(
+                  a.updatedAt?.millisecondsSinceEpoch ?? 0,
+                ),
+              ));
 
     // 推开式抽屉: 不再包 Material Drawer (宽度/滑入由 RevealDrawer 负责),
     // 只保留底色壳; 颜色与原 Drawer.backgroundColor 完全一致
@@ -573,7 +723,8 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                 );
               },
             ),
-            // 对话历史区标题 + 归档切换
+            // 对话历史区标题 + 归档切换 (任务列表视图标题改"任务列表",
+            // 与网页侧栏顶层标题一致)
             Padding(
               padding: const EdgeInsets.fromLTRB(
                 AppSpacing.lg,
@@ -584,7 +735,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
               child: Row(
                 children: [
                   Text(
-                    '对话历史',
+                    _taskListView ? '任务列表' : '对话历史',
                     style: TextStyle(
                       fontSize: AppTextSizes.label,
                       fontWeight: FontWeight.w600,
@@ -634,9 +785,12 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                 ],
               ),
             ),
-            // 历史列表 (时间分组, 可滚动)
+            // 历史列表 (任务列表视图: 项目分组 + 任务区; 普通视图: 时间分组,
+            // 可滚动)
             Expanded(
-              child: tasks.isEmpty
+              child: _taskListView
+                  ? _buildTaskListView(theme, allTasks, workspaces)
+                  : tasks.isEmpty
                   ? AppEmptyState(
                       icon: Icons.chat_bubble_outline_rounded,
                       title: _showArchived ? '暂无已归档对话' : '暂无历史对话',
@@ -659,13 +813,11 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
         .where((w) => Workspace.samePath(w.workspacePath, widget.workspacePath))
         .firstOrNull;
     final isDefault = current != null && _isDefaultWorkspace(current);
-    // 标签 = 当前视图: 聚合视图是任务列表; 默认工作区视图是
-    // "不在项目中工作" (网页端叫法), 不再复用"任务列表" (此前同一标签
-    // 有时指聚合、有时指默认工作区的 36 条, 和网页端对不上)。
-    final label = _conversationView
+    // 标签 = 当前视图: 任务列表分组视图是"任务列表"; 普通视图是当前
+    // 工作区名 (默认工作区就显示其名; 网页侧栏没有默认工作区的叫法,
+    // 不再用"不在项目中工作"这个非网页原话的标签)。
+    final label = _taskListView
         ? '任务列表'
-        : isDefault
-        ? '不在项目中工作'
         : current == null
         ? '选择项目'
         : current.name;
@@ -731,7 +883,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
     );
   }
 
-  /// 项目切换弹窗 (从抽屉底部向上延伸): 项目列表 + "不在项目中工作"
+  /// 项目切换弹窗 (从抽屉底部向上延伸): 任务列表行 + 项目列表
   void _openProjectSwitcher(BuildContext context, List<Workspace> workspaces) {
     final theme = Theme.of(context);
     // 先失焦再弹切换弹窗: 否则弹窗关闭时 Flutter 会把焦点还给打开前
@@ -741,21 +893,13 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
     // 打开时读一次任务快照, 用于标记"有任务正在运行"的项目
     // (弹窗展示期间不实时刷新, 不加定时器)
     final tasks = ref.read(allTasksProvider);
-    // 切换弹窗只列真实项目 (见 _isRealProject), 按网页端 position 排序
-    // (无 position 的排最后, 再按名称兜底)。
-    final projects = workspaces.where(_isRealProject).toList()
-      ..sort((a, b) {
-        final pa = a.position ?? double.infinity;
-        final pb = b.position ?? double.infinity;
-        final c = pa.compareTo(pb);
-        return c != 0 ? c : a.name.compareTo(b.name);
-      });
+    // 切换弹窗只列真实项目 (见 _isRealProject), 按网页端 position 排序。
+    final projects = _sortedRealProjects(workspaces);
     final current = workspaces
         .where((w) => Workspace.samePath(w.workspacePath, widget.workspacePath))
         .firstOrNull;
-    // "任务列表"行 = 聚合视图本身; 默认工作区视图不再算选中
-    // (它在网页端不是任务列表, 是"不在项目中工作")。
-    final taskListSelected = _conversationView;
+    // "任务列表"行 = 任务列表分组视图本身。
+    final taskListSelected = _taskListView;
 
     showModalBottomSheet<void>(
       context: context,
@@ -785,7 +929,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                 ),
                 child: Text('切换项目', style: theme.textTheme.titleMedium),
               ),
-              // 任务列表 (聚合全部任务, 对应网页端全局任务列表)
+              // 任务列表 (分组视图: 项目分组 + 任务区, 对应网页侧栏)
               ListTile(
                 dense: true,
                 tileColor: taskListSelected ? AppColors.accentContainer : null,
@@ -824,8 +968,8 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                 onTap: () {
                   Navigator.pop(ctx);
                   FocusManager.instance.primaryFocus?.unfocus();
-                  // 切到任务列表聚合视图 (不切工作区, 聊天连接仍归各任务自身)
-                  setState(() => _conversationView = true);
+                  // 切到任务列表分组视图 (不切工作区, 聊天连接仍归各任务自身)
+                  setState(() => _taskListView = true);
                 },
               ),
               for (final w in projects)
@@ -889,11 +1033,11 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                     // 切项目不关抽屉: 列表随新工作区自动刷新,
                     // 用户留在抽屉里继续选会话 (产品要求)
                     if (w.workspaceKey != widget.workspacePath) {
-                      setState(() => _conversationView = false);
+                      setState(() => _taskListView = false);
                       widget.onSwitchWorkspace(w);
-                    } else if (_conversationView) {
+                    } else if (_taskListView) {
                       // 回到当前项目: 退出任务列表视图
-                      setState(() => _conversationView = false);
+                      setState(() => _taskListView = false);
                     }
                   },
                 ),
