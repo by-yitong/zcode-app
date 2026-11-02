@@ -722,6 +722,10 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
   /// 项目切换弹窗 (从抽屉底部向上延伸): 项目列表 + "不在项目中工作"
   void _openProjectSwitcher(BuildContext context, List<Workspace> workspaces) {
     final theme = Theme.of(context);
+    // 先失焦再弹切换弹窗: 否则弹窗关闭时 Flutter 会把焦点还给打开前
+    // 聚焦过的输入框 → 键盘自动弹起 (行点击里的 unfocus 拦不住关闭时
+    // 的焦点恢复, 拖拽/点遮罩关闭时更无 unfocus)。
+    FocusManager.instance.primaryFocus?.unfocus();
     // 打开时读一次任务快照, 用于标记"有任务正在运行"的项目
     // (弹窗展示期间不实时刷新, 不加定时器)
     final tasks = ref.read(allTasksProvider);

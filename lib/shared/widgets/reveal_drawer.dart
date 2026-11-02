@@ -163,6 +163,10 @@ class RevealDrawerState extends State<RevealDrawer>
       // 横向明显占优才认作开抽屉拖拽 (纵向滚动列表零干扰)
       if (dx > _kLatchMinDx && dx > dy.abs() * _kLatchDyRatio) {
         _latched = true;
+        // 拖拽开抽屉也要收键盘 (按钮 open() 已失焦, 唯独这条 raw 路径漏了):
+        // 否则输入框仍持焦点, 抽屉盖在上面时键盘还弹着; 起点命中输入框
+        // 的拖拽已被 _blocked 拦下, 这里只会是真正的开抽屉手势。
+        FocusManager.instance.primaryFocus?.unfocus();
       } else {
         return;
       }

@@ -1112,6 +1112,9 @@ class ModelPickerSheetState extends State<ModelPickerSheet> {
   final _searchController = TextEditingController();
   String _query = '';
 
+  /// 用户点过的渠道胶囊 (pid); null = 默认落在当前模型所在渠道
+  String? _selectedPid;
+
   /// 当前模型的 tile key — 打开时滚动定位到它
   final _currentKey = GlobalKey();
 
@@ -1149,18 +1152,16 @@ class ModelPickerSheetState extends State<ModelPickerSheet> {
         ? widget.models
         : widget.models.where((m) => m.toLowerCase().contains(query)).toList();
 
-    // 分组
+    // 分组 (按过滤后列表)
     final groups = <String, List<String>>{};
-    final order = <String>[];
     for (final m in filtered) {
       final pid = m.contains('/') ? m.split('/').first : '其他';
       (groups[pid] ??= []).add(m);
-      if (!order.contains(pid)) order.add(pid);
     }
 
     // 当前行解析: 精确匹配优先; Host 历史里的 model 是裸 modelId
     // (无 provider 前缀), 列表 ID 是 pid/mid — 裸名相等时取首条
-    // (同名多套餐时分组标题已区分, 点行可显式纠正)。
+    // (同名多渠道时顶部胶囊已区分, 点行可显式纠正)。
     String? currentRowId;
     if (widget.current != null) {
       for (final m in filtered) {
@@ -1171,6 +1172,27 @@ class ModelPickerSheetState extends State<ModelPickerSheet> {
         }
       }
     }
+
+    // 渠道胶囊: 全部渠道 (不过滤, 始终可切换); 默认落在当前模型所在渠道,
+    // 用户点过胶囊后以用户选择为准 (搜索把某渠道滤空时列表显示空态)。
+    final allOrder = <String>[];
+    for (final m in widget.models) {
+      final pid = m.contains('/') ? m.split('/').first : '其他';
+      if (!allOrder.contains(pid)) allOrder.add(pid);
+    }
+    String? currentPid;
+    if (currentRowId != null) {
+      currentPid =
+          currentRowId!.contains('/') ? currentRowId!.split('/').first : '其他';
+    }
+    final selectedPid = (_selectedPid != null && allOrder.contains(_selectedPid))
+        ? _selectedPid!
+        : (currentPid != null && allOrder.contains(currentPid)
+            ? currentPid!
+            : (allOrder.isEmpty ? null : allOrder.first));
+    // 当前渠道可见的模型 (已过滤)
+    final visible =
+        selectedPid == null ? <String>[] : (groups[selectedPid] ?? <String>[]);
 
     return SafeArea(
       child: Padding(
@@ -1197,7 +1219,7 @@ class ModelPickerSheetState extends State<ModelPickerSheet> {
                     ),
                     const Spacer(),
                     Text(
-                      '${widget.models.length} 个模型',
+                      '${visible.length} 个模型',
                       style: TextStyle(
                         fontSize: AppTextSizes.label,
                         color: theme.colorScheme.onSurfaceVariant,
@@ -1206,6 +1228,50 @@ class ModelPickerSheetState extends State<ModelPickerSheet> {
                   ],
                 ),
               ),
+              // 渠道胶囊 (多渠道时才出现; 单渠道直接列模型, 不占一行):
+              // 填充色区分选中态, 不用边框/分割线; 点胶囊只换列表不关弹窗
+              if (allOrder.length > 1)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (final pid in allOrder)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: GestureDetector(
+                              onTap: () => setState(() => _selectedPid = pid),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 7,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: pid == selectedPid
+                                      ? theme.colorScheme.primary
+                                      : theme.colorScheme.surfaceContainerHigh,
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(
+                                  providerLabel(pid),
+                                  style: TextStyle(
+                                    fontSize: AppTextSizes.bodySm,
+                                    fontWeight: pid == selectedPid
+                                        ? FontWeight.w600
+                                        : FontWeight.w400,
+                                    color: pid == selectedPid
+                                        ? Colors.white
+                                        : theme.colorScheme.onSurface,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
               // 搜索框 (模型少时没必要搜索, 隐藏)
               if (widget.models.length > 6)
                 Padding(
@@ -1250,7 +1316,7 @@ class ModelPickerSheetState extends State<ModelPickerSheet> {
                 ),
               // 模型列表 (内容短时贴合高度, 长表封顶 65% 后内部滚动)
               Flexible(
-                child: filtered.isEmpty
+                child: visible.isEmpty
                     ? Center(
                         child: Text(
                           query.isEmpty ? '暂无可用模型' : '未找到匹配的模型',
@@ -1264,50 +1330,36 @@ class ModelPickerSheetState extends State<ModelPickerSheet> {
                         shrinkWrap: true,
                         padding: const EdgeInsets.only(bottom: 8),
                         children: [
-                          for (final pid in order) ...[
-                            // 分组标题: 小字淡色, 不可点样式 (不再用蓝色)
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                              child: Text(
-                                providerLabel(pid),
+                          for (final m in visible)
+                            ListTile(
+                              key: m == currentRowId ? _currentKey : null,
+                              dense: true,
+                              // 选中行底色高亮 (同切换项目弹窗)
+                              tileColor: m == currentRowId
+                                  ? AppColors.accentContainer
+                                  : null,
+                              title: Text(
+                                slug(m),
                                 style: TextStyle(
-                                  fontSize: AppTextSizes.caption,
-                                  color: theme.colorScheme.onSurfaceVariant,
-                                  fontWeight: FontWeight.w500,
+                                  fontSize: AppTextSizes.bodyMd,
+                                  fontWeight: m == currentRowId
+                                      ? FontWeight.w600
+                                      : FontWeight.w400,
                                 ),
                               ),
+                              // 选中项: 右侧对勾 (替代单选框)
+                              trailing: m == currentRowId
+                                  ? Icon(
+                                      Icons.check_rounded,
+                                      size: 20,
+                                      color: theme.colorScheme.primary,
+                                    )
+                                  : null,
+                              onTap: () {
+                                widget.onSelected(m);
+                                Navigator.pop(context);
+                              },
                             ),
-                            for (final m in groups[pid]!)
-                              ListTile(
-                                key: m == currentRowId ? _currentKey : null,
-                                dense: true,
-                                // 选中行底色高亮 (同切换项目弹窗)
-                                tileColor: m == currentRowId
-                                    ? AppColors.accentContainer
-                                    : null,
-                                title: Text(
-                                  slug(m),
-                                  style: TextStyle(
-                                    fontSize: AppTextSizes.bodyMd,
-                                    fontWeight: m == currentRowId
-                                        ? FontWeight.w600
-                                        : FontWeight.w400,
-                                  ),
-                                ),
-                                // 选中项: 右侧对勾 (替代单选框)
-                                trailing: m == currentRowId
-                                    ? Icon(
-                                        Icons.check_rounded,
-                                        size: 20,
-                                        color: theme.colorScheme.primary,
-                                      )
-                                    : null,
-                                onTap: () {
-                                  widget.onSelected(m);
-                                  Navigator.pop(context);
-                                },
-                              ),
-                          ],
                         ],
                       ),
               ),
