@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../data/models/glm_quota.dart' as glm;
 import '../../../providers/app_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
+import '../screens/usage_stats_page.dart';
 
 /// 用量详情底部弹窗 — 顶栏 UsagePill / 上下文环统一入口
 ///
@@ -348,10 +349,10 @@ class UsageDetailSheet extends StatelessWidget {
                   ),
                 for (final tier in quota.tiers) ...[
                   _QuotaTierRow(tier: tier),
-                  if (tier != quota.tiers.last) const SizedBox(height: 14),
+                  if (tier != quota.tiers.last) const SizedBox(height: 20),
                 ],
                 if (mcp != null) ...[
-                  const Divider(height: 28, thickness: 1),
+                  const SizedBox(height: 20),
                   _McpUsageSection(mcp: mcp),
                 ],
               ],
@@ -374,12 +375,27 @@ class UsageDetailSheet extends StatelessWidget {
               )
             else
               const Spacer(),
-            if (onRefresh != null)
+            _CapsuleAction(
+              icon: Icons.bar_chart_rounded,
+              label: '使用统计',
+              onTap: () {
+                final navigator = Navigator.of(context);
+                navigator.pop();
+                navigator.push(
+                  MaterialPageRoute(
+                    builder: (_) => const UsageStatsPage(),
+                  ),
+                );
+              },
+            ),
+            if (onRefresh != null) ...[
+              const SizedBox(width: 8),
               _CapsuleAction(
                 icon: Icons.refresh_rounded,
                 label: '刷新',
                 onTap: onRefresh!,
               ),
+            ],
           ],
         ),
       ],
@@ -543,6 +559,9 @@ class _Bar extends StatelessWidget {
 }
 
 /// 单窗口配额行: 标签 + 已用% + 进度条 + 重置时间
+/// 单条窗口配额 — 参考桌面端「使用情况」卡片结构:
+/// 标题行 (窗口名 + 已使用 X%) / 重置说明行 / 进度条 (primary 蓝)。
+/// 无重置时间时说明行写「从不过期」(参考卡片第二块同款)。
 class _QuotaTierRow extends StatelessWidget {
   final glm.GlmQuotaTier tier;
 
@@ -551,9 +570,8 @@ class _QuotaTierRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final label = tier.name == glm.GlmQuotaTier.fiveHour ? '5 小时窗口' : '每周窗口';
-    final color = UsageDetailSheet._utilColor(tier.utilization);
-
+    final isFiveHour = tier.name == glm.GlmQuotaTier.fiveHour;
+    final label = isFiveHour ? '5 小时窗口' : '每周窗口';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -568,31 +586,42 @@ class _QuotaTierRow extends StatelessWidget {
               ),
             ),
             Text(
-              '${UsageDetailSheet._fmtPct(tier.utilization)}%',
-              style: AppText.mono(
-                context,
-                size: 13,
-                weight: FontWeight.w600,
-                color: color,
-              ),
+              '已使用 ${UsageDetailSheet._fmtPct(tier.utilization)}%',
+              style: theme.textTheme.bodyMedium,
             ),
           ],
         ),
-        const SizedBox(height: 6),
-        _Bar(value: tier.utilization / 100, color: color),
-        if (tier.resetsAt != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              '重置: ${UsageDetailSheet._fmtRelative(tier.resetsAt!)}',
-              style: TextStyle(
-                fontSize: AppTextSizes.label,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
+        const SizedBox(height: 4),
+        Text(
+          _resetLine(isFiveHour),
+          style: TextStyle(
+            fontSize: AppTextSizes.label,
+            color: theme.colorScheme.onSurfaceVariant,
           ),
+        ),
+        const SizedBox(height: 8),
+        _Bar(value: tier.utilization / 100),
       ],
     );
+  }
+
+  /// 重置说明: 每周窗口只写日期 (参考卡片: 每周限额将在 11月3日重置);
+  /// 5 小时窗口带时间 (今天 → 今天 HH:mm, 否则 M月d日 HH:mm);
+  /// 无重置时间 → 从不过期。
+  String _resetLine(bool isFiveHour) {
+    final resetsAt = tier.resetsAt;
+    if (resetsAt == null) return '从不过期';
+    final dt = DateTime.tryParse(resetsAt)?.toLocal();
+    if (dt == null) return resetsAt;
+    final window = isFiveHour ? '5小时限额' : '每周限额';
+    if (!isFiveHour) return '$window将在 ${dt.month}月${dt.day}日重置';
+    final now = DateTime.now();
+    final isToday =
+        dt.year == now.year && dt.month == now.month && dt.day == now.day;
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final mm = dt.minute.toString().padLeft(2, '0');
+    if (isToday) return '$window将在 今天 $hh:$mm 重置';
+    return '$window将在 ${dt.month}月${dt.day}日 $hh:$mm 重置';
   }
 }
 
