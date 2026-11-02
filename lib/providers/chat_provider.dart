@@ -2531,6 +2531,25 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
+  /// sendText payload 构造 — 3.17 抓包实证: 网页端随每条消息同步当前
+  /// 模式/计划开关/模型选择 (服务端可中途应用); genUiContext 为 Gen UI
+  /// 状态关联, app 无 Gen UI 恒空列表。思考等级 app 未暴露, 不带 options。
+  Map<String, dynamic> _sendTextPayload(String text) {
+    final model = _preferredModelReader();
+    final idx = model?.indexOf('/') ?? -1;
+    return {
+      'text': text,
+      'mode': state.mode,
+      'planEnabled': state.isPlanMode,
+      if (model != null && idx > 0)
+        'modelSelection': {
+          'providerId': model.substring(0, idx),
+          'modelId': model.substring(idx + 1),
+        },
+      'genUiContext': const <String>[],
+    };
+  }
+
   /// 发送消息
   Future<void> sendMessage(String content) async {
     appLog.d(
@@ -2549,7 +2568,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
           workspaceIdentity: _ref.workspaceIdentity,
           commandType: 'sendText',
           sessionId: _taskId,
-          payload: {'text': content},
+          payload: _sendTextPayload(content),
         );
         appLog.d('[Chat] 已加入队列 (${content.length} 字)');
       } catch (e) {
@@ -2578,7 +2597,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         workspaceIdentity: _ref.workspaceIdentity,
         commandType: 'sendText',
         sessionId: _taskId,
-        payload: {'text': content},
+        payload: _sendTextPayload(content),
       );
     } catch (e) {
       appLog.e('[Chat] 发送失败: $e');
@@ -2611,10 +2630,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
     await _relay.v4Handshake();
     appLog.i('[Chat] V4 createSession: mode=${state.mode}');
     // 3.7.7 迁移: 网页端已改走 sendConversationCommandV4(type: createSession)
+    // projectId 取自 bridge 导航的 readTree 项目信息 (真实项目非 null,
+    // 草稿工作区为 null — 与网页端一致), 缺传会话不进桌面端项目分区
     _taskId = await _relay.createSessionV4(
       workspacePath: _ref.workspacePath,
       workspaceIdentity: _ref.workspaceIdentity,
       mode: state.mode,
+      projectId: project?['projectId'] as String?,
     );
     appLog.i('[Chat] 会话已创建(V4): $_taskId');
     // 热切换模型
@@ -2713,7 +2735,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         commandType: 'sendText',
         sessionId: _taskId,
         payload: {
-          'text': content,
+          ..._sendTextPayload(content),
           'attachments': [
             // 服务端 strict schema: 严格四字段, 一个不多
             for (var i = 0; i < attachments.length; i++)

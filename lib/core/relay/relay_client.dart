@@ -1739,6 +1739,13 @@ class RelayClient {
         'clientId': _v4ClientId,
         'appVersion': config.appVersion,
         'clientKind': 'mobileApp',
+        // 3.17 抓包实证: 网页端声明能力位, 服务端据此裁剪发帧形态
+        // (historyFirst=订阅先发历史, workflowRunDeltas=workflow 增量帧)
+        'capabilities': {
+          'workspaceHookReviewUi': true,
+          'historyFirst': true,
+          'workflowRunDeltas': true,
+        },
       },
     ]);
     _log('info', 'V4 initialized (clientId=$_v4ClientId)');
@@ -1837,6 +1844,7 @@ class RelayClient {
     int? baseRevision,
     String? baseLogEpoch,
     Map<String, dynamic>? envelopeExtras,
+    Map<String, dynamic>? outerExtras,
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final cmdId =
@@ -1861,6 +1869,10 @@ class RelayClient {
         'workspacePath': workspacePath,
         if (workspaceIdentity != null) 'workspaceIdentity': workspaceIdentity,
         'envelope': envelope,
+        // 命令专属外层字段 (如 createSession 的 projectId — 抓包实证网页端
+        // 必带: 真实项目传项目 ID, 草稿工作区显式传 null。缺传会导致 host 端
+        // task-index 的 project_id 为空, 桌面端按项目归组时该会话无处安放)
+        ...?outerExtras,
       },
     ]);
 
@@ -1884,12 +1896,16 @@ class RelayClient {
   /// 3.7.7 抓包实测 (2026-08-15): 网页端已不再调 zcode-session.createSession RPC,
   /// 改走 V4 命令, envelope 不带 baseRevision, payload 结构:
   ///   {workspaceId: <workspaceIdentity>, config: {mode, followupMode: "queue"}}
+  /// 3.17.1 抓包实测 (2026-11-02): 外层参数必带 projectId — 真实项目传
+  /// 项目 ID (host 端写入 task-index 的 project_id, 决定桌面端项目归组),
+  /// 草稿工作区显式传 null。缺传时 host 端无运行时回填, 会话将不属于任何项目。
   /// 响应: {status: "accepted", result: {type: "createSession", sessionId}}
   /// 返回新 sessionId。
   Future<String> createSessionV4({
     required String workspacePath,
     String? workspaceIdentity,
     required String mode,
+    String? projectId,
   }) async {
     final resp = await sendConversationCommandV4(
       workspacePath: workspacePath,
@@ -1899,6 +1915,7 @@ class RelayClient {
         'workspaceId': workspaceIdentity ?? workspacePath,
         'config': {'mode': mode, 'followupMode': 'queue'},
       },
+      outerExtras: {'projectId': projectId},
     );
     final result = resp['result'];
     final sessionId = result is Map ? result['sessionId'] as String? : null;
@@ -1929,12 +1946,12 @@ class RelayClient {
     baseLogEpoch: baseLogEpoch,
   );
 
-  /// V4 分页加载历史消息
+  /// V4 分页加载历史消息 (网页端每页 200)
   Future<Map<String, dynamic>> conversationRowsRangeV4({
     required String workspacePath,
     required String sessionId,
     int? beforeRowId,
-    int limit = 50,
+    int limit = 200,
     String? workspaceIdentity,
   }) async {
     final resp = await _rpcCall('zcode-agent', 'conversationRowsRangeV4', [
@@ -2390,16 +2407,22 @@ class RelayClient {
     return {'raw': resp.body};
   }
 
-  /// 关闭/结束会话 — session/close
+  /// 关闭/结束会话 — 3.17 抓包实证: 网页端已改用 session/closeSession
+  /// (参数不变); 旧桌面端只认 session/close, 失败时回退。
   Future<Map<String, dynamic>> closeSession({
     required String workspacePath,
     required String sessionId,
   }) async {
-    final resp = await _rpcCall('zcode-session', 'close', [
-      {'workspacePath': workspacePath, 'sessionId': sessionId},
-    ]);
-    if (resp.body is Map) return resp.body as Map<String, dynamic>;
-    return {'raw': resp.body};
+    final args = {'workspacePath': workspacePath, 'sessionId': sessionId};
+    try {
+      final resp = await _rpcCall('zcode-session', 'closeSession', [args]);
+      if (resp.body is Map) return resp.body as Map<String, dynamic>;
+      return {'raw': resp.body};
+    } on RpcException {
+      final resp = await _rpcCall('zcode-session', 'close', [args]);
+      if (resp.body is Map) return resp.body as Map<String, dynamic>;
+      return {'raw': resp.body};
+    }
   }
 
   /// 获取 Token 用量 — session/usage
