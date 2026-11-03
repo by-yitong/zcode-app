@@ -7,11 +7,15 @@
 /// 3. 时间范围: 近 7 日 / 近 30 日
 /// 4. 每日 Token 趋势图: 按模型分线 (图例 + 平滑曲线)
 ///
+/// 数据 (2026-11-02 网页端抓包实测, 照网页端两条调用办理):
+/// - 汇总 + 热力图: `getAppUsageSnapshot({range: "all"})`
+/// - 趋势图: `getAppUsageSnapshot({range: "7d"/"30d"})`, 切换时只重拉这条
+/// - 热力周块为服务端 weeks 原样 (从 startDate 起连续 7 天一切块,
+///   非自然周; 未来日期为 null 占位); 每日模式颜色直接用服务端 level 0-4
+///
 /// 移动端适配说明:
 /// - 桌面端左侧边栏导航不要, 只取主内容区; 5 卡横排改 2 列网格;
-/// - 新 UI 不用分割线与边框, 卡片只靠填充色区分;
-/// - 数据一次拉取 (range '30d'), 近 7 日在页内过滤, 不重复调接口;
-/// - 热力图「每周」= 该周总量映射到周内每一天, 「累计」= 截止当天的累计值。
+/// - 新 UI 不用分割线与边框, 卡片只靠填充色区分。
 library;
 
 import 'package:flutter/material.dart';
@@ -35,7 +39,7 @@ const _trendPalette = <Color>[
   Color(0xFFE53935),
 ];
 
-/// 热力图强度色 (浅 → 深, 0 值用填充色最浅档)。
+/// 热力图强度色 (浅 → 深, level 0 用填充色最浅档)。
 const _heatEmpty = Color(0xFFECEFF1);
 const _heatLevels = <Color>[
   Color(0xFFBBDEFB),
@@ -52,15 +56,22 @@ class UsageStatsPage extends ConsumerStatefulWidget {
 }
 
 class _UsageStatsPageState extends ConsumerState<UsageStatsPage> {
-  AppUsage? _usage;
+  /// 汇总 + 热力图 (range 'all')。
+  AppUsage? _allUsage;
+
+  /// 趋势图 (range _trendRange)。
+  AppUsage? _trendUsage;
+
   String? _error;
   bool _loading = true;
 
   /// 热力图模式: 'daily' 每日 / 'weekly' 每周 / 'cumulative' 累计。
   String _heatmapMode = 'daily';
 
-  /// 趋势图范围: '7d' 近 7 日 / '30d' 近 30 日 (页内过滤, 不重调接口)。
+  /// 趋势图范围: '7d' 近 7 日 / '30d' 近 30 日 (切换时只重拉趋势)。
   String _trendRange = '7d';
+  bool _trendLoading = false;
+  String? _trendError;
 
   @override
   void initState() {
@@ -83,10 +94,15 @@ class _UsageStatsPageState extends ConsumerState<UsageStatsPage> {
       return;
     }
     try {
-      final usage = await AppUsageService().fetch(client);
+      final service = AppUsageService();
+      final results = await Future.wait([
+        service.fetch(client, range: 'all'),
+        service.fetch(client, range: _trendRange),
+      ]);
       if (!mounted) return;
       setState(() {
-        _usage = usage;
+        _allUsage = results[0];
+        _trendUsage = results[1];
         _loading = false;
       });
     } catch (e) {
@@ -94,6 +110,33 @@ class _UsageStatsPageState extends ConsumerState<UsageStatsPage> {
       setState(() {
         _error = e.toString();
         _loading = false;
+      });
+    }
+  }
+
+  /// 时间范围切换时只重拉趋势那条 (旧图保留到新数据到达, 失败则留错)。
+  Future<void> _loadTrend() async {
+    final client = ref.read(relayClientProvider);
+    if (client == null) return;
+    setState(() {
+      _trendLoading = true;
+      _trendError = null;
+    });
+    try {
+      final usage = await AppUsageService().fetch(
+        client,
+        range: _trendRange,
+      );
+      if (!mounted) return;
+      setState(() {
+        _trendUsage = usage;
+        _trendLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _trendLoading = false;
+        _trendError = e.toString();
       });
     }
   }
@@ -164,7 +207,7 @@ class _UsageStatsPageState extends ConsumerState<UsageStatsPage> {
   }
 
   // ---------------------------------------------------------------
-  // 汇总卡
+  // 汇总卡 (range 'all' 的 summary)
   // ---------------------------------------------------------------
 
   Widget _buildScopeCapsule(ThemeData theme) {
@@ -188,7 +231,7 @@ class _UsageStatsPageState extends ConsumerState<UsageStatsPage> {
   }
 
   Widget _buildSummaryGrid(ThemeData theme) {
-    final usage = _usage!;
+    final usage = _allUsage!;
     final longest = usage.longestChatText ?? _fmtDuration(usage.longestChat);
     final cards = <({String value, String label})>[
       (value: _fmtTokens(usage.effectiveTotal), label: '累计 Token 数'),
@@ -238,7 +281,7 @@ class _UsageStatsPageState extends ConsumerState<UsageStatsPage> {
   }
 
   // ---------------------------------------------------------------
-  // Token 活动热力图
+  // Token 活动热力图 (服务端周块原样渲染)
   // ---------------------------------------------------------------
 
   Widget _buildActivityCard(ThemeData theme) {
@@ -275,7 +318,7 @@ class _UsageStatsPageState extends ConsumerState<UsageStatsPage> {
             ],
           ),
           const SizedBox(height: AppSpacing.md),
-          if (_usage!.daily.isEmpty)
+          if (_allUsage!.heatWeeks.isEmpty)
             Text(
               '暂无活动数据',
               style: theme.textTheme.bodySmall?.copyWith(
@@ -289,103 +332,82 @@ class _UsageStatsPageState extends ConsumerState<UsageStatsPage> {
     );
   }
 
-  /// 按当前模式算出的 每日 → 展示值。
-  Map<DateTime, int> _heatmapValues() {
-    final days = _usage!.daily;
-    if (_heatmapMode == 'weekly') {
-      final weekTotals = <DateTime, int>{};
-      for (final d in days) {
-        final monday = d.date.subtract(Duration(days: d.date.weekday - 1));
-        weekTotals[monday] = (weekTotals[monday] ?? 0) + d.total;
+  /// 按当前模式算出的 每日 → (展示值, 颜色)。
+  /// 每日模式颜色直接用服务端 level; 每周/累计模式按值四分位算色。
+  Map<DateTime, ({int value, Color color})> _heatmapCells() {
+    final weeks = _allUsage!.heatWeeks;
+    if (_heatmapMode == 'daily') {
+      var maxVal = 0;
+      for (final week in weeks) {
+        for (final d in week) {
+          if (d != null && d.total > maxVal) maxVal = d.total;
+        }
       }
-      return {
-        for (final d in days)
-          d.date:
-              weekTotals[d.date.subtract(
-                Duration(days: d.date.weekday - 1),
-              )] ??
-              0,
-      };
-    }
-    if (_heatmapMode == 'cumulative') {
-      var acc = 0;
-      final map = <DateTime, int>{};
-      for (final d in days) {
-        acc += d.total;
-        map[d.date] = acc;
+      final map = <DateTime, ({int value, Color color})>{};
+      for (final week in weeks) {
+        for (final d in week) {
+          if (d == null) continue;
+          final color = d.level != null
+              ? _levelColor(d.level!)
+              : _quartileColor(d.total, maxVal);
+          map[d.date] = (value: d.total, color: color);
+        }
       }
       return map;
     }
-    return {for (final d in days) d.date: d.total};
-  }
-
-  Widget _buildHeatmap(ThemeData theme) {
-    const cell = 12.0;
-    const gap = 3.0;
-    final values = _heatmapValues();
-    final dates = values.keys.toList()..sort();
-    final first = dates.first;
-    final last = dates.last;
-    final startMonday = first.subtract(Duration(days: first.weekday - 1));
-    final endSunday = last.add(Duration(days: 7 - last.weekday));
-    final weekCount = endSunday.difference(startMonday).inDays ~/ 7 + 1;
-    var maxVal = 0;
-    for (final v in values.values) {
-      if (v > maxVal) maxVal = v;
-    }
-
-    final columns = <Widget>[];
-    DateTime? prevMonth;
-    for (var w = 0; w < weekCount; w++) {
-      final weekStart = startMonday.add(Duration(days: w * 7));
-      final showMonth =
-          prevMonth == null ||
-          prevMonth.month != weekStart.month ||
-          prevMonth.year != weekStart.year;
-      prevMonth = weekStart;
-      final cells = <Widget>[
-        SizedBox(
-          height: 14,
-          child: Text(
-            showMonth ? '${weekStart.month}月' : '',
-            style: TextStyle(
-              fontSize: 10,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ),
-        const SizedBox(height: 6),
-      ];
-      for (var d = 0; d < 7; d++) {
-        final day = weekStart.add(Duration(days: d));
-        final v = values[day];
-        if (v == null) {
-          // 序列外的日期 (首尾不完整周): 占位保持对齐。
-          cells.add(const SizedBox(width: cell, height: cell));
-        } else {
-          cells.add(
-            Container(
-              width: cell,
-              height: cell,
-              decoration: BoxDecoration(
-                color: _heatColor(v, maxVal),
-                borderRadius: BorderRadius.circular(3),
-              ),
-            ),
+    if (_heatmapMode == 'weekly') {
+      final weekTotals = <int>[];
+      for (final week in weeks) {
+        var sum = 0;
+        for (final d in week) {
+          if (d != null) sum += d.total;
+        }
+        weekTotals.add(sum);
+      }
+      var maxVal = 0;
+      for (final t in weekTotals) {
+        if (t > maxVal) maxVal = t;
+      }
+      final map = <DateTime, ({int value, Color color})>{};
+      for (var w = 0; w < weeks.length; w++) {
+        for (final d in weeks[w]) {
+          if (d == null) continue;
+          map[d.date] = (
+            value: weekTotals[w],
+            color: _quartileColor(weekTotals[w], maxVal),
           );
         }
-        if (d < 6) cells.add(const SizedBox(height: gap));
       }
-      columns.add(Column(crossAxisAlignment: CrossAxisAlignment.start, children: cells));
-      if (w < weekCount - 1) columns.add(const SizedBox(width: gap));
+      return map;
     }
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: columns),
-    );
+    // 累计: 按日期顺序累计 (周块本身已按日期升序)。
+    var acc = 0;
+    final ordered = <DailyTokenUsage>[];
+    for (final week in weeks) {
+      for (final d in week) {
+        if (d != null) ordered.add(d);
+      }
+    }
+    var maxVal = 0;
+    final accValues = <DateTime, int>{};
+    for (final d in ordered) {
+      acc += d.total;
+      accValues[d.date] = acc;
+      if (acc > maxVal) maxVal = acc;
+    }
+    return {
+      for (final e in accValues.entries)
+        e.key: (value: e.value, color: _quartileColor(e.value, maxVal)),
+    };
   }
 
-  Color _heatColor(int value, int maxVal) {
+  Color _levelColor(int level) {
+    if (level <= 0) return _heatEmpty;
+    if (level >= _heatLevels.length) return _heatLevels.last;
+    return _heatLevels[level - 1];
+  }
+
+  Color _quartileColor(int value, int maxVal) {
     if (value <= 0 || maxVal <= 0) return _heatEmpty;
     final ratio = value / maxVal;
     if (ratio <= 0.25) return _heatLevels[0];
@@ -394,8 +416,79 @@ class _UsageStatsPageState extends ConsumerState<UsageStatsPage> {
     return _heatLevels[3];
   }
 
+  Widget _buildHeatmap(ThemeData theme) {
+    const cell = 12.0;
+    const gap = 3.0;
+    final weeks = _allUsage!.heatWeeks;
+    final cells = _heatmapCells();
+    final columns = <Widget>[];
+    DateTime? prevMonth;
+    for (var w = 0; w < weeks.length; w++) {
+      final week = weeks[w];
+      DateTime? firstDay;
+      for (final d in week) {
+        if (d != null) {
+          firstDay = d.date;
+          break;
+        }
+      }
+      final showMonth =
+          firstDay != null &&
+          (prevMonth == null ||
+              prevMonth.month != firstDay.month ||
+              prevMonth.year != firstDay.year);
+      if (firstDay != null) prevMonth = firstDay;
+      final monthLabel =
+          showMonth && firstDay != null ? '${firstDay.month}月' : '';
+      final children = <Widget>[
+        SizedBox(
+          height: 14,
+          child: Text(
+            monthLabel,
+            style: TextStyle(
+              fontSize: 10,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+      ];
+      for (var i = 0; i < week.length; i++) {
+        final d = week[i];
+        if (d == null) {
+          // 服务端 null 占位 (未来日期): 占位保持对齐。
+          children.add(const SizedBox(width: cell, height: cell));
+        } else {
+          final c = cells[d.date];
+          children.add(
+            Container(
+              width: cell,
+              height: cell,
+              decoration: BoxDecoration(
+                color: c?.color ?? _heatEmpty,
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+          );
+        }
+        if (i < week.length - 1) children.add(const SizedBox(height: gap));
+      }
+      columns.add(
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: children),
+      );
+      if (w < weeks.length - 1) columns.add(const SizedBox(width: gap));
+    }
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: columns,
+      ),
+    );
+  }
+
   // ---------------------------------------------------------------
-  // 时间范围 + 趋势图
+  // 时间范围 + 趋势图 (range _trendRange 的快照, 不再页内过滤)
   // ---------------------------------------------------------------
 
   Widget _buildRangeRow(ThemeData theme) {
@@ -407,36 +500,26 @@ class _UsageStatsPageState extends ConsumerState<UsageStatsPage> {
           options: const ['近 7 日', '近 30 日'],
           selected: _trendRange == '7d' ? '近 7 日' : '近 30 日',
           onChanged: (label) {
-            setState(() {
-              _trendRange = label == '近 7 日' ? '7d' : '30d';
-            });
+            final next = label == '近 7 日' ? '7d' : '30d';
+            if (next == _trendRange) return;
+            setState(() => _trendRange = next);
+            _loadTrend();
           },
         ),
       ],
     );
   }
 
-  /// 趋势图取的日子: 近 7 日 = 以序列最后一天为锚的最近 7 天, 近 30 日 = 全量。
-  List<DailyTokenUsage> _trendDays() {
-    final days = _usage!.daily;
-    if (_trendRange != '7d' || days.isEmpty) return days;
-    final anchor = days.last.date;
-    final cutoff = anchor.subtract(const Duration(days: 6));
-    return days.where((d) => !d.date.isBefore(cutoff)).toList();
-  }
-
   Widget _buildTrendCard(ThemeData theme) {
-    final days = _trendDays();
-    final models = _usage!.models;
+    final days = _trendUsage?.daily ?? const <DailyTokenUsage>[];
+    final models = _trendUsage?.models ?? const <String>[];
     final hasModels = models.isNotEmpty;
     final seriesNames = hasModels ? models : const ['全部'];
     final seriesValues = <List<double>>[];
     var maxVal = 0.0;
     for (final name in seriesNames) {
       final values = days.map((d) {
-        final v = hasModels
-            ? (d.byModel[name] ?? 0)
-            : d.total;
+        final v = hasModels ? (d.byModel[name] ?? 0) : d.total;
         return v.toDouble();
       }).toList();
       for (final v in values) {
@@ -472,16 +555,46 @@ class _UsageStatsPageState extends ConsumerState<UsageStatsPage> {
                       ),
                     ),
                     const SizedBox(width: 6),
-                    Text(
-                      seriesNames[i],
-                      style: theme.textTheme.bodySmall,
-                    ),
+                    Text(seriesNames[i], style: theme.textTheme.bodySmall),
                   ],
                 ),
             ],
           ),
           const SizedBox(height: AppSpacing.md),
-          if (days.isEmpty)
+          if (_trendLoading)
+            const SizedBox(
+              height: 200,
+              child: Center(
+                child: SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            )
+          else if (_trendError != null)
+            SizedBox(
+              height: 200,
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '趋势数据加载失败',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    FilledButton(
+                      onPressed: _loadTrend,
+                      child: const Text('重试'),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else if (days.isEmpty)
             Text(
               '暂无趋势数据',
               style: theme.textTheme.bodySmall?.copyWith(

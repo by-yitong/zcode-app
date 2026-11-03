@@ -1,13 +1,24 @@
 /// 应用用量统计模型 — 对应桌面端 / 网页端「使用统计」页 (应用用量)。
 ///
-/// 数据来源: relay `usage-stats.getAppUsageSnapshot({range, timeZone})`
-/// (方法与参数见 docs/v4-API协议规格.md usage-stats channel)。
+/// 数据来源: relay `usage-stats.getAppUsageSnapshot({range, timeZone})`。
 ///
-/// 注意: 该方法的响应字段在仓库文档里没有记载 (只登记了方法名与参数),
-/// 因此解析刻意做得宽容: 汇总字段接受多个别名, 日序列接受 list / map
-/// 两种形态, 缺失的汇总项 (累计/峰值/连续天数) 从日序列里推算,
-/// 只有最长聊天时长推算不出来 (日序列没有单次聊天时长), 缺失时为空。
-/// 首次在真机上跑通后, 应按实际响应把这里的别名收敛为实测字段。
+/// 响应结构 (2026-11-02 网页端抓包实测, rpcId 295/296, 非文档推测):
+/// - 顶层: `{range, generatedAt, timeZone, source, summary, heatmap,
+///   dailyModelUsage, models}`
+/// - summary: `totalTokens` (累计) / `peakDayTokens` (峰值, 单日最高) /
+///   `longestSessionMs` (最长单次聊天, 毫秒) / `currentStreakDays` /
+///   `longestStreakDays` / `totalSessions` / `favoriteModel` 等
+/// - heatmap: `{startDate, endDate, maxTokens, weeks}`; weeks 为从 startDate
+///   起连续 7 天一切块 (非自然周), 每块 days 7 项, 未来日期为 null 占位;
+///   每项 `{date, level(0-4), totalTokens, turnCount, toolCallCount}`
+/// - dailyModelUsage: `[{date, models: [{modelId, totalTokens}]}]` (趋势图分线用)
+/// - models: 各模型汇总 (已按 share 降序)
+///
+/// 网页端一次拉两条: `range: "all"` (汇总 + 热力图) 与 `range: "7d"/"30d"`
+/// (趋势图); 时间范围切换时只重拉趋势那条。本页照此办理。
+///
+/// 旧别名兜底保留 (响应缺字段时从日序列推算累计/峰值/连续天数),
+/// 只有最长聊天时长推算不出来, 缺失时为空。
 library;
 
 /// 单日 Token 用量。
@@ -21,35 +32,43 @@ class DailyTokenUsage {
   /// 按模型分的日用量 (模型名 → Token 数), 无分模型数据时为空。
   final Map<String, int> byModel;
 
+  /// 服务端热力强度 0-4 (heatmap.days[].level), 非 heatmap 来源时为 null。
+  final int? level;
+
   const DailyTokenUsage({
     required this.date,
     required this.total,
     this.byModel = const {},
+    this.level,
   });
 }
 
-/// 应用用量统计快照。
+/// 应用用量统计快照 (一次 getAppUsageSnapshot 调用的解析结果)。
 class AppUsage {
-  /// 累计 Token 数 (API 原值, null = 响应里没有, 调用方用 [effectiveTotal])。
+  /// 累计 Token 数 (summary.totalTokens)。
   final int? totalTokens;
 
-  /// 峰值 Token 数: 单日最高 Token (API 原值, null 时从日序列推算)。
+  /// 峰值 Token 数 (summary.peakDayTokens, 单日最高)。
   final int? peakTokens;
 
-  /// 最长单次聊天时长 (API 原值, 推算不出来, 缺失时为 null)。
+  /// 最长单次聊天时长 (summary.longestSessionMs, 毫秒)。
   final Duration? longestChat;
 
   /// 预格式化的最长聊天时长文本 (响应直接给文本时用, 优先于 Duration 换算)。
   final String? longestChatText;
 
-  /// 当前连续使用天数 (API 原值, null 时从日序列推算)。
+  /// 当前连续使用天数 (summary.currentStreakDays)。
   final int? currentStreakDays;
 
-  /// 最长连续使用天数 (API 原值, null 时从日序列推算)。
+  /// 最长连续使用天数 (summary.longestStreakDays)。
   final int? longestStreakDays;
 
-  /// 日序列 (按日期升序)。
+  /// 日序列 (按日期升序, heatmap 与 dailyModelUsage 合并后)。
   final List<DailyTokenUsage> daily;
+
+  /// 热力周块 (服务端 weeks 原样: 每块 7 项, null = 未来日期占位)。
+  /// 无服务端周块时由 daily 每 7 天切块兜底 (无 null 项)。
+  final List<List<DailyTokenUsage?>> heatWeeks;
 
   const AppUsage({
     this.totalTokens,
@@ -59,6 +78,7 @@ class AppUsage {
     this.currentStreakDays,
     this.longestStreakDays,
     this.daily = const [],
+    this.heatWeeks = const [],
   });
 
   /// 日序列求和得到的累计 (API 没给累计时用它)。
@@ -109,7 +129,9 @@ class AppUsage {
     DateTime day(DateTime d) => DateTime(d.year, d.month, d.day);
     if (current) {
       var cursor = day(DateTime.now());
-      if (!active.contains(cursor)) cursor = cursor.subtract(const Duration(days: 1));
+      if (!active.contains(cursor)) {
+        cursor = cursor.subtract(const Duration(days: 1));
+      }
       if (!active.contains(cursor)) return 0;
       var streak = 0;
       while (active.contains(cursor)) {
@@ -135,11 +157,9 @@ class AppUsage {
   }
 
   // ---------------------------------------------------------------
-  // 宽容解析
+  // 解析 (实测结构优先, 旧别名兜底)
   // ---------------------------------------------------------------
 
-  /// 从 getAppUsageSnapshot 的响应 body 解析。
-  /// 顶层可能包一层 data, 汇总可能在 summary 对象里, 都兼容。
   factory AppUsage.fromJson(Map<String, dynamic> body) {
     final root = body['data'] is Map<String, dynamic>
         ? body['data'] as Map<String, dynamic>
@@ -148,9 +168,107 @@ class AppUsage {
         ? root['summary'] as Map<String, dynamic>
         : root;
 
-    final daily = _parseDaily(
-      root['daily'] ?? root['activity'] ?? root['days'] ?? root['series'],
-    );
+    // 1. heatmap 周块 (实测结构, null = 未来占位)。
+    final weeks = <List<DailyTokenUsage?>>[];
+    final byDate = <DateTime, DailyTokenUsage>{};
+    final heat = root['heatmap'];
+    if (heat is Map) {
+      final weekList = heat['weeks'];
+      if (weekList is List) {
+        for (final w in weekList) {
+          if (w is! Map) continue;
+          final days = w['days'];
+          if (days is! List) continue;
+          final week = <DailyTokenUsage?>[];
+          for (final d in days) {
+            if (d is! Map) {
+              week.add(null);
+              continue;
+            }
+            final dm = Map<String, dynamic>.from(d);
+            final date = _parseDate(dm['date']);
+            final total = _asInt(dm['totalTokens'] ?? dm['tokens']);
+            if (date == null || total == null) {
+              week.add(null);
+              continue;
+            }
+            final entry = DailyTokenUsage(
+              date: date,
+              total: total,
+              level: _asInt(dm['level']),
+            );
+            week.add(entry);
+            byDate[date] = entry;
+          }
+          weeks.add(week);
+        }
+      }
+    }
+
+    // 2. dailyModelUsage 合并分模型 (同步回周块, 趋势图分线用)。
+    final dmu = root['dailyModelUsage'];
+    if (dmu is List) {
+      for (final e in dmu) {
+        if (e is! Map) continue;
+        final em = Map<String, dynamic>.from(e);
+        final date = _parseDate(em['date']);
+        if (date == null) continue;
+        final byModel = <String, int>{};
+        final models = em['models'];
+        if (models is List) {
+          for (final m in models) {
+            if (m is! Map) continue;
+            final mm = Map<String, dynamic>.from(m);
+            final id = mm['modelId']?.toString();
+            final v = _asInt(mm['totalTokens']);
+            if (id != null && v != null) byModel[id] = v;
+          }
+        }
+        final existing = byDate[date];
+        if (existing != null) {
+          final merged = DailyTokenUsage(
+            date: date,
+            total: existing.total,
+            byModel: byModel,
+            level: existing.level,
+          );
+          byDate[date] = merged;
+          for (final week in weeks) {
+            for (var i = 0; i < week.length; i++) {
+              if (week[i]?.date == date) week[i] = merged;
+            }
+          }
+        } else {
+          final total = byModel.values.fold<int>(0, (a, b) => a + b);
+          byDate[date] = DailyTokenUsage(
+            date: date,
+            total: total,
+            byModel: byModel,
+          );
+        }
+      }
+    }
+
+    // 3. 日序列 (排序); 两路都空时走旧别名兜底。
+    var daily = byDate.values.toList()
+      ..sort((a, b) => a.date.compareTo(b.date));
+    if (daily.isEmpty) {
+      daily = _parseDaily(
+        root['daily'] ?? root['activity'] ?? root['days'] ?? root['series'],
+      );
+    }
+
+    // 4. 周块兜底: 无服务端周块时按首日起点每 7 天切块 (无 null 项)。
+    var heatWeeks = weeks;
+    if (heatWeeks.isEmpty && daily.isNotEmpty) {
+      heatWeeks = [];
+      for (var i = 0; i < daily.length; i += 7) {
+        final end = (i + 7).clamp(0, daily.length);
+        heatWeeks.add(
+          daily.sublist(i, end).map((d) => d as DailyTokenUsage?).toList(),
+        );
+      }
+    }
 
     return AppUsage(
       totalTokens: _asInt(
@@ -159,7 +277,8 @@ class AppUsage {
             summary['cumulativeTokens'],
       ),
       peakTokens: _asInt(
-        summary['peakTokens'] ??
+        summary['peakDayTokens'] ??
+            summary['peakTokens'] ??
             summary['peakDailyTokens'] ??
             summary['maxDailyTokens'],
       ),
@@ -180,13 +299,16 @@ class AppUsage {
             summary['maxConsecutiveDays'],
       ),
       daily: daily,
+      heatWeeks: heatWeeks,
     );
   }
 
   static Duration? _parseDuration(Map<String, dynamic> summary) {
-    // 带单位的显式字段优先。
+    // 带单位的显式字段优先 (实测: longestSessionMs, 毫秒)。
     final ms = _asInt(
-      summary['longestChatDurationMs'] ?? summary['longestChatMs'],
+      summary['longestSessionMs'] ??
+          summary['longestChatDurationMs'] ??
+          summary['longestChatMs'],
     );
     if (ms != null) return Duration(milliseconds: ms);
     final seconds = _asInt(
@@ -208,6 +330,7 @@ class AppUsage {
     return null;
   }
 
+  /// 旧形态日序列兜底 (list / map, 字段别名)。
   static List<DailyTokenUsage> _parseDaily(dynamic raw) {
     final entries = <DailyTokenUsage>[];
     if (raw is List) {
@@ -221,14 +344,11 @@ class AppUsage {
         }
       }
     } else if (raw is Map) {
-      // map 形态: { '2026-10-01': 123 } 或 { '2026-10-01': {total, models} }
       raw.forEach((key, value) {
         final date = _parseDate(key);
         if (date == null) return;
         if (value is num) {
-          entries.add(
-            DailyTokenUsage(date: date, total: value.toInt()),
-          );
+          entries.add(DailyTokenUsage(date: date, total: value.toInt()));
         } else if (value is Map) {
           final m = Map<String, dynamic>.from(value);
           m['date'] ??= key;
@@ -238,7 +358,6 @@ class AppUsage {
       });
     }
     entries.sort((a, b) => a.date.compareTo(b.date));
-    // 同一天多条时合并 (取和, 分模型也合并)。
     final merged = <DailyTokenUsage>[];
     for (final e in entries) {
       if (merged.isNotEmpty && merged.last.date == e.date) {
@@ -282,9 +401,8 @@ class AppUsage {
     try {
       if (v is num) {
         // 毫秒时间戳 (秒级时间戳 < 1e11, 毫秒级 ≥ 1e11, 粗分即可)。
-        final ms = v.abs() < 100000000000
-            ? v.toInt() * 1000
-            : v.toInt();
+        final ms =
+            v.abs() < 100000000000 ? v.toInt() * 1000 : v.toInt();
         final d = DateTime.fromMillisecondsSinceEpoch(ms);
         return DateTime(d.year, d.month, d.day);
       }
