@@ -21,6 +21,7 @@ import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/widgets/update_dialog.dart';
 import '../../agent/screens/cap_pages.dart';
 import '../../agent/widgets/caps_page_chrome.dart';
+import '../../chat/screens/usage_stats_page.dart';
 import 'remote_settings_screen.dart';
 
 /// 设置页 — DNA 提取自参考截图 (hallmark study):
@@ -158,6 +159,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         ? '已配置'
                         : '未配置',
                     onTap: () => _showGlmCredentialEditor(context, ref),
+                  ),
+                  _SettingsRow(
+                    icon: Icons.bar_chart_rounded,
+                    title: '使用统计',
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const UsageStatsPage(),
+                      ),
+                    ),
                   ),
                 ],
               ),
