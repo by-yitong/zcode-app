@@ -119,11 +119,15 @@ class Workspace {
   static List<Workspace> parseList(Map<String, dynamic> bootstrapResponse) {
     final result = bootstrapResponse['result'] as Map<String, dynamic>?;
     final workspacesJson = result?['workspaces'] as List<dynamic>? ?? [];
-    return workspacesJson
+    final all = workspacesJson
         .map((e) => Workspace.fromJson(e as Map<String, dynamic>))
         .where((w) => w.workspaceKey.isNotEmpty)
-        .where((w) => !w.isConversation)
         .toList();
+    // 3.17.2 实测: bootstrap 可能只返回当前会话工作区 (如默认会话工作区
+    // purpose=conversation); 沿用旧过滤会把列表滤空, 启动卡在"暂无可用工作区"。
+    // 过滤后为空时保留原列表兜底 (进默认工作区后 readTree 合并会补齐项目)。
+    final filtered = all.where((w) => !w.isConversation).toList();
+    return filtered.isNotEmpty ? filtered : all;
   }
 
   /// 解析 readTree 的 projects → 项目列表 (网页侧栏同源, 含历史项目)
