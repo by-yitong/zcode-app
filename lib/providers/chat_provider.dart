@@ -2758,6 +2758,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
         sessionId: _taskId ?? '',
         ref: ref,
       );
+      // 空字节不是有效图片: 返回 null 让缩略图显示占位, 而不是静默空白。
+      if (bytes.isEmpty) return null;
       _attachmentCachePut(ref, bytes);
       return bytes;
     } catch (e) {
