@@ -32,6 +32,8 @@ class AiMarkdown extends StatefulWidget {
     this.minimal = false,
     this.isStreaming = false,
     this.onLinkTap,
+    this.linkStyle,
+    this.imageBuilder,
   });
 
   /// Markdown 源文本 (整段, 含表格 — 不再拆段)。
@@ -60,6 +62,13 @@ class AiMarkdown extends StatefulWidget {
 
   /// 链接点击回调; null = 链接不可点 (与旧计划卡/审批卡行为一致)。
   final void Function(String url, String title)? onLinkTap;
+
+  /// 覆盖链接样式 (用户气泡白字下划线); null = 默认品牌蓝。
+  final LinkStyle? linkStyle;
+
+  /// 覆盖图片渲染 (聊天页: http 直显 + Host 本地路径显示文件 tile);
+  /// null = 包默认 (NetworkImage, 失败只剩破图占位)。
+  final ImageBuilder? imageBuilder;
 
   @override
   State<AiMarkdown> createState() => _AiMarkdownState();
@@ -147,6 +156,7 @@ class _AiMarkdownState extends State<AiMarkdown> {
 
     _sheet = minimal
         ? GptMarkdownStyleSheet(
+            link: widget.linkStyle,
             inlineCode:
                 widget.inlineCode ??
                 InlineCodeStyle(
@@ -179,11 +189,13 @@ class _AiMarkdownState extends State<AiMarkdown> {
                 bottom: AppSpacing.xs,
               ),
             ),
-            // 链接: 品牌电光蓝 (替代包默认硬编码 blue/red)
-            link: const LinkStyle(
-              color: AppColors.accent,
-              fontWeight: FontWeight.w500,
-            ),
+            // 链接: 品牌电光蓝 (替代包默认硬编码 blue/red);
+            // 调用方传入 linkStyle 时优先 (如用户气泡白字下划线)。
+            link: widget.linkStyle ??
+                const LinkStyle(
+                  color: AppColors.accent,
+                  fontWeight: FontWeight.w500,
+                ),
             inlineCode:
                 widget.inlineCode ??
                 InlineCodeStyle(
@@ -243,6 +255,7 @@ class _AiMarkdownState extends State<AiMarkdown> {
         styleSheet: _sheet,
         isStreaming: widget.isStreaming,
         onLinkTap: widget.onLinkTap,
+        imageBuilder: widget.imageBuilder,
         codeBuilder: (ctx, name, code, closed) => CodeBlock(
           code: code,
           language: name.isEmpty ? null : name,

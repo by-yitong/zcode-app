@@ -10,7 +10,6 @@ import '../../../providers/app_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/theme/app_router.dart';
 import '../../../shared/widgets/app_empty_state.dart';
-import '../../../shared/widgets/app_section_header.dart';
 import '../../agent/screens/plugins_browser_page.dart';
 import 'thought_block.dart';
 import '../../search/screens/search_screen.dart';
@@ -24,7 +23,7 @@ class HistoryDrawer extends ConsumerStatefulWidget {
   /// 切换工作区 (底部项目切换器)
   final ValueChanged<Workspace> onSwitchWorkspace;
 
-  /// 任务列表视图下选中任务 (跨工作区: 草稿对话任务在各自 draft 工作区,
+  /// 任务列表视图下选中任务 (跨工作区: 任务可能在任意工作区,
   /// 跳转必须带任务自身的 workspaceKey)。null 时回退 [onSelected]。
   final void Function(String taskId, String workspaceKey)?
   onSelectedInWorkspace;
@@ -59,20 +58,46 @@ class HistoryDrawer extends ConsumerStatefulWidget {
 class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
   bool _showArchived = false;
 
-  /// 「任务列表」聚合视图: 显示全部草稿对话任务 (projectId==null,
-  /// 对应网页侧栏「对话」分区)。false = 普通模式 (当前工作区任务)。
+  /// 「任务列表」视图: 未归入项目的任务 (分类对应网页侧栏任务区),
+  /// UI 保持原扁平时间分组。false = 普通模式 (当前工作区任务)。
   /// 切换真实项目时自动复位。
-  bool _conversationView = false;
+  bool _taskListView = false;
 
-  /// 默认工作区 = 网页端的"不在项目中工作" (路径以 .zcode/workspace/default 结尾)
+  /// 默认工作区 (路径以 .zcode/workspace/default 结尾,
+  /// 归一化后比较, 带斜杠的变体也算; 网页侧栏不列出它)。
   static bool _isDefaultWorkspace(Workspace w) =>
-      w.workspacePath.endsWith('.zcode/workspace/default');
+      Workspace.normalizePath(
+        w.workspacePath,
+      ).endsWith('.zcode/workspace/default');
+
+  /// 真实项目 (切换弹窗只列这些, 与网页端 readProjects 一致):
+  /// 只排除 conversation 工作区 (purpose=='conversation', Host 元数据)
+  /// 与默认工作区 (网页端项目列表不含它)。
+  /// purpose 缺失时不排除——缺失不等于草稿 (bootstrap 可能未给 purpose,
+  /// 如项目需求投票系统: 根是 draft- 路径但网页端照样列为项目,
+  /// 此前"null + draft-"启发式把它误杀了)。
+  static bool _isRealProject(Workspace w) {
+    if (w.purpose == 'conversation') return false;
+    if (_isDefaultWorkspace(w)) return false;
+    return true;
+  }
+
+  /// 切换弹窗路径短显: 含 .zcode/workspace/default 显示"默认工作区",
+  /// 其余只留后两段 (如 …/projects/GoStudio), 避免绝对路径截断在半个词上。
+  static String _shortWorkspacePath(String path) {
+    if (path.contains('.zcode/workspace/default')) return '默认工作区';
+    final trimmed =
+        path.endsWith('/') ? path.substring(0, path.length - 1) : path;
+    final parts = trimmed.split('/').where((s) => s.isNotEmpty).toList();
+    if (parts.length <= 2) return trimmed;
+    return '…/${parts[parts.length - 2]}/${parts.last}';
+  }
 
   /// 该项目下是否存在"正在运行且未归档"的任务 (项目切换弹窗运行中标记用)
   static bool _hasRunningTask(List<Task> tasks, String workspaceKey) =>
       tasks.any(
         (t) =>
-            t.workspaceKey == workspaceKey &&
+            Workspace.samePath(t.workspaceKey, workspaceKey) &&
             t.status == TaskStatus.running &&
             !t.archived,
       );
@@ -85,6 +110,10 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
     final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+      ),
       showDragHandle: true,
       // surfaceContainerHigh 是半透明白叠加 (设计为叠在实色 bg 上),
       // 单独做弹窗背景会透出底层; 叠到 surfaceContainerLowest(=bg 实色) 上得到不透明等价色。
@@ -230,6 +259,38 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
     return '${time.month}/${time.day}';
   }
 
+  /// 抽屉内部分组标题: 与 AppSectionHeader 同款式 (mono + 字间距 +
+  /// onSurfaceVariant 次要色), 但字号再小 2 (caption-2), 让任务标题
+  /// 视觉最突出。注: AppSectionHeader 不接受字号参数, 且任务要求
+  /// 只改本文件, 故此处本地复刻一份, 不改共享组件。
+  Widget _buildGroupHeader(String title) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.xs,
+        AppSpacing.lg,
+        AppSpacing.xs,
+        AppSpacing.sm,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              title.toUpperCase(),
+              style: TextStyle(
+                fontFamily: kMonoFont,
+                fontSize: AppTextSizes.caption - 2,
+                fontWeight: FontWeight.w600,
+                color: theme.colorScheme.onSurfaceVariant,
+                letterSpacing: 0.06,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// 分组渲染历史列表
   Widget _buildGroupedHistory(ThemeData theme, List<Task> tasks) {
     // 按时间分组 (保持已排序顺序, 分桶)
@@ -246,26 +307,44 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
       padding: const EdgeInsets.only(bottom: AppSpacing.lg),
       children: [
         for (final g in ordered) ...[
-          AppSectionHeader(title: g),
-          for (final task in groups[g]!) _buildHistoryItem(theme, task),
+          _buildGroupHeader(g),
+          for (final task in groups[g]!)
+            _buildHistoryItem(theme, task, g),
         ],
       ],
     );
   }
 
+  /// 真实项目按网页端 position 排序 (无 position 排最后, 名称兜底)。
+  /// 切换弹窗与任务列表视图共用, 避免两处排序规则漂移。
+  static List<Workspace> _sortedRealProjects(List<Workspace> workspaces) {
+    final projects = workspaces.where(_isRealProject).toList()
+      ..sort((a, b) {
+        final pa = a.position ?? double.infinity;
+        final pb = b.position ?? double.infinity;
+        final c = pa.compareTo(pb);
+        return c != 0 ? c : a.name.compareTo(b.name);
+      });
+    return projects;
+  }
+
   /// 单个对话项 (圆角图标块 + 标题 + mono 时间/状态)
-  Widget _buildHistoryItem(ThemeData theme, Task task) {
+  Widget _buildHistoryItem(ThemeData theme, Task task, String groupLabel) {
     final isActive = task.id == widget.currentTaskId;
     final isRunning = task.status == TaskStatus.running;
     final isArchived = task.archived;
+    // 昨天组: 第二行日期与分组标题完全重复, 隐藏 (运行中标记仍保留)。
+    // 今天组 (14:32) / 本周组 (周二等) / 更早组 (7/20) 的第二行信息
+    // 与分组标题不重复, 保留。
+    final hideDate = groupLabel == '昨天';
 
     return Opacity(
       opacity: isArchived ? 0.5 : 1.0,
       child: InkWell(
         onTap: () {
           widget.onClose(); // 关抽屉
-          if (_conversationView && widget.onSelectedInWorkspace != null) {
-            // 任务列表视图: 任务在各自 draft 工作区, 跳转带任务自身工作区
+          if (_taskListView && widget.onSelectedInWorkspace != null) {
+            // 任务列表视图: 任务在各自工作区, 跳转带任务自身工作区
             widget.onSelectedInWorkspace!(task.id, task.workspaceKey);
           } else {
             widget.onSelected(task.id);
@@ -307,42 +386,48 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                         height: 1.35,
                       ),
                     ),
-                    const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        if (isRunning) ...[
-                          RunningDot(),
-                          const SizedBox(width: AppSpacing.xs),
-                          Text(
-                            '运行中',
-                            style: AppText.mono(
-                              context,
-                              size: AppTextSizes.monoXs,
-                              color: AppColors.warning,
+                    // 第二行: 昨天组隐藏日期 (运行中任务仍保留运行标记)
+                    if (!hideDate || isRunning) ...[
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          if (isRunning) ...[
+                            RunningDot(),
+                            const SizedBox(width: AppSpacing.xs),
+                            Text(
+                              '运行中',
+                              style: AppText.mono(
+                                context,
+                                size: AppTextSizes.monoXs,
+                                color: AppColors.warning,
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: AppSpacing.sm),
-                          Text(
-                            '·',
-                            style: AppText.mono(
-                              context,
-                              size: AppTextSizes.monoXs,
-                              color: theme.colorScheme.onSurfaceVariant
-                                  .withValues(alpha: 0.4),
+                            if (!hideDate) ...[
+                              const SizedBox(width: AppSpacing.sm),
+                              Text(
+                                '·',
+                                style: AppText.mono(
+                                  context,
+                                  size: AppTextSizes.monoXs,
+                                  color: theme.colorScheme.onSurfaceVariant
+                                      .withValues(alpha: 0.4),
+                                ),
+                              ),
+                              const SizedBox(width: AppSpacing.sm),
+                            ],
+                          ],
+                          if (!hideDate)
+                            Text(
+                              _formatHistTime(task.updatedAt),
+                              style: AppText.mono(
+                                context,
+                                size: AppTextSizes.monoXs,
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: AppSpacing.sm),
                         ],
-                        Text(
-                          _formatHistTime(task.updatedAt),
-                          style: AppText.mono(
-                            context,
-                            size: AppTextSizes.monoXs,
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -396,25 +481,34 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final allTasks = ref.watch(allTasksProvider);
-    // 根据 _showArchived 过滤任务 (标题搜索已移至全屏搜索页)
-    // 任务列表视图: 聚合全部草稿对话任务 (按任务自身 workspaceKey 连接)
-    final tasks =
-        _conversationView
-            ? allTasks
-                .where((t) => t.isConversation && t.archived == _showArchived)
-                .toList()
-            : allTasks
-                .where(
-                  (t) =>
-                      t.workspaceKey == widget.workspacePath &&
-                      t.archived == _showArchived,
-                )
-                .toList();
-    tasks.sort(
-      (a, b) => (b.updatedAt?.millisecondsSinceEpoch ?? 0).compareTo(
-        a.updatedAt?.millisecondsSinceEpoch ?? 0,
-      ),
-    );
+    final workspaces =
+        ref.watch(workspaceListProvider).valueOrNull ?? const <Workspace>[];
+    // 分类 (跟网页一致, UI 保持原扁平时间分组, 不做分组界面):
+    // 任务列表视图 = 未归入项目的任务 (所在工作区不是真实项目,
+    // 对应网页侧栏任务区); 普通视图 = 当前工作区的任务
+    // (路径归一化比较, 斜杠变体算同一个)。两者均按时间倒序。
+    final projectPaths = _sortedRealProjects(workspaces)
+        .map((w) => Workspace.normalizePath(w.workspacePath))
+        .toSet();
+    final filtered = _taskListView
+        ? allTasks.where(
+            (t) =>
+                !projectPaths.contains(
+                  Workspace.normalizePath(t.workspaceKey),
+                ) &&
+                t.archived == _showArchived,
+          )
+        : allTasks.where(
+            (t) =>
+                Workspace.samePath(t.workspaceKey, widget.workspacePath) &&
+                t.archived == _showArchived,
+          );
+    final tasks = filtered.toList()
+      ..sort(
+        (a, b) => (b.updatedAt?.millisecondsSinceEpoch ?? 0).compareTo(
+          a.updatedAt?.millisecondsSinceEpoch ?? 0,
+        ),
+      );
 
     // 推开式抽屉: 不再包 Material Drawer (宽度/滑入由 RevealDrawer 负责),
     // 只保留底色壳; 颜色与原 Drawer.backgroundColor 完全一致
@@ -584,24 +678,30 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
     final workspaces =
         ref.watch(workspaceListProvider).valueOrNull ?? const <Workspace>[];
     final current = workspaces
-        .where((w) => w.workspaceKey == widget.workspacePath)
+        .where((w) => Workspace.samePath(w.workspacePath, widget.workspacePath))
         .firstOrNull;
     final isDefault = current != null && _isDefaultWorkspace(current);
-    final label = _conversationView
+    // 标签 = 原逻辑: 任务列表视图或默认工作区视图都显示"任务列表"
+    // (UI 按原来, 不改叫法)。
+    final label = (_taskListView || isDefault)
         ? '任务列表'
         : current == null
         ? '选择项目'
-        : (isDefault ? '不在项目中工作' : current.name);
+        : current.name;
 
-    // 圆角卡片 (填充色, 无边框), 独立于列表的浮动切换器
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.md,
-        AppSpacing.xs,
-        AppSpacing.md,
-        AppSpacing.sm,
-      ),
-      child: Material(
+    // 圆角卡片 (填充色区分, 无边框, 无分隔线)
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            AppSpacing.xs,
+            AppSpacing.md,
+            AppSpacing.sm,
+          ),
+          child: Material(
         color: theme.colorScheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(AppRadius.md),
         clipBehavior: Clip.antiAlias,
@@ -645,24 +745,28 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
           ),
         ),
       ),
+        ),
+      ],
     );
   }
 
-  /// 项目切换弹窗 (从抽屉底部向上延伸): 项目列表 + "不在项目中工作"
+  /// 项目切换弹窗 (从抽屉底部向上延伸): 任务列表行 + 项目列表
   void _openProjectSwitcher(BuildContext context, List<Workspace> workspaces) {
     final theme = Theme.of(context);
+    // 先失焦再弹切换弹窗: 否则弹窗关闭时 Flutter 会把焦点还给打开前
+    // 聚焦过的输入框 → 键盘自动弹起 (行点击里的 unfocus 拦不住关闭时
+    // 的焦点恢复, 拖拽/点遮罩关闭时更无 unfocus)。
+    FocusManager.instance.primaryFocus?.unfocus();
     // 打开时读一次任务快照, 用于标记"有任务正在运行"的项目
     // (弹窗展示期间不实时刷新, 不加定时器)
     final tasks = ref.read(allTasksProvider);
-    // 默认工作区固定最上, 其余按名称排序
-    final sorted = [...workspaces]
-      ..sort((a, b) {
-        final d = (_isDefaultWorkspace(b) ? 1 : 0).compareTo(
-          _isDefaultWorkspace(a) ? 1 : 0,
-        );
-        if (d != 0) return d;
-        return a.name.compareTo(b.name);
-      });
+    // 切换弹窗只列真实项目 (见 _isRealProject), 按网页端 position 排序。
+    final projects = _sortedRealProjects(workspaces);
+    final current = workspaces
+        .where((w) => Workspace.samePath(w.workspacePath, widget.workspacePath))
+        .firstOrNull;
+    // "任务列表"行 = 任务列表视图本身。
+    final taskListSelected = _taskListView;
 
     showModalBottomSheet<void>(
       context: context,
@@ -675,6 +779,8 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
+            minHeight:
+                MediaQuery.of(ctx).size.height * AppSheet.minHeightFactor,
             maxHeight: MediaQuery.of(ctx).size.height * 0.6,
           ),
           child: ListView(
@@ -690,13 +796,14 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                 ),
                 child: Text('切换项目', style: theme.textTheme.titleMedium),
               ),
-              // 任务列表 (聚合草稿对话, 对应网页侧栏「对话」分区)
+              // 任务列表 (未归入项目的任务, 分类对应网页侧栏任务区)
               ListTile(
                 dense: true,
+                tileColor: taskListSelected ? AppColors.accentContainer : null,
                 leading: Icon(
                   Icons.forum_outlined,
                   size: 20,
-                  color: _conversationView
+                  color: taskListSelected
                       ? theme.colorScheme.primary
                       : theme.colorScheme.onSurfaceVariant,
                 ),
@@ -704,13 +811,13 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                   '任务列表',
                   style: TextStyle(
                     fontSize: AppTextSizes.bodyMd,
-                    fontWeight: _conversationView
+                    fontWeight: taskListSelected
                         ? FontWeight.w600
                         : FontWeight.w400,
                   ),
                 ),
                 subtitle: Text(
-                  '全部对话与后台任务',
+                  '未归入项目的任务',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -718,7 +825,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
-                trailing: _conversationView
+                trailing: taskListSelected
                     ? Icon(
                         Icons.check_rounded,
                         size: 20,
@@ -728,19 +835,22 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                 onTap: () {
                   Navigator.pop(ctx);
                   FocusManager.instance.primaryFocus?.unfocus();
-                  // 切到任务列表聚合视图 (不切工作区, 聊天连接仍归各任务自身)
-                  setState(() => _conversationView = true);
+                  // 切到任务列表视图 (不切工作区, 聊天连接仍归各任务自身)
+                  setState(() => _taskListView = true);
                 },
               ),
-              for (final w in sorted)
+              for (final w in projects)
                 ListTile(
                   dense: true,
+                  // 当前项目行底色高亮 (对勾/主色图标/加粗标题已存在,
+                  // 再加底色让当前项一眼可见)
+                  tileColor: Workspace.samePath(w.workspaceKey, widget.workspacePath)
+                      ? AppColors.accentContainer
+                      : null,
                   leading: Icon(
-                    _isDefaultWorkspace(w)
-                        ? Icons.home_work_outlined
-                        : Icons.folder_outlined,
+                    Icons.folder_outlined,
                     size: 20,
-                    color: w.workspaceKey == widget.workspacePath
+                    color: Workspace.samePath(w.workspaceKey, widget.workspacePath)
                         ? theme.colorScheme.primary
                         : theme.colorScheme.onSurfaceVariant,
                   ),
@@ -749,10 +859,10 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                     children: [
                       Flexible(
                         child: Text(
-                          _isDefaultWorkspace(w) ? '不在项目中工作' : w.name,
+                          w.name,
                           style: TextStyle(
                             fontSize: AppTextSizes.bodyMd,
-                            fontWeight: w.workspaceKey == widget.workspacePath
+                            fontWeight: Workspace.samePath(w.workspaceKey, widget.workspacePath)
                                 ? FontWeight.w600
                                 : FontWeight.w400,
                           ),
@@ -766,7 +876,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                     ],
                   ),
                   subtitle: Text(
-                    w.workspacePath,
+                    _shortWorkspacePath(w.workspacePath),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -775,7 +885,7 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
                   ),
-                  trailing: w.workspaceKey == widget.workspacePath
+                  trailing: Workspace.samePath(w.workspaceKey, widget.workspacePath)
                       ? Icon(
                           Icons.check_rounded,
                           size: 20,
@@ -790,11 +900,11 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
                     // 切项目不关抽屉: 列表随新工作区自动刷新,
                     // 用户留在抽屉里继续选会话 (产品要求)
                     if (w.workspaceKey != widget.workspacePath) {
-                      setState(() => _conversationView = false);
+                      setState(() => _taskListView = false);
                       widget.onSwitchWorkspace(w);
-                    } else if (_conversationView) {
+                    } else if (_taskListView) {
                       // 回到当前项目: 退出任务列表视图
-                      setState(() => _conversationView = false);
+                      setState(() => _taskListView = false);
                     }
                   },
                 ),

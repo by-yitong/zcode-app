@@ -8,12 +8,15 @@ import '../../../shared/theme/app_design_tokens.dart';
 /// 聊天页三段式悬浮胶囊 Header (非连续式 AppBar)
 ///
 /// [左圆钮: 菜单(=打开会话抽屉)] 12px [中间胶囊: 会话标题 + 状态行] 弹性空隙
-/// [右圆钮: 更多菜单]。两侧为正圆 (44×44), 中间为毛玻璃胶囊且宽度贴内容
-/// (不撑满), 三者等高 44。每个胶囊独立毛玻璃 (ClipRRect + BackdropFilter),
-/// 无边框; 超长标题在剩余空间内省略。
+/// [右圆钮: 更多菜单]。两侧为正圆 (44×44), 中间为不透明胶囊且宽度贴内容
+/// (不撑满), 三者等高 44。每个胶囊独立圆角底 (ClipRRect + BackdropFilter
+/// 结构保留, 但底色已改为不透明, 模糊不再可见), 无边框; 超长标题在剩余
+/// 空间内省略。
 ///
 /// 纯展示 + 回调组件 (无 ref 依赖): 标题/状态行数据与动作均由 ChatScreen
-/// 组装传入。配色与 GlassAppBar 一致 (亮: 半透明白 0.72; 暗: #08090A @94%)。
+/// 组装传入。配色与 GlassAppBar 一致, 但底色已改为不透明 (亮: 实白;
+/// 暗: surfaceContainerHigh 在 surface 上混合后的实色), 避免消息上滑时
+/// 从胶囊底下透出。
 class ChatFloatingHeader extends StatelessWidget
     implements PreferredSizeWidget {
   final String title;
@@ -68,12 +71,17 @@ class ChatFloatingHeader extends StatelessWidget
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    // 深色: 与输入框同色 (surfaceContainerHigh = 输入框填充色, 6% 白半透)。
-    // 原实色 0xF008090A 与暗背景几乎重叠, 无内容滚过时胶囊边界不可见;
-    // 浅色维持半透明白。
-    final bg = isDark
-        ? theme.colorScheme.surfaceContainerHigh
-        : Colors.white.withValues(alpha: 0.72);
+    // 不透明底: 深色沿用与输入框同色的 surfaceContainerHigh 色调、
+    // 浅色沿用白色, 但把半透明底色在 surface 上混合成实色, 消息上滑
+    // 时不再从胶囊底下透出 (鬼影)。原半透明底 (亮: 白 0.72; 暗:
+    // surfaceContainerHigh 本身带透明度) 在内容滚过时会被透出的文字
+    // 干扰, 故改为实色; 外观与之前基本一致。
+    final bg = Color.alphaBlend(
+      isDark
+          ? theme.colorScheme.surfaceContainerHigh
+          : Colors.white.withValues(alpha: 0.72),
+      theme.colorScheme.surface,
+    );
     final inkColor = isDark ? const Color(0xFFF7F8F8) : Colors.black;
 
     // 本组件是聊天页状态栏样式的唯一来源 (非真正 AppBar, 需 AnnotatedRegion
@@ -209,6 +217,10 @@ class ChatFloatingHeader extends StatelessWidget
     final theme = Theme.of(context);
     showModalBottomSheet<void>(
       context: context,
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+      ),
       showDragHandle: true,
       backgroundColor: Color.alphaBlend(
         theme.colorScheme.surfaceContainerHigh,
@@ -269,7 +281,9 @@ class ChatFloatingHeader extends StatelessWidget
   }
 }
 
-/// 单个悬浮胶囊: 圆角 + 毛玻璃, 无边框 (三段共用)。
+/// 单个悬浮胶囊: 圆角 + 不透明底, 无边框 (三段共用)。
+/// BackdropFilter 结构保留, 但底色不透明后模糊不再可见 (后续可移除
+/// 以省一层 backdrop 采样)。
 /// 最小高度 44 (三段等高); 宽度贴内容 — 关键是容器不用 alignment
 /// (alignment 会让 Container 撑满父给的宽松约束 → 中间胶囊变全宽的根因)。
 /// 两侧 44×44 时半径钳到半高 → 正圆; 中间内容更高时按内容撑高。

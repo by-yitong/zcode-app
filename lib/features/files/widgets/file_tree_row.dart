@@ -19,6 +19,10 @@ Future<void> showFileEntryActionsSheet(
   final rel = relativePathOf(e.path, workspacePath);
   return showModalBottomSheet<void>(
     context: context,
+    constraints: BoxConstraints(
+      maxWidth: 640,
+      minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+    ),
     showDragHandle: true,
     builder: (sheetCtx) => SafeArea(
       child: Column(

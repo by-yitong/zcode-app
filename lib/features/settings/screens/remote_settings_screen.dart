@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/logging/app_logger.dart';
 import '../../../core/relay/relay_client.dart';
@@ -6,6 +7,7 @@ import '../../../providers/app_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
 import '../../../shared/widgets/app_section_header.dart';
 import '../../../shared/widgets/app_tile_group.dart';
+import '../../agent/widgets/caps_page_chrome.dart';
 import '../../agent/widgets/caps_widgets.dart';
 
 /// 远程设置页 — 查看 + 编辑 ZCode 桌面端配置 (setting.get / setting.update)
@@ -86,9 +88,11 @@ class _RemoteSettingsScreenState extends ConsumerState<RemoteSettingsScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('远程设置')),
-      body: _loading
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: CapsPageHeader.overlayStyle(context),
+      child: Scaffold(
+        appBar: const CapsPageHeader(title: '远程设置'),
+        body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
           ? Center(
@@ -113,6 +117,7 @@ class _RemoteSettingsScreenState extends ConsumerState<RemoteSettingsScreen> {
                 children: _buildSections(theme),
               ),
             ),
+      ),
     );
   }
 
@@ -124,10 +129,11 @@ class _RemoteSettingsScreenState extends ConsumerState<RemoteSettingsScreen> {
     final s = _settings ?? {};
     final sections = <Widget>[];
 
-    // 常规
-    sections.add(const AppSectionHeader(title: '常规'));
+    // 界面 — 语言、交互与消息展示
+    sections.add(const AppSectionHeader(title: '界面'));
     sections.add(
       AppTileGroup(
+        plain: true,
         tiles: [
           _pickerTile(
             icon: Icons.language_rounded,
@@ -163,14 +169,26 @@ class _RemoteSettingsScreenState extends ConsumerState<RemoteSettingsScreen> {
           _switchTile(
             icon: Icons.notifications_rounded,
             title: '离线时自动确认交互',
+            subtitle: '断线时自动通过 AI 的提问，不用等你回来点',
             value: s['askUserQuestionAutoResolutionEnabled'] == true,
             key: 'askUserQuestionAutoResolutionEnabled',
             onChanged: (v) =>
                 _update('askUserQuestionAutoResolutionEnabled', v),
           ),
+        ],
+      ),
+    );
+
+    // 终端 — 集成终端的系统配置
+    sections.add(const AppSectionHeader(title: '终端'));
+    sections.add(
+      AppTileGroup(
+        plain: true,
+        tiles: [
           _switchTile(
             icon: Icons.terminal_rounded,
             title: '继承系统终端',
+            subtitle: '集成终端沿用系统终端的配置',
             value: s['terminalInheritSystemProfile'] == true,
             key: 'terminalInheritSystemProfile',
             onChanged: (v) => _update('terminalInheritSystemProfile', v),
@@ -178,6 +196,7 @@ class _RemoteSettingsScreenState extends ConsumerState<RemoteSettingsScreen> {
           AppTile(
             icon: Icons.text_fields_rounded,
             title: '终端字体',
+            plainIcon: true,
             value: (s['terminalFontFamily'] as String?)?.isNotEmpty == true
                 ? s['terminalFontFamily']
                 : '自动',
@@ -185,6 +204,7 @@ class _RemoteSettingsScreenState extends ConsumerState<RemoteSettingsScreen> {
           AppTile(
             icon: Icons.code_rounded,
             title: '集成终端 Shell',
+            plainIcon: true,
             value: s['integratedTerminalShell'] ?? '自动选择',
           ),
         ],
@@ -195,6 +215,7 @@ class _RemoteSettingsScreenState extends ConsumerState<RemoteSettingsScreen> {
     sections.add(const AppSectionHeader(title: '自动归档'));
     sections.add(
       AppTileGroup(
+        plain: true,
         tiles: [
           _switchTile(
             icon: Icons.archive_outlined,
@@ -226,10 +247,12 @@ class _RemoteSettingsScreenState extends ConsumerState<RemoteSettingsScreen> {
     sections.add(const AppSectionHeader(title: '网络'));
     sections.add(
       AppTileGroup(
+        plain: true,
         tiles: [
           AppTile(
             icon: Icons.network_ping_rounded,
             title: 'HTTP 代理',
+            plainIcon: true,
             value: (s['httpProxy'] as String?)?.isNotEmpty == true
                 ? s['httpProxy']
                 : '直连',
@@ -237,6 +260,7 @@ class _RemoteSettingsScreenState extends ConsumerState<RemoteSettingsScreen> {
           AppTile(
             icon: Icons.vpn_lock_rounded,
             title: '代理例外',
+            plainIcon: true,
             value: (s['httpProxyBypass'] as String?)?.isNotEmpty == true
                 ? s['httpProxyBypass']
                 : '无',
@@ -244,6 +268,7 @@ class _RemoteSettingsScreenState extends ConsumerState<RemoteSettingsScreen> {
           AppTile(
             icon: Icons.verified_user_outlined,
             title: '自定义证书',
+            plainIcon: true,
             value: (s['customCaCertPath'] as String?)?.isNotEmpty == true
                 ? s['customCaCertPath']
                 : '无',
@@ -256,10 +281,12 @@ class _RemoteSettingsScreenState extends ConsumerState<RemoteSettingsScreen> {
     sections.add(const AppSectionHeader(title: '存储'));
     sections.add(
       AppTileGroup(
+        plain: true,
         tiles: [
           AppTile(
             icon: Icons.folder_outlined,
             title: '数据目录',
+            plainIcon: true,
             value: s['dataBaseDir'] ?? '默认',
           ),
         ],
@@ -270,10 +297,12 @@ class _RemoteSettingsScreenState extends ConsumerState<RemoteSettingsScreen> {
     sections.add(const AppSectionHeader(title: '其他'));
     sections.add(
       AppTileGroup(
+        plain: true,
         tiles: [
           AppTile(
             icon: Icons.speed_rounded,
             title: '优化体验',
+            plainIcon: true,
             value: (s['telemetryOptIn'] as bool? ?? false) ? '开启' : '关闭',
           ),
           _switchTile(
@@ -298,6 +327,7 @@ class _RemoteSettingsScreenState extends ConsumerState<RemoteSettingsScreen> {
   AppTile _switchTile({
     required IconData icon,
     required String title,
+    String? subtitle,
     required bool value,
     required String key,
     required ValueChanged<bool> onChanged,
@@ -305,6 +335,8 @@ class _RemoteSettingsScreenState extends ConsumerState<RemoteSettingsScreen> {
     return AppTile(
       icon: icon,
       title: title,
+      subtitle: subtitle,
+      plainIcon: true,
       trailing: _savingKey == key
           ? const SizedBox(
               width: 18,
@@ -327,11 +359,16 @@ class _RemoteSettingsScreenState extends ConsumerState<RemoteSettingsScreen> {
       icon: icon,
       title: title,
       value: value,
+      plainIcon: true,
       showChevron: true,
       onTap: () {
         final theme = Theme.of(context);
         showModalBottomSheet(
           context: context,
+          constraints: BoxConstraints(
+            maxWidth: 640,
+            minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+          ),
           showDragHandle: true,
           builder: (ctx) => SafeArea(
             top: false,

@@ -2216,7 +2216,10 @@ class RelayClient {
         throw StateError('attachmentReadV4 响应非 Map: ${resp.body}');
       }
       final body = resp.body as Map<String, dynamic>;
-      final chunk = body['bytes'] as String? ?? '';
+      // 3.17.2 实测: 服务端返回 dataBase64 (旧字段 bytes 已无内容);
+      // 两字段都接受, 避免字段改名导致读回空字节、图片静默不显示。
+      final chunk =
+          body['bytes'] as String? ?? body['dataBase64'] as String? ?? '';
       if (chunk.isEmpty) break; // 防御: 空分片 + nextOffset 会死循环
       b64.write(chunk);
       final next = body['nextOffset'];

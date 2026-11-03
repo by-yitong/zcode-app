@@ -9,7 +9,11 @@ import '../theme/app_design_tokens.dart';
 class AppTileGroup extends StatelessWidget {
   final List<Widget> tiles; // 通常是 AppTile; 也允许 GestureDetector 包裹 (长按等)
 
-  const AppTileGroup({super.key, required this.tiles});
+  /// plain = 设置页风格: 无边框、无分隔线、圆角与设置卡一致。
+  /// 默认 false = iOS 风 (边框 + 细分割, 能力页保持)。
+  final bool plain;
+
+  const AppTileGroup({super.key, required this.tiles, this.plain = false});
 
   @override
   Widget build(BuildContext context) {
@@ -17,15 +21,19 @@ class AppTileGroup extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(
+          plain ? AppRadius.xl : AppRadius.md,
+        ),
+        border: plain
+            ? null
+            : Border.all(color: theme.colorScheme.outlineVariant),
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
           for (var i = 0; i < tiles.length; i++) ...[
             tiles[i],
-            if (i < tiles.length - 1)
+            if (!plain && i < tiles.length - 1)
               Divider(
                 height: 1,
                 thickness: 1,
@@ -52,6 +60,10 @@ class AppTile extends StatelessWidget {
   final Color? iconTint;
   final int? subtitleMaxLines; // 副标题截断 (长描述场景, 默认不限制)
 
+  /// plainIcon = 设置页风格: 纯黑线条图标, 无彩色圆角底, 行内边距与设置行一致。
+  /// 默认 false = 彩色圆角图标盒 (能力页保持)。
+  final bool plainIcon;
+
   const AppTile({
     super.key,
     this.icon,
@@ -64,6 +76,7 @@ class AppTile extends StatelessWidget {
     this.onTap,
     this.iconTint,
     this.subtitleMaxLines,
+    this.plainIcon = false,
   });
 
   @override
@@ -71,8 +84,8 @@ class AppTile extends StatelessWidget {
     final theme = Theme.of(context);
     final tint = iconTint ?? AppColors.accent;
     final content = Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
+      padding: EdgeInsets.symmetric(
+        horizontal: plainIcon ? AppSpacing.lg : AppSpacing.md,
         vertical: AppSpacing.md,
       ),
       child: Row(
@@ -81,15 +94,18 @@ class AppTile extends StatelessWidget {
             customLeading!,
             const SizedBox(width: AppSpacing.md),
           ] else if (icon != null) ...[
-            Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                color: tint.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(AppRadius.sm),
+            if (plainIcon)
+              Icon(icon, size: 20, color: theme.colorScheme.onSurface)
+            else
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: tint.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                ),
+                child: Icon(icon, size: 16, color: tint),
               ),
-              child: Icon(icon, size: 16, color: tint),
-            ),
             const SizedBox(width: AppSpacing.md),
           ],
           Expanded(

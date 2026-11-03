@@ -65,10 +65,6 @@ class ChatScreen extends ConsumerStatefulWidget {
   /// 文件级旗标跨路由传递, 用后即清。产品要求: 切项目抽屉不关, 方便选会话。
   static bool keepDrawerOpenOnNextInit = false;
 
-  /// 新建会话 (replace 重建本页) 后自动聚焦输入框 — 全应用唯一的
-  /// 自动取焦路径; 其余场景一律用户手点, 旗标用后即清。
-  static bool focusComposerOnNextInit = false;
-
   const ChatScreen({super.key, required this.workspaceKey, this.taskId});
 
   @override
@@ -122,13 +118,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       ChatScreen.keepDrawerOpenOnNextInit = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _revealKey.currentState?.openImmediately();
-      });
-    }
-    // 新建会话: 首帧聚焦输入框 (唯一的自动取焦路径)
-    if (ChatScreen.focusComposerOnNextInit) {
-      ChatScreen.focusComposerOnNextInit = false;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _chatScaffoldKey.currentState?.requestComposerFocus();
       });
     }
   }
@@ -233,8 +222,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             },
             onNewChat: () {
               // 新对话: 跳回不带 task 的聊天页 (replace: 原地替换, 保持返回栈)。
-              // 新会话自动聚焦输入框 (全应用唯一的自动取焦路径)
-              ChatScreen.focusComposerOnNextInit = true;
               context.replace(
                 '${AppRoutes.chat}?workspace=${Uri.encodeComponent(widget.workspaceKey)}',
               );
@@ -864,6 +851,8 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
         onOpenPip: Platform.isAndroid ? _openPipOverlay : null,
         // 项目文件树 (对齐网页端 WorkspaceFileTree; 任何项目可用, 无门控)
         onOpenFileTree: () {
+          // 推页前清焦点: 避免返回时残留焦点导致键盘自动弹起
+          FocusManager.instance.primaryFocus?.unfocus();
           Navigator.push(
             context,
             MaterialPageRoute<void>(
@@ -890,6 +879,8 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
             true
         ? null
         : () {
+          // 推页前清焦点: 避免返回时残留焦点导致键盘自动弹起
+          FocusManager.instance.primaryFocus?.unfocus();
           Navigator.push(
             context,
             MaterialPageRoute<void>(
@@ -1464,10 +1455,10 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
           AppSpacing.sm,
           AppSpacing.xs,
         ),
-        // 整个 composer 是一个圆角卡片 (深灰填充, 无边框)
+        // 整个 composer 是一个圆角卡片 (surface 填充, 与背景区分, 无边框)
         child: Container(
           decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerHigh,
+            color: theme.colorScheme.surface,
             borderRadius: BorderRadius.circular(AppRadius.lg),
           ),
           padding: const EdgeInsets.fromLTRB(
@@ -1499,8 +1490,8 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                             ref
                                 .read(chatProvider(widget.chatRef).notifier)
                                 .removeQueuedItem(q.id);
-                            // 只回填文本不取焦 — 焦点策略: 除新建会话外
-                            // 一律用户手点输入框
+                            // 只回填文本不取焦 — 焦点策略: 任何场景都不自动
+                            // 聚焦, 输入框只由用户手点获取焦点
                             _messageController.text = q.text;
                           },
                           onDelete: () => ref
@@ -1653,17 +1644,12 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
   /// /model 命令 + 模型按钮共用: 打开模型选择底部表 (模型列表读全局 modelListProvider)
   /// 打开全屏搜索页 (抽屉搜索按钮入口; 合并 会话搜索 + 斜杠命令)
   /// 预填输入框 (如"新建技能"引导) — 只回填文本不取焦 (焦点策略:
-  /// 除新建会话外一律用户手点)
+  /// 任何场景都不自动聚焦, 输入框只由用户手点获取焦点)
   void prefillInput(String text) {
     _messageController.text = text;
     _messageController.selection = TextSelection.fromPosition(
       TextPosition(offset: _messageController.text.length),
     );
-  }
-
-  /// 主动聚焦输入框 — 仅新建会话路径调用 (全应用唯一的自动取焦)
-  void requestComposerFocus() {
-    _inputFocusNode.requestFocus();
   }
 
   void openSearch() {
@@ -1762,6 +1748,10 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
     final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+      ),
       showDragHandle: true,
       backgroundColor: Color.alphaBlend(
         theme.colorScheme.surfaceContainerHigh,
@@ -2137,6 +2127,10 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
     final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+      ),
       showDragHandle: true,
       backgroundColor: Color.alphaBlend(
         theme.colorScheme.surfaceContainerHigh,
@@ -2213,6 +2207,10 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
 
     showModalBottomSheet(
       context: context,
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+      ),
       showDragHandle: true,
       backgroundColor: Color.alphaBlend(
         theme.colorScheme.surfaceContainerHigh,
@@ -2300,6 +2298,10 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
     final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+      ),
       showDragHandle: true,
       backgroundColor: Color.alphaBlend(
         theme.colorScheme.surfaceContainerHigh,

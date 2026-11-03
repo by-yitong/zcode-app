@@ -79,49 +79,61 @@ class CommandPalette extends StatelessWidget {
     final matches = slashCommands
         .where((c) => c.name.startsWith(query))
         .toList();
-    if (matches.isEmpty) return const SizedBox.shrink();
-    return Container(
-      constraints: const BoxConstraints(maxHeight: 240),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
-      child: ListView.separated(
-        shrinkWrap: true,
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        itemCount: matches.length,
-        separatorBuilder: (_, __) => Divider(
-          height: 1,
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-        ),
-        itemBuilder: (context, i) {
-          final c = matches[i];
-          return ListTile(
-            dense: true,
-            leading: Icon(
-              Icons.chevron_right,
-              size: 18,
-              color: theme.colorScheme.primary,
-            ),
-            title: Text(
-              c.name,
-              style: const TextStyle(
-                fontSize: AppTextSizes.bodySm,
-                fontWeight: FontWeight.w600,
+    // 高度动画: 出现/消失与筛选结果数变化时平滑伸缩 (200ms ease),
+    // 而不是硬跳; 底对齐, 使列表贴着输入框向上展开。
+    // 注意: 本组件目前未被实例化 (/ 命令走 _showCommandPicker 底部表),
+    // 这里是为将来 inline 接入时已带动画; 当前可见效果来自 MentionOverlay。
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.ease,
+      alignment: Alignment.bottomCenter,
+      child: matches.isEmpty
+          ? const SizedBox.shrink()
+          : Container(
+              constraints: const BoxConstraints(maxHeight: 240),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                border: Border.all(color: theme.colorScheme.outlineVariant),
+              ),
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                itemCount: matches.length,
+                separatorBuilder: (_, __) => Divider(
+                  height: 1,
+                  color: theme.colorScheme.outlineVariant.withValues(
+                    alpha: 0.5,
+                  ),
+                ),
+                itemBuilder: (context, i) {
+                  final c = matches[i];
+                  return ListTile(
+                    dense: true,
+                    leading: Icon(
+                      Icons.chevron_right,
+                      size: 18,
+                      color: theme.colorScheme.primary,
+                    ),
+                    title: Text(
+                      c.name,
+                      style: const TextStyle(
+                        fontSize: AppTextSizes.bodySm,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      c.desc,
+                      style: TextStyle(
+                        fontSize: AppTextSizes.caption,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    onTap: () => onSelected(c),
+                  );
+                },
               ),
             ),
-            subtitle: Text(
-              c.desc,
-              style: TextStyle(
-                fontSize: AppTextSizes.caption,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            onTap: () => onSelected(c),
-          );
-        },
-      ),
     );
   }
 }
@@ -149,83 +161,94 @@ class MentionOverlay extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final items = _buildItems(ref);
-    if (items.isEmpty) return const SizedBox.shrink();
 
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxHeight: 220),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 分类标签
-          Padding(
-            padding: const EdgeInsets.only(left: 4, bottom: 2),
-            child: Text(
-              _triggerLabel(),
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
-                color: theme.colorScheme.onSurfaceVariant,
-                letterSpacing: 0.5,
-              ),
-            ),
-          ),
-          Flexible(
-            child: ListView.builder(
-              shrinkWrap: true,
-              padding: EdgeInsets.zero,
-              itemCount: items.length,
-              itemBuilder: (context, i) {
-                final item = items[i];
-                return InkWell(
-                  borderRadius: BorderRadius.circular(AppRadius.sm),
-                  onTap: () => onSelected(item.insertText),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 7,
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(item.icon, size: 16, color: item.color),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                item.label,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: AppTextSizes.bodySm,
-                                  fontWeight: FontWeight.w500,
-                                  color: theme.colorScheme.onSurface,
-                                ),
-                              ),
-                              if (item.subtitle.isNotEmpty)
-                                Text(
-                                  item.subtitle,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: AppTextSizes.caption,
-                                    color: theme.colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ],
+    // 高度动画: 筛选结果数变化时平滑伸缩 (200ms ease), 而不是硬跳;
+    // 底对齐, 使列表贴着输入框向上展开。注意: 父级在无提及触发时
+    // 直接返回 SizedBox.shrink (不挂载本组件), 那种出现/消失仍需
+    // 父级包 AnimatedSize 才能动画; 这里覆盖组件内的高度变化
+    // (包括有结果 ↔ 无结果时的缩到 0)。
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.ease,
+      alignment: Alignment.bottomCenter,
+      child: items.isEmpty
+          ? const SizedBox.shrink()
+          : ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 220),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 分类标签
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4, bottom: 2),
+                    child: Text(
+                      _triggerLabel(),
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.onSurfaceVariant,
+                        letterSpacing: 0.5,
+                      ),
                     ),
                   ),
-                );
-              },
+                  Flexible(
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      padding: EdgeInsets.zero,
+                      itemCount: items.length,
+                      itemBuilder: (context, i) {
+                        final item = items[i];
+                        return InkWell(
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                          onTap: () => onSelected(item.insertText),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 7,
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(item.icon, size: 16, color: item.color),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        item.label,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: AppTextSizes.bodySm,
+                                          fontWeight: FontWeight.w500,
+                                          color: theme.colorScheme.onSurface,
+                                        ),
+                                      ),
+                                      if (item.subtitle.isNotEmpty)
+                                        Text(
+                                          item.subtitle,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: AppTextSizes.caption,
+                                            color: theme.colorScheme.onSurfaceVariant,
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -844,6 +867,10 @@ class ModeSelector extends StatelessWidget {
     final cur = _selectedIndex;
     showModalBottomSheet(
       context: context,
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+      ),
       showDragHandle: true,
       backgroundColor: Color.alphaBlend(
         theme.colorScheme.surfaceContainerHigh,
@@ -971,6 +998,10 @@ class ThoughtLevelSelector extends StatelessWidget {
     final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+      ),
       showDragHandle: true,
       backgroundColor: Color.alphaBlend(
         theme.colorScheme.surfaceContainerHigh,
@@ -1089,6 +1120,9 @@ class ModelPickerSheetState extends State<ModelPickerSheet> {
   final _searchController = TextEditingController();
   String _query = '';
 
+  /// 用户点过的渠道胶囊 (pid); null = 默认落在当前模型所在渠道
+  String? _selectedPid;
+
   /// 当前模型的 tile key — 打开时滚动定位到它
   final _currentKey = GlobalKey();
 
@@ -1126,23 +1160,63 @@ class ModelPickerSheetState extends State<ModelPickerSheet> {
         ? widget.models
         : widget.models.where((m) => m.toLowerCase().contains(query)).toList();
 
-    // 分组
+    // 分组 (按过滤后列表)
     final groups = <String, List<String>>{};
-    final order = <String>[];
     for (final m in filtered) {
       final pid = m.contains('/') ? m.split('/').first : '其他';
       (groups[pid] ??= []).add(m);
-      if (!order.contains(pid)) order.add(pid);
     }
+
+    // 当前行解析: 精确匹配优先; Host 历史里的 model 是裸 modelId
+    // (无 provider 前缀), 列表 ID 是 pid/mid — 裸名相等时取首条
+    // (同名多渠道时顶部胶囊已区分, 点行可显式纠正)。
+    String? currentRowId;
+    if (widget.current != null) {
+      for (final m in filtered) {
+        if (m == widget.current ||
+            m.split('/').last == widget.current!.split('/').last) {
+          currentRowId = m;
+          break;
+        }
+      }
+    }
+
+    // 渠道胶囊: 全部渠道 (不过滤, 始终可切换); 默认落在当前模型所在渠道,
+    // 用户点过胶囊后以用户选择为准 (搜索把某渠道滤空时列表显示空态)。
+    final allOrder = <String>[];
+    for (final m in widget.models) {
+      final pid = m.contains('/') ? m.split('/').first : '其他';
+      if (!allOrder.contains(pid)) allOrder.add(pid);
+    }
+    String? currentPid;
+    if (currentRowId != null) {
+      currentPid =
+          currentRowId!.contains('/') ? currentRowId!.split('/').first : '其他';
+    }
+    final selectedPid = (_selectedPid != null && allOrder.contains(_selectedPid))
+        ? _selectedPid!
+        : (currentPid != null && allOrder.contains(currentPid)
+            ? currentPid!
+            : (allOrder.isEmpty ? null : allOrder.first));
+    // 当前渠道可见的模型 (已过滤)
+    final visible =
+        selectedPid == null ? <String>[] : (groups[selectedPid] ?? <String>[]);
 
     return SafeArea(
       child: Padding(
         padding: EdgeInsets.only(
           bottom: MediaQuery.of(context).viewInsets.bottom,
         ),
-        child: SizedBox(
-          height: MediaQuery.of(context).size.height * 0.65,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            minHeight:
+                MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+            maxHeight: MediaQuery.of(context).size.height * 0.65,
+          ),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
+            // 窄子项 (胶囊行) 默认会被 Column 居中, 显式左对齐
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // 标题栏
               Padding(
@@ -1157,7 +1231,7 @@ class ModelPickerSheetState extends State<ModelPickerSheet> {
                     ),
                     const Spacer(),
                     Text(
-                      '${widget.models.length} 个模型',
+                      '${visible.length} 个模型',
                       style: TextStyle(
                         fontSize: AppTextSizes.label,
                         color: theme.colorScheme.onSurfaceVariant,
@@ -1166,6 +1240,50 @@ class ModelPickerSheetState extends State<ModelPickerSheet> {
                   ],
                 ),
               ),
+              // 渠道胶囊 (多渠道时才出现; 单渠道直接列模型, 不占一行):
+              // 填充色区分选中态, 不用边框/分割线; 点胶囊只换列表不关弹窗
+              if (allOrder.length > 1)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (final pid in allOrder)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: GestureDetector(
+                              onTap: () => setState(() => _selectedPid = pid),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 7,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: pid == selectedPid
+                                      ? theme.colorScheme.primary
+                                      : theme.colorScheme.surfaceContainerHigh,
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(
+                                  providerLabel(pid),
+                                  style: TextStyle(
+                                    fontSize: AppTextSizes.bodySm,
+                                    fontWeight: pid == selectedPid
+                                        ? FontWeight.w600
+                                        : FontWeight.w400,
+                                    color: pid == selectedPid
+                                        ? Colors.white
+                                        : theme.colorScheme.onSurface,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
               // 搜索框 (模型少时没必要搜索, 隐藏)
               if (widget.models.length > 6)
                 Padding(
@@ -1208,9 +1326,9 @@ class ModelPickerSheetState extends State<ModelPickerSheet> {
                     ),
                   ),
                 ),
-              // 模型列表
-              Expanded(
-                child: filtered.isEmpty
+              // 模型列表 (内容短时贴合高度, 长表封顶 65% 后内部滚动)
+              Flexible(
+                child: visible.isEmpty
                     ? Center(
                         child: Text(
                           query.isEmpty ? '暂无可用模型' : '未找到匹配的模型',
@@ -1221,65 +1339,39 @@ class ModelPickerSheetState extends State<ModelPickerSheet> {
                         ),
                       )
                     : ListView(
+                        shrinkWrap: true,
                         padding: const EdgeInsets.only(bottom: 8),
                         children: [
-                          for (final pid in order) ...[
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.dns_outlined,
-                                    size: 13,
-                                    color: theme.colorScheme.primary,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    providerLabel(pid),
-                                    style: theme.textTheme.labelMedium
-                                        ?.copyWith(
-                                          color: theme.colorScheme.primary,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    '${groups[pid]!.length}',
-                                    style: TextStyle(
-                                      fontSize: AppTextSizes.caption,
-                                      color: theme.colorScheme.onSurfaceVariant,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            for (final m in groups[pid]!)
-                              ListTile(
-                                key: m == widget.current ? _currentKey : null,
-                                dense: true,
-                                title: Text(
-                                  slug(m),
-                                  style: TextStyle(
-                                    fontSize: AppTextSizes.bodyMd,
-                                    fontWeight: m == widget.current
-                                        ? FontWeight.w600
-                                        : FontWeight.w400,
-                                  ),
+                          for (final m in visible)
+                            ListTile(
+                              key: m == currentRowId ? _currentKey : null,
+                              dense: true,
+                              // 选中行底色高亮 (同切换项目弹窗)
+                              tileColor: m == currentRowId
+                                  ? AppColors.accentContainer
+                                  : null,
+                              title: Text(
+                                slug(m),
+                                style: TextStyle(
+                                  fontSize: AppTextSizes.bodyMd,
+                                  fontWeight: m == currentRowId
+                                      ? FontWeight.w600
+                                      : FontWeight.w400,
                                 ),
-                                // 选中项: 右侧对勾 (替代单选框)
-                                trailing: m == widget.current
-                                    ? Icon(
-                                        Icons.check_rounded,
-                                        size: 20,
-                                        color: theme.colorScheme.primary,
-                                      )
-                                    : null,
-                                onTap: () {
-                                  widget.onSelected(m);
-                                  Navigator.pop(context);
-                                },
                               ),
-                          ],
+                              // 选中项: 右侧对勾 (替代单选框)
+                              trailing: m == currentRowId
+                                  ? Icon(
+                                      Icons.check_rounded,
+                                      size: 20,
+                                      color: theme.colorScheme.primary,
+                                    )
+                                  : null,
+                              onTap: () {
+                                widget.onSelected(m);
+                                Navigator.pop(context);
+                              },
+                            ),
                         ],
                       ),
               ),

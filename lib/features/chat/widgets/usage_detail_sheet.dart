@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../data/models/glm_quota.dart' as glm;
+import '../../../providers/app_providers.dart';
 import '../../../shared/theme/app_design_tokens.dart';
+import '../screens/usage_stats_page.dart';
 
 /// 用量详情底部弹窗 — 顶栏 UsagePill / 上下文环统一入口
 ///
@@ -12,8 +14,13 @@ import '../../../shared/theme/app_design_tokens.dart';
 /// 3. MCP 月度用量: 已用/总量 + 各 MCP 次数明细
 ///
 /// 底部提供刷新入口 (回调到 glmQuotaProvider.refresh)。
+/// 编码套餐区块直接订阅 glmQuotaProvider，来源切换后即时更新。
 class UsageDetailSheet extends StatelessWidget {
   final ({int input, int output, int max})? tokenUsage;
+
+  /// GLM 配额快照（调用方传入，即打开时的 ref.watch(glmQuotaProvider)）。
+  /// 注意：编码套餐区块直接订阅 glmQuotaProvider 以便切换来源/刷新后即时更新，
+  /// 本字段仅保留调用方兼容，不再驱动区块渲染。
   final AsyncValue<glm.GlmQuota?> quotaAsync;
   final VoidCallback? onRefresh;
 
@@ -37,6 +44,10 @@ class UsageDetailSheet extends StatelessWidget {
     final theme = Theme.of(context);
     return showModalBottomSheet<void>(
       context: context,
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
+      ),
       showDragHandle: true,
       backgroundColor: Color.alphaBlend(
         theme.colorScheme.surfaceContainerHigh,
@@ -219,14 +230,35 @@ class UsageDetailSheet extends StatelessWidget {
 
   // ── 区块 2: GLM Coding Plan ─────────────────────────────────
 
+  /// GLM 区块直接订阅 glmQuotaProvider：调用方传入的 quotaAsync 与之同源
+  /// （调用方传的就是 ref.watch(glmQuotaProvider)，打开时一致）；订阅后
+  /// 切换来源/刷新可即时反映在已打开的弹窗里。
   Widget _buildGlmSection(BuildContext context) {
+    return Consumer(
+      builder: (context, ref, _) {
+        return _buildGlmSectionContent(context, ref.watch(glmQuotaProvider));
+      },
+    );
+  }
+
+  Widget _buildGlmSectionContent(
+    BuildContext context,
+    AsyncValue<glm.GlmQuota?> quotaAsync,
+  ) {
     final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _SectionHeader(
-          icon: Icons.local_fire_department_outlined,
-          label: '编码套餐',
+        Row(
+          children: [
+            const Expanded(
+              child: _SectionHeader(
+                icon: Icons.local_fire_department_outlined,
+                label: '编码套餐',
+              ),
+            ),
+            _QuotaSourceSwitch(quotaAsync: quotaAsync),
+          ],
         ),
         const SizedBox(height: 8),
         quotaAsync.when(
@@ -317,10 +349,10 @@ class UsageDetailSheet extends StatelessWidget {
                   ),
                 for (final tier in quota.tiers) ...[
                   _QuotaTierRow(tier: tier),
-                  if (tier != quota.tiers.last) const SizedBox(height: 14),
+                  if (tier != quota.tiers.last) const SizedBox(height: 20),
                 ],
                 if (mcp != null) ...[
-                  const Divider(height: 28, thickness: 1),
+                  const SizedBox(height: 20),
                   _McpUsageSection(mcp: mcp),
                 ],
               ],
@@ -343,15 +375,88 @@ class UsageDetailSheet extends StatelessWidget {
               )
             else
               const Spacer(),
-            if (onRefresh != null)
+            _CapsuleAction(
+              icon: Icons.bar_chart_rounded,
+              label: '使用统计',
+              onTap: () {
+                final navigator = Navigator.of(context);
+                navigator.pop();
+                navigator.push(
+                  MaterialPageRoute(
+                    builder: (_) => const UsageStatsPage(),
+                  ),
+                );
+              },
+            ),
+            if (onRefresh != null) ...[
+              const SizedBox(width: 8),
               _CapsuleAction(
                 icon: Icons.refresh_rounded,
                 label: '刷新',
                 onTap: onRefresh!,
               ),
+            ],
           ],
         ),
       ],
+    );
+  }
+}
+
+/// 编码套餐来源切换：远程 API / API Key。
+///
+/// 仅当两个来源都可用（relay 已连接且 API key 有效）时显示可切换的
+/// dropdown；否则只显示当前来源的小字标签，不给切。切换后调用
+/// [GlmQuotaNotifier.setManualSource] 持久化手动选择并按新来源重查。
+class _QuotaSourceSwitch extends ConsumerWidget {
+  final AsyncValue<glm.GlmQuota?> quotaAsync;
+
+  const _QuotaSourceSwitch({required this.quotaAsync});
+
+  /// quota.source → 中文：'session' → 远程 API，'api' → API Key。
+  static String _sourceLabel(String source) =>
+      source == 'api' ? 'API Key' : '远程 API';
+
+  /// quota.source → 偏好值：'session' → 'remote'，'api' → 'api'。
+  static String _sourcePref(String source) =>
+      source == 'api' ? 'api' : 'remote';
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final notifier = ref.watch(glmQuotaProvider.notifier);
+    final labelStyle = TextStyle(
+      fontSize: AppTextSizes.label,
+      color: theme.colorScheme.onSurfaceVariant,
+    );
+
+    // 当前来源：有数据时以数据标记为准，否则以 notifier 解析的生效来源为准。
+    final source = quotaAsync.valueOrNull?.source ??
+        (notifier.effectiveSource == 'api' ? 'api' : 'session');
+
+    // 两个来源都可用才给切；否则只显示当前来源小字。
+    if (!notifier.relayAvailable || !notifier.apiKeyAvailable) {
+      return Text(_sourceLabel(source), style: labelStyle);
+    }
+
+    final value = _sourcePref(source);
+    return DropdownButtonHideUnderline(
+      child: DropdownButton<String>(
+        value: value,
+        isDense: true,
+        iconSize: 14,
+        style: labelStyle,
+        dropdownColor: theme.colorScheme.surfaceContainerHigh,
+        items: const [
+          DropdownMenuItem(value: 'remote', child: Text('远程 API')),
+          DropdownMenuItem(value: 'api', child: Text('API Key')),
+        ],
+        onChanged: (v) {
+          if (v != null && v != value) {
+            ref.read(glmQuotaProvider.notifier).setManualSource(v);
+          }
+        },
+      ),
     );
   }
 }
@@ -454,6 +559,9 @@ class _Bar extends StatelessWidget {
 }
 
 /// 单窗口配额行: 标签 + 已用% + 进度条 + 重置时间
+/// 单条窗口配额 — 参考桌面端「使用情况」卡片结构:
+/// 标题行 (窗口名 + 已使用 X%) / 重置说明行 / 进度条 (primary 蓝)。
+/// 无重置时间时说明行写「从不过期」(参考卡片第二块同款)。
 class _QuotaTierRow extends StatelessWidget {
   final glm.GlmQuotaTier tier;
 
@@ -462,9 +570,8 @@ class _QuotaTierRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final label = tier.name == glm.GlmQuotaTier.fiveHour ? '5 小时窗口' : '每周窗口';
-    final color = UsageDetailSheet._utilColor(tier.utilization);
-
+    final isFiveHour = tier.name == glm.GlmQuotaTier.fiveHour;
+    final label = isFiveHour ? '5 小时窗口' : '每周窗口';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -479,31 +586,42 @@ class _QuotaTierRow extends StatelessWidget {
               ),
             ),
             Text(
-              '${UsageDetailSheet._fmtPct(tier.utilization)}%',
-              style: AppText.mono(
-                context,
-                size: 13,
-                weight: FontWeight.w600,
-                color: color,
-              ),
+              '已使用 ${UsageDetailSheet._fmtPct(tier.utilization)}%',
+              style: theme.textTheme.bodyMedium,
             ),
           ],
         ),
-        const SizedBox(height: 6),
-        _Bar(value: tier.utilization / 100, color: color),
-        if (tier.resetsAt != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              '重置: ${UsageDetailSheet._fmtRelative(tier.resetsAt!)}',
-              style: TextStyle(
-                fontSize: AppTextSizes.label,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
+        const SizedBox(height: 4),
+        Text(
+          _resetLine(isFiveHour),
+          style: TextStyle(
+            fontSize: AppTextSizes.label,
+            color: theme.colorScheme.onSurfaceVariant,
           ),
+        ),
+        const SizedBox(height: 8),
+        _Bar(value: tier.utilization / 100),
       ],
     );
+  }
+
+  /// 重置说明: 每周窗口只写日期 (参考卡片: 每周限额将在 11月3日重置);
+  /// 5 小时窗口带时间 (今天 → 今天 HH:mm, 否则 M月d日 HH:mm);
+  /// 无重置时间 → 从不过期。
+  String _resetLine(bool isFiveHour) {
+    final resetsAt = tier.resetsAt;
+    if (resetsAt == null) return '从不过期';
+    final dt = DateTime.tryParse(resetsAt)?.toLocal();
+    if (dt == null) return resetsAt;
+    final window = isFiveHour ? '5小时限额' : '每周限额';
+    if (!isFiveHour) return '$window将在 ${dt.month}月${dt.day}日重置';
+    final now = DateTime.now();
+    final isToday =
+        dt.year == now.year && dt.month == now.month && dt.day == now.day;
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final mm = dt.minute.toString().padLeft(2, '0');
+    if (isToday) return '$window将在 今天 $hh:$mm 重置';
+    return '$window将在 ${dt.month}月${dt.day}日 $hh:$mm 重置';
   }
 }
 

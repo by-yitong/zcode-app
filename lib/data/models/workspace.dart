@@ -28,6 +28,10 @@ class Workspace {
   final String? branch;
   final String? preferredTaskId;
 
+  /// 网页端项目列表排序键 (readProjects / readTree 自带, -5..10)。
+  /// null = Host 未给, 排序时排最后。
+  final double? position;
+
   /// readTree 项目库中的项目 ID + 所属 host (本地为 'local')。
   /// bridge-open 带 project:{projectId, hostId} 时桌面端会为该项目
   /// 自动开工作区标签 (prepareProjectWorkspace) — 跨工作区打开项目的关键。
@@ -46,6 +50,7 @@ class Workspace {
     this.preferredTaskId,
     this.projectId,
     this.hostId,
+    this.position,
   });
 
   factory Workspace.fromJson(Map<String, dynamic> json) {
@@ -68,11 +73,16 @@ class Workspace {
           json['preferredTaskId'] as String? ?? json['taskId'] as String?,
       projectId: json['projectId'] as String?,
       hostId: json['hostId'] as String?,
+      position: (json['position'] as num?)?.toDouble(),
     );
   }
 
   /// 保留其余字段, 仅更新 readTree 项目信息
-  Workspace copyWithProject({String? projectId, String? hostId}) {
+  Workspace copyWithProject({
+    String? projectId,
+    String? hostId,
+    double? position,
+  }) {
     return Workspace(
       workspaceKey: workspaceKey,
       workspaceIdentity: workspaceIdentity,
@@ -85,24 +95,39 @@ class Workspace {
       preferredTaskId: preferredTaskId,
       projectId: projectId ?? this.projectId,
       hostId: hostId ?? this.hostId,
+      position: position ?? this.position,
     );
   }
+
+  /// 路径归一化: 去尾斜杠 (Host 会把同一工作区存成带/不带斜杠两条,
+  /// 如 zocde-app 与 zocde-app/, 精确字符串比较永远合并不上)。
+  static String normalizePath(String path) =>
+      path.length > 1 && path.endsWith('/') ? path.substring(0, path.length - 1) : path;
+
+  /// 两条路径是否同一工作区 (归一化后比较)
+  static bool samePath(String a, String b) =>
+      normalizePath(a) == normalizePath(b);
 
   static String? _parsePurpose(dynamic v) =>
       v == 'project' || v == 'conversation' ? v as String : null;
 
-  /// 是否草稿对话工作区 (不进项目列表, 与网页端「对话」分区对齐)
+  /// 是否 conversation 工作区 (purpose=='conversation', 不进项目列表;
+  /// 注意: 网页侧栏没有对话分区, 排除仅因它不是项目)
   bool get isConversation => purpose == 'conversation';
 
   /// 从 bootstrap 响应解析工作区列表 (项目区: 过滤 conversation 工作区)
   static List<Workspace> parseList(Map<String, dynamic> bootstrapResponse) {
     final result = bootstrapResponse['result'] as Map<String, dynamic>?;
     final workspacesJson = result?['workspaces'] as List<dynamic>? ?? [];
-    return workspacesJson
+    final all = workspacesJson
         .map((e) => Workspace.fromJson(e as Map<String, dynamic>))
         .where((w) => w.workspaceKey.isNotEmpty)
-        .where((w) => !w.isConversation)
         .toList();
+    // 3.17.2 实测: bootstrap 可能只返回当前会话工作区 (如默认会话工作区
+    // purpose=conversation); 沿用旧过滤会把列表滤空, 启动卡在"暂无可用工作区"。
+    // 过滤后为空时保留原列表兜底 (进默认工作区后 readTree 合并会补齐项目)。
+    final filtered = all.where((w) => !w.isConversation).toList();
+    return filtered.isNotEmpty ? filtered : all;
   }
 
   /// 解析 readTree 的 projects → 项目列表 (网页侧栏同源, 含历史项目)
@@ -129,30 +154,39 @@ class Workspace {
           roots is List && roots.isNotEmpty && roots.first is Map
           ? (roots.first as Map)['rootPath'] as String? ?? ''
           : '';
-      if (path.isEmpty || !seen.add(path)) continue;
+      if (path.isEmpty) continue;
+      // 归一化后去重: Host 会把同一工作区存成带/不带斜杠两条
+      final normPath = Workspace.normalizePath(path);
+      if (!seen.add(normPath)) continue;
       final treeProjectId = p['id'] as String?;
       final treeHostId = p['hostId'] as String? ?? 'local';
+      final treePosition = (p['position'] as num?)?.toDouble();
       // bootstrap 同路径工作区优先 (带 purpose/kind 等完整信息),
-      // 并补上 readTree 的项目导航信息 (projectId/hostId)
+      // 并补上 readTree 的项目导航信息 (projectId/hostId/position);
+      // 匹配用归一化路径, 否则斜杠变体永远合并不上
+      // (如项目需求投票系统: tree 是 draft-…/ 带斜杠, bootstrap 是不带斜杠
+      // 且 purpose 缺失, 匹配不上就丢 purpose, 后续被误杀)。
       final active = activeFallback
-          .where((w) => w.workspacePath == path)
+          .where((w) => Workspace.samePath(w.workspacePath, path))
           .firstOrNull;
       result.add(
         active?.copyWithProject(
           projectId: treeProjectId,
           hostId: treeHostId,
+          position: treePosition,
         ) ??
             Workspace.fromJson({
               'workspacePath': path,
               'label': p['name'],
               'projectId': treeProjectId,
               'hostId': treeHostId,
+              'position': treePosition,
             }),
       );
     }
-    // bootstrap 活跃但 readTree 没有的 (如 conversation 工作区) 追加
+    // bootstrap 活跃但 readTree 没有的追加 (归一化去重, 避免斜杠双变体两行)
     for (final w in activeFallback) {
-      if (seen.add(w.workspacePath)) result.add(w);
+      if (seen.add(Workspace.normalizePath(w.workspacePath))) result.add(w);
     }
     return result;
   }
@@ -182,8 +216,8 @@ class Task {
   final bool pinned;
 
   /// 所属项目 ID (readTree 全局任务库)。
-  /// null = 无项目归属 — 即草稿对话 (draft 工作区) 任务,
-  /// 对应网页侧栏「对话」分区 / app「任务列表」聚合视图。
+  /// null = 无项目归属 (默认工作区/移动盘/未注册目录等任务都会是 null,
+  /// 不等于草稿对话——草稿对话只是其中一小部分, 不能拿它当过滤条件)。
   final String? projectId;
 
   /// 任务所属 host (readTree 行自带; 本地任务为 'local', 远程为 host id)。
@@ -204,9 +238,6 @@ class Task {
     this.updatedAt,
     this.createdAt,
   });
-
-  /// 草稿对话任务 (不属于任何项目, draft 工作区)
-  bool get isConversation => projectId == null;
 
   factory Task.fromJson(Map<String, dynamic> json) {
     return Task(

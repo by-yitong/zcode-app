@@ -1,0 +1,82 @@
+name: Android arm64 Release
+
+# 第一批顺滑优化（ux-smooth-phase1）的打包通道：只打 arm64 release APK，
+# 体积最小化（单 ABI + 混淆 + debug 信息分离），产物发预发布 release。
+on:
+  push:
+    branches: [ux-smooth-phase1]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter 3.44.2
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.44.2"
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      # 静态检查：error 才阻断（fail fast）；warning/info 不阻断——
+      # 该仓库存量 warning 有 60 个（多在未动文件），Flutter 3.44 默认把 warning
+      # 当 fatal，默认跑法必挂；--no-fatal-* 后只拦真正的 error。
+      - run: flutter analyze --no-pub --no-fatal-warnings --no-fatal-infos
+
+      # 固定签名：Secrets 有 keystore 时恢复 key.properties + keystore 文件，
+      # 走 main 签名提交的 key.properties 通道；没配 Secrets 时跳过，
+      # 构建按 build.gradle.kts 回落 debug 签名（能出包，但签名会变）。
+      # 密码/别名两种命名都认 (优先 build.gradle.kts 环境变量通道的命名)。
+      # 固定签名：Secrets 有 keystore 时恢复 key.properties + keystore 文件，
+      # 走 main 签名提交的 key.properties 通道；没配 Secrets 时跳过，
+      # 构建按 build.gradle.kts 回落 debug 签名（能出包，但签名会变）。
+      # 密码/别名两种命名都认 (优先 build.gradle.kts 环境变量通道的命名)。
+      # 注意: heredoc 内容与结束符必须与 if 同缩进 (YAML 剥离后顶格),
+      # 否则 bash 认不到结束符、整段脚本解析失败 (41364209318 即因此挂)。
+      - name: Restore release keystore
+        run: |
+          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/upload-keystore.jks
+            cat > android/key.properties << 'EOF'
+          storeFile=upload-keystore.jks
+          storePassword=${{ secrets.ANDROID_STORE_PASSWORD || secrets.KEY_STORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS || secrets.KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD || secrets.KEY_PASSWORD }}
+          EOF
+          fi
+
+      - name: Build arm64-only release APK
+        # 别名不是密钥 (只是 keystore 里的条目名), 直接写死, 不占一个 Secret。
+        # 与 key.properties 通道互补: env 优先, 故 keyAlias 取此值。
+        env:
+          ANDROID_KEY_ALIAS: upload
+        run: >
+          flutter build apk --release
+          --target-platform android-arm64
+          --obfuscate --split-debug-info=build/debug-info
+          --tree-shake-icons
+
+      - name: Publish prerelease with APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="ux-smooth-phase1-build-${{ github.run_number }}"
+          # 单 ABI 构建产物就是 app-release.apk（不带 ABI 后缀；后缀只在
+          # --split-per-abi 时出现），不要硬编码 app-arm64-v8a-release.apk。
+          gh release create "$TAG" \
+            --prerelease \
+            --title "ux-smooth-phase1 build ${{ github.run_number }}" \
+            --notes "第一批顺滑优化（ux-smooth-phase1 分支）arm64 release 包。提交：${{ github.sha }}" \
+            build/app/outputs/flutter-apk/*.apk

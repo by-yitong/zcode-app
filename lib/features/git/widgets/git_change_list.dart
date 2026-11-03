@@ -12,6 +12,9 @@ import 'git_change_tile.dart';
 ///
 /// [busyOps] 为 GitState.busyOps, 行级键 'stage:<path>' / 'unstage:<path>' /
 /// 'discard:<path>' 任一命中即视为该行 busy, 行内操作全部禁用 (传 null)。
+/// [headerAction] 为段标题右侧动作 (如未暂存段的「全部暂存」);
+/// null 时只渲染段标题 (共享组件 CapsSectionHeader 本身无 trailing 插槽,
+/// 故动作只在本文件内拼 Row, 不改共享组件)。
 class GitChangeList extends StatelessWidget {
   final String title;
   final List<GitChange> changes;
@@ -21,6 +24,7 @@ class GitChangeList extends StatelessWidget {
   final void Function(GitChange change)? onUnstage;
   final void Function(GitChange change)? onDiscard;
   final void Function(GitChange change)? onTap;
+  final Widget? headerAction;
 
   const GitChangeList({
     super.key,
@@ -32,6 +36,7 @@ class GitChangeList extends StatelessWidget {
     this.onUnstage,
     this.onDiscard,
     this.onTap,
+    this.headerAction,
   });
 
   bool _busy(GitChange c) =>
@@ -54,7 +59,20 @@ class GitChangeList extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        CapsSectionHeader(title, showChevron: false),
+        if (headerAction == null)
+          CapsSectionHeader(title, showChevron: false)
+        else
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(child: CapsSectionHeader(title, showChevron: false)),
+              // 段标题自带 bottom 12 内边距, 动作底部垫 12 与标题文字底边对齐。
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: headerAction!,
+              ),
+            ],
+          ),
         CapsCard(
           child: changes.isEmpty
               ? Padding(

@@ -136,6 +136,15 @@ class DataImage extends StatelessWidget {
   static final Map<String, Uint8List> _byteCache = {};
   static const _byteCacheMax = 24;
 
+  /// 解码失败返回 null (不抛) — 预览页复用同一 LRU 缓存。
+  static Uint8List? tryDecode(String uri) {
+    try {
+      return _decode(uri);
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     try {

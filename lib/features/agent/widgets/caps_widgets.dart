@@ -282,6 +282,7 @@ Future<T?> capsSheet<T>(BuildContext context, {required Widget child}) {
     isScrollControlled: true,
     showDragHandle: true,
     constraints: BoxConstraints(
+      minHeight: MediaQuery.of(context).size.height * AppSheet.minHeightFactor,
       maxHeight: MediaQuery.of(context).size.height * 0.85,
     ),
     builder: (_) => SafeArea(top: false, child: child),

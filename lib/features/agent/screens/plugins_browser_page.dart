@@ -402,7 +402,11 @@ class _PluginsBrowserPageState extends ConsumerState<PluginsBrowserPage> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
         decoration: BoxDecoration(
-          color: selected ? AppColors.accent : cs.surfaceContainerHigh,
+          // 未选中原用 surfaceContainerHigh 填充, 在浅色下与页面底色
+          // (0xFFF2F2F7 vs 0xFFF1F5F9) 几乎无对比、看起来像 bare 文字;
+          // 改描边 + 透明填充, pill 形状在深浅色下都可见。选中保持蓝色实心。
+          color: selected ? AppColors.accent : Colors.transparent,
+          border: selected ? null : Border.all(color: cs.outline),
           borderRadius: BorderRadius.circular(AppRadius.pill),
         ),
         child: Text(
