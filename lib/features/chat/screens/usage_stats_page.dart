@@ -22,6 +22,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/logging/app_logger.dart';
 import '../../../core/services/app_usage_service.dart';
 import '../../../data/models/app_usage.dart';
 import '../../../providers/app_providers.dart';
@@ -73,6 +74,9 @@ class _UsageStatsPageState extends ConsumerState<UsageStatsPage> {
   bool _trendLoading = false;
   String? _trendError;
 
+  /// 热力图点选的日期 (点格子后下方显示该天数值)。
+  DateTime? _selectedHeatDay;
+
   @override
   void initState() {
     super.initState();
@@ -106,9 +110,10 @@ class _UsageStatsPageState extends ConsumerState<UsageStatsPage> {
         _loading = false;
       });
     } catch (e) {
+      appLog.w('[UsageStats] 加载失败: $e');
       if (!mounted) return;
       setState(() {
-        _error = e.toString();
+        _error = '加载失败，请检查设备连接后重试';
         _loading = false;
       });
     }
@@ -133,10 +138,11 @@ class _UsageStatsPageState extends ConsumerState<UsageStatsPage> {
         _trendLoading = false;
       });
     } catch (e) {
+      appLog.w('[UsageStats] 趋势加载失败: $e');
       if (!mounted) return;
       setState(() {
         _trendLoading = false;
-        _trendError = e.toString();
+        _trendError = '趋势数据加载失败';
       });
     }
   }
@@ -325,11 +331,61 @@ class _UsageStatsPageState extends ConsumerState<UsageStatsPage> {
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             )
-          else
+          else ...[
             _buildHeatmap(theme),
+            const SizedBox(height: 8),
+            _buildHeatLegend(theme),
+            if (_selectedHeatDay != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                _heatDetailText(),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ],
         ],
       ),
     );
+  }
+
+  /// 热力图“少 → 多”图例 (与格子用同一套强度色)。
+  Widget _buildHeatLegend(ThemeData theme) {
+    final labelStyle = theme.textTheme.bodySmall?.copyWith(
+      fontSize: 10,
+      color: theme.colorScheme.onSurfaceVariant,
+    );
+    return Row(
+      children: [
+        Text('少', style: labelStyle),
+        const SizedBox(width: 4),
+        for (final c in [_heatEmpty, ..._heatLevels])
+          Container(
+            width: 12,
+            height: 12,
+            margin: const EdgeInsets.only(right: 3),
+            decoration: BoxDecoration(
+              color: c,
+              borderRadius: BorderRadius.circular(3),
+            ),
+          ),
+        const SizedBox(width: 4),
+        Text('多', style: labelStyle),
+      ],
+    );
+  }
+
+  /// 点选格子的数值说明 (按当前模式: 当日/当周/累计)。
+  String _heatDetailText() {
+    final day = _selectedHeatDay!;
+    final value = _heatmapCells()[day]?.value ?? 0;
+    final scope = switch (_heatmapMode) {
+      'weekly' => '当周',
+      'cumulative' => '累计',
+      _ => '当日',
+    };
+    return '${day.month}月${day.day}日 · $scope $value Tokens';
   }
 
   /// 按当前模式算出的 每日 → (展示值, 颜色)。
@@ -461,12 +517,16 @@ class _UsageStatsPageState extends ConsumerState<UsageStatsPage> {
         } else {
           final c = cells[d.date];
           children.add(
-            Container(
-              width: cell,
-              height: cell,
-              decoration: BoxDecoration(
-                color: c?.color ?? _heatEmpty,
-                borderRadius: BorderRadius.circular(3),
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => setState(() => _selectedHeatDay = d.date),
+              child: Container(
+                width: cell,
+                height: cell,
+                decoration: BoxDecoration(
+                  color: c?.color ?? _heatEmpty,
+                  borderRadius: BorderRadius.circular(3),
+                ),
               ),
             ),
           );
@@ -605,16 +665,42 @@ class _UsageStatsPageState extends ConsumerState<UsageStatsPage> {
             SizedBox(
               height: 200,
               width: double.infinity,
-              child: CustomPaint(
-                painter: _TrendChartPainter(
-                  series: seriesValues,
-                  colors: [
-                    for (var i = 0; i < seriesNames.length; i++)
-                      _trendPalette[i % _trendPalette.length],
-                  ],
-                  maxValue: maxVal,
-                  gridColor: theme.colorScheme.surfaceContainerHighest,
-                ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // 纵轴刻度 (最大值/一半/0, 与 25%/50%/75% 网格线对齐)。
+                  SizedBox(
+                    width: 40,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        for (final v in <double>[maxVal, maxVal / 2, 0])
+                          Text(
+                            _fmtTokens(v.toInt()),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              fontSize: 10,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: CustomPaint(
+                      painter: _TrendChartPainter(
+                        series: seriesValues,
+                        colors: [
+                          for (var i = 0; i < seriesNames.length; i++)
+                            _trendPalette[i % _trendPalette.length],
+                        ],
+                        maxValue: maxVal,
+                        gridColor: theme.colorScheme.surfaceContainerHighest,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 4),

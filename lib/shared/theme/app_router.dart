@@ -147,7 +147,7 @@ class _HomeRedirectScreenState extends ConsumerState<HomeRedirectScreen> {
     } catch (e) {
       appLog.w('[Home] 工作区加载失败: $e');
       if (!mounted) return;
-      setState(() => _error = '连接失败: $e');
+      setState(() => _error = '连接失败，请确认桌面端在线后重试');
     }
   }
 

@@ -286,7 +286,7 @@ class _AccountLoginScreenState extends ConsumerState<AccountLoginScreen> {
       context.go(AppRoutes.devicePicker);
     } catch (e) {
       appLog.w('[AccountLogin] OAuth 换票失败: $e');
-      if (mounted) _fail('登录失败: $e');
+      if (mounted) _fail('登录失败，请重试');
     }
   }
 

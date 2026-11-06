@@ -845,6 +845,8 @@ Future<void> _showGlmCredentialEditor(
   );
   final apiKeyCtrl = TextEditingController(text: cred?.apiKey);
   var obscure = true;
+  String? sheetError;
+  var saved = false;
 
   final theme = Theme.of(context);
 
@@ -905,6 +907,15 @@ Future<void> _showGlmCredentialEditor(
                     ),
                   ),
                 ),
+                if (sheetError != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    sheetError!,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: AppColors.danger,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -927,13 +938,31 @@ Future<void> _showGlmCredentialEditor(
                       const SizedBox.shrink(),
                     FilledButton(
                       onPressed: () async {
+                        // 保存前校验, 不合格就地提示、不关闭弹窗。
+                        final baseUrl = baseUrlCtrl.text.trim();
+                        final apiKey = apiKeyCtrl.text.trim();
+                        String? error;
+                        if (apiKey.isEmpty) {
+                          error = '请填写 API Key';
+                        } else {
+                          final uri = Uri.tryParse(baseUrl);
+                          if (baseUrl.isEmpty ||
+                              uri == null ||
+                              !uri.isAbsolute ||
+                              uri.scheme != 'https' ||
+                              uri.host.isEmpty) {
+                            error = 'Base URL 不合法，请填写 https 开头的完整地址';
+                          }
+                        }
+                        if (error != null) {
+                          setSheetState(() => sheetError = error);
+                          return;
+                        }
                         await ref
                             .read(glmCredentialProvider.notifier)
-                            .save(
-                              baseUrl: baseUrlCtrl.text,
-                              apiKey: apiKeyCtrl.text,
-                            );
+                            .save(baseUrl: baseUrl, apiKey: apiKey);
                         await ref.read(glmQuotaProvider.notifier).refresh();
+                        saved = true;
                         if (sheetContext.mounted) Navigator.pop(sheetContext);
                       },
                       child: const Text('保存'),
@@ -948,6 +977,11 @@ Future<void> _showGlmCredentialEditor(
       );
     },
   );
+  if (saved && context.mounted) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('GLM 凭据已保存')));
+  }
 }
 
 /// MIT 协议全文 (与仓库根 LICENSE 一致)

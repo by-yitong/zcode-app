@@ -990,7 +990,6 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                   ),
                   color: info.$2.withValues(alpha: 0.15),
                   child: Row(
-                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(info.$1, size: 14, color: info.$2),
                       const SizedBox(width: 6),
@@ -1001,6 +1000,21 @@ class _ChatScaffoldState extends ConsumerState<_ChatScaffold> {
                           color: info.$2,
                         ),
                       ),
+                      // 重连中不用等到重试耗尽: 直接给手动入口,
+                      // 点一下立即强制重连 (revive 会重置退避计时)。
+                      if (connState == RelayConnectionState.reconnecting) ...[
+                        const Spacer(),
+                        TextButton(
+                          onPressed: () =>
+                              ref.read(relayClientProvider)?.revive(),
+                          style: TextButton.styleFrom(
+                            foregroundColor: info.$2,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          child: const Text('重新连接'),
+                        ),
+                      ],
                     ],
                   ),
                 ),

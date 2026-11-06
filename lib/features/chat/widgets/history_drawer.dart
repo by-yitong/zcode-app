@@ -191,11 +191,12 @@ class HistoryDrawerState extends ConsumerState<HistoryDrawer> {
     try {
       await archiveTask(ref, task);
     } catch (e) {
+      appLog.w('[HistoryDrawer] 归档失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('操作失败: $e'),
-            duration: const Duration(seconds: 2),
+          const SnackBar(
+            content: Text('操作失败，请重试'),
+            duration: Duration(seconds: 2),
           ),
         );
       }
